@@ -7,7 +7,7 @@ on:
 
 jobs:
   package-tests:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos, x86_64]
     steps:
       - uses: actions/checkout@v4
       - name: Swift package tests (176+ BIP vector + unit + loopback)
@@ -16,7 +16,7 @@ jobs:
         # cleanly without BTC_SWIFT_DIFF/BTC_SWIFT_SIGNET and no local node.
 
   app-build:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos, x86_64]
     steps:
       - uses: actions/checkout@v4
       - name: Generate Xcode project
