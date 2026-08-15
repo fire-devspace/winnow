@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import BitcoinP2P
 
@@ -52,6 +53,52 @@ struct LoopbackTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(await peer.feeFilter == 7_500)
+        await peer.disconnect()
+    }
+
+    @Test("a client that resets mid-handshake does not crash the node")
+    func clientResetMidHandshake() async throws {
+        // Regression: LoopbackNode.handle(_:) left its stateUpdateHandler
+        // installed after the handshake wait resumed on .ready; a client that
+        // then vanished abruptly fired .failed (ECONNRESET) into the same
+        // continuation a second time — a fatal "continuation misuse" crash
+        // that took down the whole test process.
+        let node = LoopbackNode(params: .signet)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let endpoint = await node.endpoint
+
+        for _ in 0 ..< 20 {
+            let client = NWConnection(host: NWEndpoint.Host(endpoint.host),
+                                      port: NWEndpoint.Port(rawValue: endpoint.port)!,
+                                      using: .tcp)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                client.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        client.stateUpdateHandler = nil
+                        continuation.resume()
+                    case let .failed(error):
+                        client.stateUpdateHandler = nil
+                        continuation.resume(throwing: error)
+                    default: break
+                    }
+                }
+                client.start(queue: DispatchQueue(label: "org.btc-swift.tests.rst-client"))
+            }
+            // Let the node's version arrive, then drop the connection without
+            // reading it: closing with unread data resets the socket, so the
+            // node-side connection fails with ECONNRESET after its handshake
+            // wait already resumed.
+            try await Task.sleep(for: .milliseconds(50))
+            client.cancel()
+        }
+        // Give the node time to observe the resets (pre-fix this crashed the
+        // process here), then prove it still serves a fresh peer.
+        try await Task.sleep(for: .milliseconds(200))
+        let peer = PeerConnection(endpoint: endpoint, params: .signet)
+        try await peer.connect()
+        #expect(await peer.isConnected)
         await peer.disconnect()
     }
 

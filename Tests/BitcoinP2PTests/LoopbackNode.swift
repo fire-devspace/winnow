@@ -65,10 +65,15 @@ actor LoopbackNode {
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
+                    // Drop the handler before resuming: it must not outlive
+                    // the wait, or a later .failed would resume the
+                    // continuation a second time.
+                    listener.stateUpdateHandler = nil
                     // Hop onto the actor so `port` is assigned before the
                     // continuation resumes — reading it earlier races to 0.
                     Task { await self.capturePortAndResume(continuation) }
                 case let .failed(error):
+                    listener.stateUpdateHandler = nil
                     continuation.resume(throwing: error)
                 default:
                     break
@@ -139,8 +144,16 @@ actor LoopbackNode {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 connection.stateUpdateHandler = { state in
                     switch state {
-                    case .ready: continuation.resume()
-                    case let .failed(error): continuation.resume(throwing: error)
+                    case .ready:
+                        // Resume exactly once: drop the handler so a later
+                        // .failed (e.g. ECONNRESET when the client drops the
+                        // connection mid-flight) cannot re-resume this
+                        // continuation — that is a fatal continuation misuse.
+                        connection.stateUpdateHandler = nil
+                        continuation.resume()
+                    case let .failed(error):
+                        connection.stateUpdateHandler = nil
+                        continuation.resume(throwing: error)
                     default: break
                     }
                 }
