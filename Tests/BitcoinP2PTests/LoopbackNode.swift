@@ -62,19 +62,20 @@ actor LoopbackNode {
             Task { await self.handle(connection) }
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let resumeOnce = ResumeOnce(continuation)
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     // Drop the handler before resuming: it must not outlive
-                    // the wait, or a later .failed would resume the
-                    // continuation a second time.
+                    // the wait. The ResumeOnce guard covers an update that was
+                    // already in flight before the handler was cleared.
                     listener.stateUpdateHandler = nil
                     // Hop onto the actor so `port` is assigned before the
                     // continuation resumes — reading it earlier races to 0.
-                    Task { await self.capturePortAndResume(continuation) }
+                    Task { await self.capturePortAndResume(resumeOnce) }
                 case let .failed(error):
                     listener.stateUpdateHandler = nil
-                    continuation.resume(throwing: error)
+                    resumeOnce.resume(throwing: error)
                 default:
                     break
                 }
@@ -89,9 +90,9 @@ actor LoopbackNode {
         listener?.cancel()
     }
 
-    private func capturePortAndResume(_ continuation: CheckedContinuation<Void, Error>) {
+    private func capturePortAndResume(_ resumeOnce: ResumeOnce) {
         port = listener?.port?.rawValue ?? 0
-        continuation.resume()
+        resumeOnce.resume()
     }
 
     /// Sends any message from the node side (e.g. feefilter, getdata).
@@ -142,18 +143,21 @@ actor LoopbackNode {
         framer = MessageFramer(magic: params.magic)
         do {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let resumeOnce = ResumeOnce(continuation)
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        // Resume exactly once: drop the handler so a later
-                        // .failed (e.g. ECONNRESET when the client drops the
-                        // connection mid-flight) cannot re-resume this
-                        // continuation — that is a fatal continuation misuse.
+                        // Resume exactly once. Clearing the handler is not
+                        // enough on its own: a .failed that was already in
+                        // flight (e.g. ECONNRESET when the client drops the
+                        // connection right after connect) is still delivered —
+                        // the ResumeOnce guard makes that second resume a
+                        // no-op instead of a fatal continuation misuse.
                         connection.stateUpdateHandler = nil
-                        continuation.resume()
+                        resumeOnce.resume()
                     case let .failed(error):
                         connection.stateUpdateHandler = nil
-                        continuation.resume(throwing: error)
+                        resumeOnce.resume(throwing: error)
                     default: break
                     }
                 }

@@ -58,40 +58,52 @@ struct LoopbackTests {
 
     @Test("a client that resets mid-handshake does not crash the node")
     func clientResetMidHandshake() async throws {
-        // Regression: LoopbackNode.handle(_:) left its stateUpdateHandler
-        // installed after the handshake wait resumed on .ready; a client that
-        // then vanished abruptly fired .failed (ECONNRESET) into the same
-        // continuation a second time — a fatal "continuation misuse" crash
-        // that took down the whole test process.
+        // Regression: LoopbackNode.handle(_:) resumed its handshake-wait
+        // continuation on .ready and cleared stateUpdateHandler, but a .failed
+        // (ECONNRESET) state update that was already in flight was delivered
+        // anyway — resuming the same continuation twice, a fatal
+        // "continuation misuse" crash that took down the whole test process
+        // on CI. The ready wait is now guarded by ResumeOnce.
         let node = LoopbackNode(params: .signet)
         try await node.start()
         defer { Task { await node.stop() } }
         let endpoint = await node.endpoint
 
-        for _ in 0 ..< 20 {
+        func connectThenReset(after delay: Duration) async throws {
             let client = NWConnection(host: NWEndpoint.Host(endpoint.host),
                                       port: NWEndpoint.Port(rawValue: endpoint.port)!,
                                       using: .tcp)
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let resumeOnce = ResumeOnce(continuation)
                 client.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
                         client.stateUpdateHandler = nil
-                        continuation.resume()
+                        resumeOnce.resume()
                     case let .failed(error):
                         client.stateUpdateHandler = nil
-                        continuation.resume(throwing: error)
+                        resumeOnce.resume(throwing: error)
                     default: break
                     }
                 }
                 client.start(queue: DispatchQueue(label: "org.btc-swift.tests.rst-client"))
             }
-            // Let the node's version arrive, then drop the connection without
-            // reading it: closing with unread data resets the socket, so the
-            // node-side connection fails with ECONNRESET after its handshake
-            // wait already resumed.
-            try await Task.sleep(for: .milliseconds(50))
+            // Dropping the connection without reading the node's version
+            // resets the socket, so the node-side connection fails with
+            // ECONNRESET around its handshake wait.
+            try await Task.sleep(for: delay)
             client.cancel()
+        }
+
+        // Mid-flight resets: the RST lands after the node's wait resumed.
+        for _ in 0 ..< 20 {
+            try await connectThenReset(after: .milliseconds(50))
+        }
+        // Immediate resets: the RST races connection setup itself, so .ready
+        // and .failed can be delivered back-to-back on the node side — the
+        // window that crashed CI.
+        for _ in 0 ..< 40 {
+            try await connectThenReset(after: .zero)
         }
         // Give the node time to observe the resets (pre-fix this crashed the
         // process here), then prove it still serves a fresh peer.
