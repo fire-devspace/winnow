@@ -43,14 +43,33 @@ jobs:
           -skipPackagePluginValidation -skipMacroValidation archive
 
       - name: Upload to App Store Connect
-        run: >-
-          xcodebuild -exportArchive -archivePath build/BTCSwiftApp.xcarchive
-          -exportOptionsPlist build/ExportOptions.plist
-          -allowProvisioningUpdates
-          -authenticationKeyPath "${RUNNER_TEMP}/btc-swift-signing/AuthKey.p8"
-          -authenticationKeyID "$ASC_KEY_ID"
-          -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-          -skipPackagePluginValidation -skipMacroValidation
+        run: |
+          mkdir -p build
+          cat > build/ExportOptions.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>method</key>
+          	<string>app-store-connect</string>
+          	<key>destination</key>
+          	<string>upload</string>
+          	<key>signingStyle</key>
+          	<string>automatic</string>
+          	<key>teamID</key>
+          	<string>2858MX5336</string>
+          	<key>manageAppVersionAndBuildNumber</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath build/BTCSwiftApp.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "${RUNNER_TEMP}/btc-swift-signing/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -skipPackagePluginValidation -skipMacroValidation
 
       - name: TestFlight groups (internal + external)
         run: |
