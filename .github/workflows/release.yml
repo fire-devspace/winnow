@@ -33,7 +33,7 @@ jobs:
 
       - name: Archive
         run: >-
-          xcodegen && xcodebuild -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
+          brew install xcodegen && xcodegen && xcodebuild -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
           -configuration Release -destination 'generic/platform=iOS'
           -archivePath build/BTCSwiftApp.xcarchive
           -skipPackagePluginValidation -skipMacroValidation archive
