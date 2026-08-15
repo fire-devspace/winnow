@@ -54,6 +54,6 @@ openssl x509 -inform PEM -in "$WORK/dist.cer" -outform PEM -out "$WORK/dist.pem"
 openssl pkcs12 -export -inkey "$WORK/dist.key" -in "$WORK/dist.pem" \
   -out "$WORK/dist.p12" -passout pass:"$KEYCHAIN_PASSWORD" -name "btc-swift-ci"
 security import "$WORK/dist.p12" -k "$KEYCHAIN" -P "$KEYCHAIN_PASSWORD" \
-  -T /usr/bin/codesign -T xcodebuild
+  -T /usr/bin/codesign -T /usr/bin/xcodebuild
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 echo "signing identity installed in $KEYCHAIN"
