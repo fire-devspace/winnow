@@ -16,7 +16,9 @@ jobs:
         # cleanly without BTC_SWIFT_DIFF/BTC_SWIFT_SIGNET and no local node.
 
   app-build:
-    runs-on: [self-hosted, macos, x86_64]
+    # GitHub-hosted: the self-hosted VMs are CLT-only for now (no Xcode.app).
+    # Move back to [self-hosted, macos, x86_64] once the VMs have full Xcode.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Generate Xcode project
