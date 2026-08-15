@@ -17,8 +17,10 @@ final class HostProcessProbeTests: XCTestCase {
     }
 }
 
-/// End-to-end UI tests against the local custom-signet node (datadir
-/// ~/.bitcoin-mysignet, P2P 127.0.0.1:38401). The app is launched with
+/// End-to-end UI tests against the local custom-signet node (default datadir
+/// ~/.bitcoin-mysignet, P2P 127.0.0.1:38401 — overridable via the
+/// BTC_SWIFT_NODE_HOST/BTC_SWIFT_P2P_PORT/BTC_SWIFT_RPC_PORT/BTC_SWIFT_DATADIR
+/// environment variables, see UITests/BitcoinCLI.swift). The app is launched with
 /// BTCSWIFT_E2E=1 (see Sources/BTCSwiftApp/E2EMode.swift): throwaway storage
 /// and Keychain namespace, custom-signet params, the node as manual peer, and
 /// a fixed wallet entropy for reproducible screenshots.
@@ -76,7 +78,7 @@ final class BTCSwiftAppUITests: XCTestCase {
         app.launchEnvironment = [
             "BTCSWIFT_E2E": "1",
             "BTCSWIFT_E2E_RUN": run,
-            "BTCSWIFT_E2E_PEER": "127.0.0.1:\(BitcoinCLI.p2pPort)",
+            "BTCSWIFT_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
             "BTCSWIFT_E2E_CHALLENGE": BitcoinCLI.challengeHex,
             "BTCSWIFT_E2E_ENTROPY": Self.entropyHex,
         ]
@@ -305,6 +307,15 @@ final class BTCSwiftAppUITests: XCTestCase {
         return "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
     }
 
+    /// The fixed-entropy test wallet's own key expression — the same text
+    /// "Add this device's key" produced in test04 (AppModel.ownKeyExpression).
+    static func deviceKeyExpression() throws -> String {
+        let master = try HDKey(seed: BIP39.seed(mnemonic: mnemonic))
+        let account = try BIP86.accountKey(from: master, coinType: 1, account: 0)
+        let fingerprint = String(format: "%08x", master.fingerprint)
+        return "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
+    }
+
     /// A deterministic signet P2TR address from a one-byte repeated seed
     /// (fixture send destination / block payout).
     static func fixtureAddress(_ byte: UInt8) throws -> String {
@@ -372,7 +383,7 @@ final class BTCSwiftAppUITests: XCTestCase {
         }
         refresh.tap()
         let localPeer = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH '127.0.0.1:38401'")).firstMatch
+            NSPredicate(format: "label BEGINSWITH %@", "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)")).firstMatch
         poll(timeout: 60, interval: 3, "connected local peer in settings") {
             if localPeer.exists { return true }
             if refresh.exists, refresh.isHittable { refresh.tap() }
@@ -467,5 +478,56 @@ final class BTCSwiftAppUITests: XCTestCase {
         app.buttons["importContinueButton"].tap()
         XCTAssertTrue(app.staticTexts["balanceText"].waitForExistence(timeout: 60),
                       "wallet home did not appear after import")
+    }
+
+    // MARK: - 07 Vault cosign review
+
+    /// Creator + reviewer roles for the "E2E Vault" from test04: rebuild its
+    /// 2-of-3 descriptor in-process (device key + fixture cosigners 0xA1/0xB2,
+    /// same order test04 added them), build a spend PSBT against a fabricated
+    /// funding UTXO at the vault's receive index 0, load it in
+    /// "Sign / combine PSBTs" and capture the "Review — what you are signing"
+    /// section — exactly what a cosigner verifies before signing.
+    func test07VaultCosignReview() throws {
+        let reviewStart = Date()
+        let descriptor = try Vault.multiADescriptor(
+            threshold: 2,
+            cosigners: try [Self.deviceKeyExpression(), Self.fixtureCosigner(0xA1),
+                            Self.fixtureCosigner(0xB2)])
+        let vault = try Vault(descriptor: descriptor, network: .signet)
+        let utxo = try WalletUTXO(txid: Data(repeating: 0x5A, count: 32), vout: 0,
+                                  amount: 250_000,
+                                  scriptPubKey: vault.scriptPubKey(index: 0, choice: 0),
+                                  chain: .receive, index: 0, height: 1_500)
+        let psbt = try vault.createSpend(
+            utxos: [utxo],
+            payments: [Payment(amount: 100_000, address: Self.fixtureAddress(0xE5),
+                               network: .signet)],
+            changeIndex: 0, feeRateSatPerVByte: 2)
+
+        let app = launchApp(clipboard: psbt.base64)
+        app.tabBars.buttons["Vaults"].tap()
+        let vaultRow = app.staticTexts["E2E Vault"]
+        XCTAssertTrue(vaultRow.waitForExistence(timeout: 30),
+                      "vault from test04 missing — run the full suite")
+        vaultRow.tap()
+        let signButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Sign / combine'")).firstMatch
+        XCTAssertTrue(signButton.waitForExistence(timeout: 20), "vault detail did not load")
+        signButton.tap()
+
+        // The PSBT is long Base64 — the app put it on its own pasteboard at
+        // boot; the sheet's Paste button reads it without consent prompts.
+        XCTAssertTrue(app.buttons["psbtPasteButton"].waitForExistence(timeout: 20),
+                      "sign sheet did not appear")
+        app.buttons["psbtPasteButton"].tap()
+        app.buttons["addPSBTButton"].tap()
+
+        let review = app.staticTexts["Review — what you are signing"]
+        XCTAssertTrue(scrollUntilExists(app, review), "review section did not appear")
+        XCTAssertTrue(app.staticTexts["Pays"].exists, "review lists no payment output")
+        XCTAssertTrue(app.staticTexts["Change (this vault)"].exists, "review lists no change output")
+        Timings.record("vault", step: "cosign-review", from: reviewStart)
+        Screenshots.capture(app, "15-vault-cosign", testCase: self)
     }
 }

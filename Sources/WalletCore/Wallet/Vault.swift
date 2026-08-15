@@ -166,26 +166,8 @@ public struct Vault: Sendable {
                 throw VaultError.invalidDescriptor("multi_a vault must have a single leaf")
             }
             let controlBlock = try Taproot.controlBlock(internalKey: internalKey, tree: tree!, leafIndex: 0)
-            var origins: [Data: PSBT.KeyOrigin] = [:]
-            for expression in cosignerKeyExpressions() {
-                guard case let .single(single) = expression,
-                      let origin = single.origin,
-                      case .extended = single.base
-                else { continue }
-                let compressed = try descriptor.publicKey(of: expression, index: index, choice: choice)
-                // Full path from the master fingerprint (BIP371): origin path
-                // plus the derivation suffix steps taken at (choice, index).
-                let suffix = single.derivation.elements.map { element -> UInt32 in
-                    switch element {
-                    case let .step(step): return step
-                    case let .multipath(values): return values[choice]
-                    case let .wildcard(hardened): return index + (hardened ? HDKey.hardenedOffset : 0)
-                    }
-                }
-                origins[Data(compressed.dropFirst())] = PSBT.KeyOrigin(leafHashes: [],
-                                                                       masterFingerprint: origin.fingerprint,
-                                                                       path: origin.path + suffix)
-            }
+            // attachScriptPath fills in the leaf hash itself.
+            let origins = try keyOrigins(choice: choice, index: index, leafHashes: [])
             try psbt.attachScriptPath(input: input, controlBlock: controlBlock, leafScript: script,
                                       leafVersion: version, keyOrigins: origins)
         case .muSig2:
@@ -193,6 +175,33 @@ public struct Vault: Sendable {
             try psbt.attachMuSig2(input: input, internalKey: context.internalKey,
                                   aggregate: context.aggregate, participants: context.participants)
         }
+    }
+
+    /// BIP371 key origins for every multi_a cosigner at (choice, index):
+    /// master fingerprint, the full path (origin path plus the derivation
+    /// suffix steps taken at (choice, index)) and the leaf hashes the key
+    /// participates in. Empty for MuSig2 vaults (no per-key expressions).
+    private func keyOrigins(choice: Int, index: UInt32,
+                            leafHashes: [Data]) throws -> [Data: PSBT.KeyOrigin] {
+        var origins: [Data: PSBT.KeyOrigin] = [:]
+        for expression in cosignerKeyExpressions() {
+            guard case let .single(single) = expression,
+                  let origin = single.origin,
+                  case .extended = single.base
+            else { continue }
+            let compressed = try descriptor.publicKey(of: expression, index: index, choice: choice)
+            let suffix = single.derivation.elements.map { element -> UInt32 in
+                switch element {
+                case let .step(step): return step
+                case let .multipath(values): return values[choice]
+                case let .wildcard(hardened): return index + (hardened ? HDKey.hardenedOffset : 0)
+                }
+            }
+            origins[Data(compressed.dropFirst())] = PSBT.KeyOrigin(leafHashes: leafHashes,
+                                                                   masterFingerprint: origin.fingerprint,
+                                                                   path: origin.path + suffix)
+        }
+        return origins
     }
 
     /// Change-output fields so cosigners can verify the vault owns the output.
@@ -204,6 +213,14 @@ public struct Vault: Sendable {
             var tuples: [(depth: UInt8, leafVersion: UInt8, script: Data)] = []
             collectLeaves(tree, depth: 0, into: &tuples)
             psbt.outputs[output].tapTree = tuples
+            // PSBT_OUT_TAP_BIP32_DERIVATION for every cosigner — marks the
+            // output as the vault's own change (VaultSignView's review reads
+            // a non-empty derivation as "Change (this vault)").
+            if case .multiA = policy, let tuple = tuples.first, tuples.count == 1 {
+                let leafHash = Taproot.leafHash(version: tuple.leafVersion, script: Script(tuple.script))
+                psbt.outputs[output].tapBIP32Derivation = try keyOrigins(choice: choice, index: index,
+                                                                         leafHashes: [leafHash])
+            }
         }
     }
 

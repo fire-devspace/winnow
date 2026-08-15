@@ -306,7 +306,12 @@ final class AppModel {
         guard bundle.network == network.rawValue else { throw AppError.wrongNetwork(bundle.network) }
         guard let walletURL = walletURL() else { throw AppError.noWallet }
         let wallet = try Wallet.importing(bundle, keyStore: keyStore, storageURL: walletURL)
-        try await adopt(wallet: wallet)
+        // Verification below runs its own one-shot filter sync; the regular
+        // sync loop must not run concurrently with it (two sync() passes on
+        // the same FilterSync/HeaderChain race — crossed getheaders/getcfilter
+        // responses on the shared peer). The loop starts on the way out.
+        try await adopt(wallet: wallet, startSync: false)
+        defer { if isActive { startSyncLoop() } }
         await buildStackIfNeeded()
         guard let filters = stack?.filters else { return nil }
         await stack?.pool.start()
@@ -323,7 +328,8 @@ final class AppModel {
     /// is that wallet's view and is reset; the new wallet's scan starts from
     /// its own scan height. The stage stays `.onboarding` until the UI calls
     /// `finishOnboarding` (the mnemonic backup must be confirmed first).
-    private func adopt(wallet: Wallet) async throws {
+    /// `startSync: false` defers the sync loop (import verifies first).
+    private func adopt(wallet: Wallet, startSync: Bool = true) async throws {
         if let dir = storageDirectory() {
             for name in ["filters.json", "broadcast.json", "vaults.json"] {
                 try? FileManager.default.removeItem(at: dir.appending(path: name))
@@ -339,7 +345,7 @@ final class AppModel {
             self.stack = stack
         }
         await refresh()
-        if isActive { startSyncLoop() }
+        if startSync, isActive { startSyncLoop() }
     }
 
     /// Leaves onboarding once the backup flow (or import report) is done.

@@ -1,11 +1,23 @@
 import Foundation
 
 /// Process-based `bitcoin-cli` runner for the dev custom-signet node
-/// (datadir ~/.bitcoin-mysignet, RPC :38400, P2P :38401), plus the JSON
-/// accessors the differential checks lean on.
+/// (default datadir ~/.bitcoin-mysignet, RPC :38400, P2P :38401 on
+/// 127.0.0.1), plus the JSON accessors the differential checks lean on.
 ///
 /// Copy of Tests/DifferentialTests/BitcoinCLI.swift (the SPM test target and
 /// the Xcode UI-test target are separate worlds; keep them in sync).
+///
+/// Node location is env-configurable (CI runners reach the node over
+/// LAN/Tailscale, not loopback); the defaults reproduce the local dev setup
+/// exactly:
+/// - BTC_SWIFT_NODE_HOST — RPC/P2P host (default 127.0.0.1)
+/// - BTC_SWIFT_P2P_PORT  — P2P port (default 38401)
+/// - BTC_SWIFT_RPC_PORT  — RPC port (default 38400)
+/// - BTC_SWIFT_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
+///
+/// Inside the simulator the process environment is NOT inherited from
+/// xcodebuild; the same keys are then read from ~/.btc-swift-node.env on the
+/// host (see env(_:) below).
 ///
 /// Everything here is read-only against the node EXCEPT `generatetoaddress`
 /// mining on the disposable custom signet, which is expected and safe.
@@ -15,7 +27,40 @@ enum BitcoinCLI {
     static let challengeHex =
         "512103c0fd3f9280629b86d7adcfe340bc6b2a01ad0696c4c3d624315d805ae73d7a9751ae"
     static let challenge = Data(hex: challengeHex)!
-    static let p2pPort: UInt16 = 38_401
+
+    /// The HOST home directory: inside the iOS simulator NSHomeDirectory()
+    /// is the test runner's container; the node datadir lives in the real
+    /// user home.
+    static var hostHome: String {
+        ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
+    }
+
+    /// An environment override; empty values count as unset. `xcodebuild
+    /// test` does NOT forward its process environment into the iOS-simulator
+    /// test runner, so the harness also reads KEY=VALUE lines from
+    /// ~/.btc-swift-node.env on the host (CI writes it before the UI run).
+    private static func env(_ key: String) -> String? {
+        if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty { return value }
+        return fileOverrides[key]
+    }
+
+    private static let fileOverrides: [String: String] = {
+        let url = URL(fileURLWithPath: hostHome).appending(path: ".btc-swift-node.env")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var result: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1)
+            let key = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            let value = parts.count == 2 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+            if !key.isEmpty, !value.isEmpty { result[key] = value }
+        }
+        return result
+    }()
+
+    static let nodeHost = env("BTC_SWIFT_NODE_HOST") ?? "127.0.0.1"
+    static let p2pPort: UInt16 = env("BTC_SWIFT_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
+    static let rpcPort = env("BTC_SWIFT_RPC_PORT").flatMap { Int($0) } ?? 38_400
+    static let datadir = env("BTC_SWIFT_DATADIR") ?? "\(hostHome)/.bitcoin-mysignet"
 
     struct CLIError: Error, CustomStringConvertible, Equatable {
         let arguments: [String]
@@ -34,13 +79,6 @@ enum BitcoinCLI {
             if FileManager.default.isExecutableFile(atPath: util) { return util }
         }
         return nil
-    }
-
-    /// The HOST home directory: inside the iOS simulator NSHomeDirectory()
-    /// is the test runner's container; the node datadir lives in the real
-    /// user home.
-    static var hostHome: String {
-        ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
     }
 
     /// bitcoin-cli binary: /opt/homebrew/bin first, then PATH.
@@ -63,7 +101,7 @@ enum BitcoinCLI {
             throw CLIError(arguments: arguments, status: -1,
                            output: "bitcoin-cli not found (/opt/homebrew/bin or PATH)")
         }
-        var full = ["-datadir=\(hostHome)/.bitcoin-mysignet", "-rpcport=38400"]
+        var full = ["-datadir=\(datadir)", "-rpcport=\(rpcPort)", "-rpcconnect=\(nodeHost)"]
         if let wallet { full.append("-rpcwallet=\(wallet)") }
         full.append(contentsOf: arguments)
 

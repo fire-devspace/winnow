@@ -1,8 +1,16 @@
 import Foundation
 
 /// Process-based `bitcoin-cli` runner for the dev custom-signet node
-/// (datadir ~/.bitcoin-mysignet, RPC :38400, P2P :38401), plus the JSON
-/// accessors the differential checks lean on.
+/// (default datadir ~/.bitcoin-mysignet, RPC :38400, P2P :38401 on
+/// 127.0.0.1), plus the JSON accessors the differential checks lean on.
+///
+/// Node location is env-configurable (CI runners reach the node over
+/// LAN/Tailscale, not loopback); the defaults reproduce the local dev setup
+/// exactly:
+/// - BTC_SWIFT_NODE_HOST — RPC/P2P host (default 127.0.0.1)
+/// - BTC_SWIFT_P2P_PORT  — P2P port (default 38401)
+/// - BTC_SWIFT_RPC_PORT  — RPC port (default 38400)
+/// - BTC_SWIFT_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
 ///
 /// Everything here is read-only against the node EXCEPT `generatetoaddress`
 /// mining on the disposable custom signet, which is expected and safe.
@@ -12,7 +20,17 @@ enum BitcoinCLI {
     static let challengeHex =
         "512103c0fd3f9280629b86d7adcfe340bc6b2a01ad0696c4c3d624315d805ae73d7a9751ae"
     static let challenge = Data(hex: challengeHex)!
-    static let p2pPort: UInt16 = 38_401
+
+    /// An environment override; empty values count as unset.
+    private static func env(_ key: String) -> String? {
+        guard let value = ProcessInfo.processInfo.environment[key], !value.isEmpty else { return nil }
+        return value
+    }
+
+    static let nodeHost = env("BTC_SWIFT_NODE_HOST") ?? "127.0.0.1"
+    static let p2pPort: UInt16 = env("BTC_SWIFT_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
+    static let rpcPort = env("BTC_SWIFT_RPC_PORT").flatMap { Int($0) } ?? 38_400
+    static let datadir = env("BTC_SWIFT_DATADIR") ?? "\(NSHomeDirectory())/.bitcoin-mysignet"
 
     struct CLIError: Error, CustomStringConvertible, Equatable {
         let arguments: [String]
@@ -59,7 +77,7 @@ enum BitcoinCLI {
             throw CLIError(arguments: arguments, status: -1,
                            output: "bitcoin-cli not found (/opt/homebrew/bin or PATH)")
         }
-        var full = ["-datadir=\(NSHomeDirectory())/.bitcoin-mysignet", "-rpcport=38400"]
+        var full = ["-datadir=\(datadir)", "-rpcport=\(rpcPort)", "-rpcconnect=\(nodeHost)"]
         if let wallet { full.append("-rpcwallet=\(wallet)") }
         full.append(contentsOf: arguments)
 

@@ -1,0 +1,174 @@
+name: Node e2e
+
+# Node-backed suites (differential + UI e2e) against the dev custom-signet
+# node, on the self-hosted x86_64 macOS runner VMs.
+#
+# Node location is configurable via repository VARIABLES (not secrets) —
+# unset variables fall back to the local-dev defaults:
+#   BTC_SWIFT_NODE_HOST (default 127.0.0.1)
+#   BTC_SWIFT_P2P_PORT  (default 38401)
+#   BTC_SWIFT_RPC_PORT  (default 38400)
+#   BTC_SWIFT_DATADIR   (default ~/.bitcoin-mysignet, i.e. the runner's home)
+# The "Node reachability probe" step reports which of these the runners can
+# actually reach. Note: `xcodebuild test` does not forward its environment
+# into the iOS-simulator test runner, so the UI suite gets these values via
+# ~/.btc-swift-node.env (written by the "simulator test config" step).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-tests
+  cancel-in-progress: false
+
+jobs:
+  node-tests:
+    # Self-hosted runners on a PUBLIC repo: never execute fork code.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, btc-swift]
+    timeout-minutes: 90
+    env:
+      BTC_SWIFT_NODE_HOST: ${{ vars.BTC_SWIFT_NODE_HOST || '127.0.0.1' }}
+      BTC_SWIFT_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
+      BTC_SWIFT_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
+      BTC_SWIFT_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner environment probe
+        run: |
+          echo "== uname =="; uname -a
+          sw_vers
+          echo "== Xcode =="
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "no /Applications/Xcode*.app"
+          echo "xcode-select: $(xcode-select -p 2>&1)"
+          echo "== swift =="
+          (which swift && swift --version) 2>&1 || echo "no swift"
+          echo "== brew =="
+          (which brew && brew --version | head -1) 2>&1 || echo "no brew"
+          echo "== bitcoin-cli =="
+          (which bitcoin-cli && bitcoin-cli --version | head -1) 2>&1 \
+            || ls /usr/local/bin/bitcoin-cli /opt/homebrew/bin/bitcoin-cli 2>/dev/null \
+            || echo "no bitcoin-cli"
+          echo "== datadir =="
+          ls -d "${BTC_SWIFT_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no node datadir in the runner home"
+          echo "== home =="; echo "$HOME"
+
+      - name: Node reachability probe
+        run: |
+          echo "P2P $BTC_SWIFT_NODE_HOST:$BTC_SWIFT_P2P_PORT"
+          nc -z -G 5 "$BTC_SWIFT_NODE_HOST" "$BTC_SWIFT_P2P_PORT" && echo "P2P REACHABLE" || echo "P2P UNREACHABLE"
+          echo "RPC $BTC_SWIFT_NODE_HOST:$BTC_SWIFT_RPC_PORT"
+          nc -z -G 5 "$BTC_SWIFT_NODE_HOST" "$BTC_SWIFT_RPC_PORT" && echo "RPC REACHABLE" || echo "RPC UNREACHABLE"
+
+      - name: Install xcodegen if absent
+        run: which xcodegen || brew install xcodegen
+
+      - name: Install bitcoin-cli if absent (cookie auth needs the local CLI + datadir)
+        run: which bitcoin-cli || brew install bitcoin
+
+      - name: Materialize node RPC cookie
+        # The cookie authenticates RPC to the dev node over Tailscale. Stored
+        # as a repo secret; regenerate with `gh secret set BTC_SWIFT_RPC_COOKIE
+        # < ~/.bitcoin-mysignet/signet/.cookie` after any node restart.
+        env:
+          BTC_SWIFT_RPC_COOKIE: ${{ secrets.BTC_SWIFT_RPC_COOKIE }}
+        run: |
+          DD="${BTC_SWIFT_DATADIR:-$HOME/.bitcoin-mysignet}"
+          mkdir -p "$DD/signet"
+          printf '%s' "$BTC_SWIFT_RPC_COOKIE" > "$DD/signet/.cookie"
+          chmod 600 "$DD/signet/.cookie"
+
+      - name: Locate developer tools
+        id: devtools
+        run: |
+          if [ -d /Applications/Xcode.app/Contents/Developer ]; then
+            echo "devdir=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_OUTPUT"
+            echo "has-xcode=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::/Applications/Xcode.app is missing — running the package suite under the CLT; skipping UI tests (xcodebuild requires full Xcode)"
+            echo "devdir=$(xcode-select -p)" >> "$GITHUB_OUTPUT"
+            echo "has-xcode=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Swift package tests
+        env:
+          DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
+        run: swift test
+
+      - name: Differential suite (BTC_SWIFT_DIFF=1, node-backed)
+        env:
+          DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
+          BTC_SWIFT_DIFF: "1"
+        run: swift test --filter DifferentialTests
+
+      - name: Generate Xcode project
+        if: steps.devtools.outputs.has-xcode == 'true'
+        run: xcodegen
+
+      - name: Ensure an iPhone simulator exists
+        id: sim
+        if: steps.devtools.outputs.has-xcode == 'true'
+        run: |
+          NAME=""
+          for TYPE in "iPhone 17" "iPhone 16" "iPhone 15"; do
+            if xcrun simctl list devices available | grep -q "$TYPE ("; then NAME="$TYPE"; break; fi
+          done
+          if [ -z "$NAME" ]; then
+            # Create one (simctl picks the newest iOS runtime by default).
+            for TYPE in "iPhone 17" "iPhone 16" "iPhone 15"; do
+              if xcrun simctl create "$TYPE" "$TYPE" >/dev/null 2>&1; then NAME="$TYPE"; break; fi
+            done
+          fi
+          if [ -z "$NAME" ]; then
+            echo "::warning::no usable iPhone simulator/runtime — skipping UI tests"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "simulator: $NAME"
+          echo "sim-name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Simulator test config (env file + screenshots symlink)
+        if: steps.devtools.outputs.has-xcode == 'true' && steps.sim.outputs.ok == 'true'
+        run: |
+          # xcodebuild does not forward its environment into the iOS-simulator
+          # test runner; UITests/BitcoinCLI.swift reads this file instead.
+          {
+            echo "BTC_SWIFT_NODE_HOST=$BTC_SWIFT_NODE_HOST"
+            echo "BTC_SWIFT_P2P_PORT=$BTC_SWIFT_P2P_PORT"
+            echo "BTC_SWIFT_RPC_PORT=$BTC_SWIFT_RPC_PORT"
+            [ -n "$BTC_SWIFT_DATADIR" ] && echo "BTC_SWIFT_DATADIR=$BTC_SWIFT_DATADIR"
+          } > "$HOME/.btc-swift-node.env"
+          # The suite's default screenshot dir is $HOME/src/btc-swift/docs/
+          # screenshots — symlink it into the checkout so the artifact
+          # upload below finds the PNGs (BTCSWIFT_SCREENSHOT_DIR does not
+          # reach the sim runner either).
+          mkdir -p "$HOME/src/btc-swift/docs"
+          ln -sfn "$GITHUB_WORKSPACE/docs/screenshots" "$HOME/src/btc-swift/docs/screenshots"
+
+      - name: UI tests (e2e on the signet node, screenshot capture)
+        if: steps.devtools.outputs.has-xcode == 'true' && steps.sim.outputs.ok == 'true'
+        env:
+          DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
+        run: >-
+          xcodebuild test -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
+          -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.sim-name }}'
+          -skipPackagePluginValidation -skipMacroValidation
+
+      - name: Upload e2e screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          # The sim-runner config step symlinked the suite's default
+          # screenshot dir into the checkout.
+          path: |
+            docs/screenshots/*.png
+            docs/screenshots/timings.json
+          if-no-files-found: warn

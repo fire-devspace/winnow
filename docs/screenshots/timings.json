@@ -1,16 +1,16 @@
 {
   "device" : "iPhone 17",
-  "run" : "2026-08-14T20:33:53Z",
+  "run" : "2026-08-15T01:12:49Z",
   "scenarios" : [
     {
       "name" : "onboarding",
       "steps" : [
         {
-          "seconds" : 1.86,
+          "seconds" : 1.78,
           "step" : "wallet-create"
         },
         {
-          "seconds" : 3.08,
+          "seconds" : 1.54,
           "step" : "backup→home"
         }
       ]
@@ -19,7 +19,7 @@
       "name" : "receive",
       "steps" : [
         {
-          "seconds" : 2.15,
+          "seconds" : 2.17,
           "step" : "address-shown"
         }
       ]
@@ -28,11 +28,11 @@
       "name" : "funding",
       "steps" : [
         {
-          "seconds" : 40.99,
+          "seconds" : 31.74,
           "step" : "mine-101-blocks"
         },
         {
-          "seconds" : 0.99,
+          "seconds" : 0.75,
           "step" : "mined→detected-by-filters"
         }
       ]
@@ -41,15 +41,15 @@
       "name" : "send",
       "steps" : [
         {
-          "seconds" : 0.65,
+          "seconds" : 0.67,
           "step" : "form→broadcast"
         },
         {
-          "seconds" : 0.01,
+          "seconds" : 0,
           "step" : "broadcast→echo/relay"
         },
         {
-          "seconds" : 6.09,
+          "seconds" : 5.66,
           "step" : "mine→confirmed"
         }
       ]
@@ -58,8 +58,8 @@
       "name" : "vault",
       "steps" : [
         {
-          "seconds" : 35.05,
-          "step" : "create"
+          "seconds" : 14.95,
+          "step" : "cosign-review"
         }
       ]
     },
@@ -67,19 +67,19 @@
       "name" : "import",
       "steps" : [
         {
-          "seconds" : 18.94,
+          "seconds" : 15.82,
           "step" : "verify"
         }
       ]
     }
   ],
   "totals" : {
-    "all" : 109.81,
-    "funding" : 41.98,
-    "import" : 18.94,
-    "onboarding" : 4.94,
-    "receive" : 2.15,
-    "send" : 6.75,
-    "vault" : 35.05
+    "all" : 75.08,
+    "funding" : 32.49,
+    "import" : 15.82,
+    "onboarding" : 3.32,
+    "receive" : 2.17,
+    "send" : 6.33,
+    "vault" : 14.95
   }
 }

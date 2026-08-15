@@ -65,7 +65,13 @@ struct VaultSignView: View {
                         .font(.system(.caption, design: .monospaced))
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        .accessibilityIdentifier("psbtField")
+                    Button("Paste from clipboard") {
+                        pasted = UIPasteboard.general.string ?? ""
+                    }
+                    .accessibilityIdentifier("psbtPasteButton")
                     Button("Add / combine PSBT") { addPasted() }
+                        .accessibilityIdentifier("addPSBTButton")
                         .disabled(pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } footer: {
                     Text("The first PSBT becomes the working copy; further PSBTs are combined into it (BIP174 combiner role).")

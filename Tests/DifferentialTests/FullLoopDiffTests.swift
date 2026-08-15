@@ -19,7 +19,7 @@ import WalletCore
 ///   race) and confirmation is detected by scanning, whoever mined the block.
 @Suite("full-loop differential", .enabled(if: diffEnabled))
 struct FullLoopDiffTests {
-    private let endpoint = PeerEndpoint(host: "127.0.0.1", port: BitcoinCLI.p2pPort)
+    private let endpoint = PeerEndpoint(host: BitcoinCLI.nodeHost, port: BitcoinCLI.p2pPort)
 
     /// Mines one block paying `script`, retrying while a racing block wins
     /// the tip instead of ours.
@@ -66,7 +66,7 @@ struct FullLoopDiffTests {
         await pool.start()
         defer { Task { await pool.stop() } }
         let peers = await pool.connectedPeers()
-        let peer = try #require(peers.first, "no connection to 127.0.0.1:\(BitcoinCLI.p2pPort)")
+        let peer = try #require(peers.first, "no connection to \(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)")
         let chain = try HeaderChain(params: params, storageURL: tempFileURL("headers.bin"))
         try await chain.sync(using: peer, timeout: .seconds(60))
         let tip = try UInt32(BitcoinCLI.blockCount())
