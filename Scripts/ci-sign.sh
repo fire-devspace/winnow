@@ -21,6 +21,7 @@ security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user
 openssl req -new -newkey rsa:2048 -nodes -keyout "$WORK/dist.key" \
   -out "$WORK/dist.csr" -subj "/CN=btc-swift-ci" 2>/dev/null
 JWT=$(swift "$(dirname "$0")/asc-jwt.swift" "$WORK/AuthKey.p8" "$ASC_KEY_ID" "$ASC_ISSUER_ID")
+echo "JWT minted (length ${#JWT})"
 export WORK
 BODY=$(python3 - <<'PYEOF'
 import json, os
@@ -32,8 +33,10 @@ PYEOF
 )
 RESPONSE=$(curl -sS -g -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
   -d "$BODY" \
+  -w '\n__HTTP_%{http_code}' \
   https://api.appstoreconnect.apple.com/v1/certificates)
-echo "$RESPONSE" | python3 - <<'PYEOF'
+echo "certificates POST: $(echo "$RESPONSE" | tail -1); body bytes: $(echo "$RESPONSE" | head -n -1 | wc -c)"
+echo "$RESPONSE" | head -n -1 | python3 - <<'PYEOF'
 import json, os, sys
 d = json.load(sys.stdin)
 if "errors" in d:
