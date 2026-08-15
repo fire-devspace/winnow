@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 KEY_ID="${ASC_KEY_ID:?set ASC_KEY_ID}"
 ISSUER="${ASC_ISSUER_ID:?set ASC_ISSUER_ID}"
-KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
+KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8}"
 BUNDLE_ID="com.btcswift.app"
 APP_NAME="btc-swift"
 API="https://api.appstoreconnect.apple.com/v1"

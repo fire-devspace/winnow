@@ -72,6 +72,8 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation
 
       - name: TestFlight groups (internal + external)
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/btc-swift-signing/AuthKey.p8
         run: |
           chmod +x Scripts/testflight.sh
           Scripts/testflight.sh wait-processing
