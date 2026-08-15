@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var connectedPeers: [PeerInfo] = []
     @State private var showEsploraWarning = false
     @State private var showReadSide = false
+    @State private var showPapers = false
 
     struct PeerInfo: Equatable, Identifiable {
         var id: String { endpoint }
@@ -117,6 +118,7 @@ struct SettingsView: View {
                     LabeledContent("WalletCore", value: WalletCore.version)
                     LabeledContent("BitcoinP2P", value: BitcoinP2P.version)
                     LabeledContent("Wallet ID", value: model.walletID ?? "—")
+                    Button("Design papers") { showPapers = true }
                 }
             }
             .navigationTitle("Settings")
@@ -132,6 +134,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showReadSide) {
                 ReadSideDocumentView()
+            }
+            .sheet(isPresented: $showPapers) {
+                DesignPapersView()
             }
         }
     }

@@ -293,7 +293,7 @@ final class AppModel {
         return words
     }
 
-    /// Imports a wallet bundle (docs/read-side.md §2.7.5): the state starts as
+    /// Imports a wallet bundle (docs/import.md): the state starts as
     /// the bundle claims and is then verified by forward-scanning from the
     /// bundle height. Returns the verification report, or nil when no peers
     /// were reachable yet — the regular sync loop covers the same ground.
@@ -386,7 +386,7 @@ final class AppModel {
     /// The resolved feerate (sat/vB): user override, then the opt-in esplora
     /// estimate when enabled, then the wallet's own observed feerates, then the
     /// static presets — clamped from below by the peers' BIP133 floor
-    /// (FeePolicy, docs/read-side.md §2.7 weakness 4).
+    /// (FeePolicy, docs/write-side.md §4).
     func resolvedFeeRate(priority: FeePolicy.Priority, override: Double?) async -> Double {
         let observed = await wallet?.observedFeeRates ?? []
         let serverEstimate = await esploraEstimate(for: priority)

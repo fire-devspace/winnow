@@ -50,25 +50,77 @@ struct CopyableTextBlock: View {
     }
 }
 
-/// The bundled design paper (docs/read-side.md), rendered as plain text so
-/// the esplora opt-in warning can link to it offline.
-struct ReadSideDocumentView: View {
+/// A bundled design paper, rendered as plain text so Settings can open it offline.
+struct DesignPaperView: View {
+    let resource: String
+    let title: String
+
     private var text: String {
-        guard let url = Bundle.main.url(forResource: "read-side", withExtension: "md"),
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "md"),
               let text = try? String(contentsOf: url, encoding: .utf8)
-        else { return "The bundled copy of docs/read-side.md could not be loaded." }
+        else { return "The bundled copy of docs/\(resource).md could not be loaded." }
         return text
     }
 
     var body: some View {
+        ScrollView {
+            Text(text)
+                .font(.footnote)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The bundled design paper (docs/read-side.md), rendered as plain text so
+/// the esplora opt-in warning can link to it offline.
+struct ReadSideDocumentView: View {
+    var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(text)
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+            DesignPaperView(resource: "read-side", title: "The Read Side")
+        }
+    }
+}
+
+/// Index of the bundled design papers (docs/).
+struct DesignPapersView: View {
+    private struct Paper: Identifiable {
+        var id: String { resource }
+        let resource: String
+        let title: String
+        let blurb: String
+    }
+
+    private let papers: [Paper] = [
+        Paper(resource: "mobile", title: "A phone wallet",
+              blurb: "What the device forces, and what the product refuses."),
+        Paper(resource: "read-side", title: "The read side",
+              blurb: "How the phone learns which coins are its own."),
+        Paper(resource: "write-side", title: "The write side",
+              blurb: "Build, price, sign, and get a transaction out."),
+        Paper(resource: "vaults", title: "Vaults",
+              blurb: "Shared custody without a coordinator server."),
+        Paper(resource: "import", title: "Import",
+              blurb: "The bundle is the history. There is no back-scan."),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List(papers) { paper in
+                NavigationLink {
+                    DesignPaperView(resource: paper.resource, title: paper.title)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(paper.title)
+                        Text(paper.blurb)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .navigationTitle("The Read Side")
+            .navigationTitle("Design papers")
             .navigationBarTitleDisplayMode(.inline)
         }
     }

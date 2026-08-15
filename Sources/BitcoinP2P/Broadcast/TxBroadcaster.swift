@@ -1,6 +1,6 @@
 import Foundation
 
-/// P2P transaction relay (docs/read-side.md §3 use case 4): announce via
+/// P2P transaction relay (docs/write-side.md §7): announce via
 /// `inv(MSG_WITNESS_TX)` to connected peers (pool default: 3), answer
 /// `getdata` with the raw transaction, and re-announce on an exponential
 /// backoff until the caller reports confirmation (observed via FilterSync

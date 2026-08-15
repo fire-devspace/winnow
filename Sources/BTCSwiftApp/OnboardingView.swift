@@ -3,7 +3,7 @@ import UIKit
 import WalletCore
 
 /// Create a fresh wallet (mnemonic shown once) or import a bundle with its
-/// history (docs/read-side.md: there is no historical back-scan — the bundle
+/// history (docs/import.md: there is no historical back-scan — the bundle
 /// *is* the history).
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model

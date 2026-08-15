@@ -1,8 +1,8 @@
 import BitcoinP2P
 import Foundation
 
-/// Feerate resolution (docs/read-side.md §2.7 weakness 4 — "fee estimation is
-/// blind" without a mempool view). Resolution order, strongest first:
+/// Feerate resolution (docs/write-side.md §4; the read-side names the
+/// blindness as weakness 4). Resolution order, strongest first:
 ///
 /// 1. an explicit **user override** (sat/vB);
 /// 2. the **median feerate observed** from the wallet's own recently confirmed

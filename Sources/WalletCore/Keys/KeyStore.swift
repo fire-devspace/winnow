@@ -36,7 +36,7 @@ public enum WalletSecret: Equatable, Sendable {
 }
 
 /// Secret storage for wallets, keyed by wallet ID. Implementations must keep
-/// secrets on the device and out of any cloud sync/backup (docs/read-side.md:
+/// secrets on the device and out of any cloud sync/backup (docs/mobile.md §5:
 /// the keys are the wallet).
 public protocol KeyStore: Sendable {
     /// Stores `secret` under `walletID`; throws `alreadyExists` if occupied.

@@ -20,7 +20,7 @@ private final class EffectCollector: @unchecked Sendable {
     }
 }
 
-/// A wallet import bundle (docs/read-side.md §2.7.5): everything the previous
+/// A wallet import bundle (docs/import.md): everything the previous
 /// wallet software knew — the descriptor and/or mnemonic, the known UTXOs and
 /// history, and the last height it scanned — so this wallet can resume by
 /// forward-scanning from that height. There is no historical back-scan; the
@@ -121,7 +121,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
 }
 
 /// The outcome of verifying an import bundle by forward-scanning from its
-/// height (docs/read-side.md §2.7.5). Discrepancies surface here, never
+/// height (docs/import.md §3). Discrepancies surface here, never
 /// silently: a bundle that claimed an already-spent UTXO shows up in
 /// `spentSinceBundle`.
 public struct ImportReport: Equatable, Sendable {
@@ -181,7 +181,7 @@ public struct ImportReport: Equatable, Sendable {
 }
 
 extension Wallet {
-    /// Seeds a wallet from an import bundle (docs/read-side.md §2.7.5). The
+    /// Seeds a wallet from an import bundle (docs/import.md). The
     /// wallet state starts exactly as the bundle claims; `verifyImport` then
     /// checks those claims against the chain. `creationHeight` becomes the
     /// bundle's `lastKnownHeight` — scanning resumes right after it.
@@ -278,7 +278,7 @@ extension Wallet {
 
     /// Verifies an imported bundle by forward-scanning from its height,
     /// consuming every matched block, and comparing the outcome against the
-    /// bundle's claims (docs/read-side.md §2.7.5). Mismatches — e.g. a claimed
+    /// bundle's claims (docs/import.md §3). Mismatches — e.g. a claimed
     /// UTXO discovered spent — surface in the report, never silently.
     public func verifyImport(_ bundle: ImportBundle, using sync: FilterSync) async throws -> ImportReport {
         let fromHeight = await sync.nextScanHeight

@@ -1,6 +1,6 @@
 /// WalletCore — the single-sig Taproot wallet (Phase 4), end-to-end on top of
 /// BitcoinCore (keys/scripts/descriptors) and BitcoinP2P (wire model, filter
-/// sync, broadcast). See docs/read-side.md for the design.
+/// sync, broadcast). Design papers in docs/ (mobile, read, write, vaults, import).
 ///
 /// - ``KeyStore`` / ``InMemoryKeyStore`` / ``KeychainStore``: secret storage
 ///   (BIP39 mnemonic or master xprv), this-device-only.
@@ -14,7 +14,7 @@
 ///   watch list, forward-only ``FilterSync`` scanning → UTXO set + history,
 ///   JSON persistence, send pipeline.
 /// - ``ImportBundle`` / ``ImportReport``: import with history, verified by
-///   forward-scanning from the bundle height (docs/read-side.md §2.7.5).
+///   forward-scanning from the bundle height (docs/import.md).
 /// - ``CoinSelection`` / ``FeePolicy``: largest-first selection with dust
 ///   guard; feefilter-floor/observed/preset/override feerate resolution.
 public enum WalletCore {
