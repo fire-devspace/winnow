@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>btc-swift — design papers</title>
+<meta name="description" content="Design papers for btc-swift, a private Bitcoin wallet for a phone. The phone is the constraint; each paper owns one job.">
+<style>
+  :root{
+    --canvas:#ffffff; --canvas-alt:#f5f5f7;
+    --ink:#1d1d1f; --ink-2:#6e6e73; --ink-3:#86868b; --hair:#d2d2d7;
+    --btc:#f7931a; --btc-ink:#b3660a;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --canvas:#000000; --canvas-alt:#101012;
+      --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#86868b; --hair:#2a2a2e;
+      --btc:#ff9f2e; --btc-ink:#ffb75c;
+    }
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:var(--canvas);color:var(--ink);
+    font-family:var(--sans);font-size:17px;line-height:1.5;
+    letter-spacing:-.01em;-webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--btc);outline-offset:4px;border-radius:6px}
+  .wrap{width:100%;max-width:44rem;margin:0 auto;padding:0 clamp(1.25rem,5vw,2rem)}
+  h1,h2{letter-spacing:-.035em;line-height:1.05;font-weight:650;text-wrap:balance}
+  h1{font-size:clamp(2.2rem,6vw,3.4rem);margin:clamp(2.5rem,7vw,4rem) 0 1rem}
+  .sub{font-size:clamp(1.05rem,2.2vw,1.25rem);line-height:1.45;color:var(--ink-2);font-weight:400}
+  nav{
+    position:sticky;top:0;z-index:60;
+    background:color-mix(in srgb, var(--canvas) 82%, transparent);
+    backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:1px solid var(--hair);
+  }
+  nav .bar{display:flex;align-items:center;justify-content:space-between;height:44px}
+  nav .mark{font-size:.92rem;font-weight:600}
+  nav .mark b{color:var(--btc)}
+  nav .nlinks{display:flex;gap:1.5rem;font-size:.8rem;color:var(--ink-2)}
+  nav .nlinks a:hover{color:var(--ink)}
+  .list{margin:2.4rem 0 4rem;border-top:1px solid var(--hair)}
+  article{padding:1.7rem 0;border-bottom:1px solid var(--hair)}
+  article .kicker{font-size:.8rem;font-weight:600;color:var(--btc-ink);letter-spacing:.01em;margin-bottom:.35rem}
+  article h2{font-size:1.45rem;margin-bottom:.45rem}
+  article p{color:var(--ink-2);font-size:1.02rem}
+  article a.lnk{color:var(--btc-ink);font-size:.95rem;display:inline-block;margin-top:.7rem}
+  article a.lnk:hover{text-decoration:underline;text-underline-offset:3px}
+  footer{background:var(--canvas-alt);border-top:1px solid var(--hair);
+    padding:2.2rem 0 3rem;font-size:.79rem;color:var(--ink-3);line-height:1.7}
+  footer a{color:var(--ink-2)}
+  footer a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap bar">
+    <a class="mark" href="index.html"><b>₿</b> btc-swift</a>
+    <div class="nlinks">
+      <a href="index.html#how">How it works</a>
+      <a href="papers.html">Papers</a>
+      <a href="https://github.com/posix4e/btc-swift">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap">
+  <h1>The phone is the constraint.</h1>
+  <p class="sub">Five short papers, separate on purpose. Each owns one job the device cannot drop. The landing page is the popularization; these are the arguments.</p>
+
+  <div class="list">
+    <article>
+      <p class="kicker">Framing</p>
+      <h2>A phone wallet</h2>
+      <p>What a phone will not be (a full node, a thin client of someone else’s node), and what that forces: foreground-only, this-device keychain, Taproot-only, fresh and forward-only, one dependency.</p>
+      <a class="lnk" href="mobile.md">Read mobile.md ›</a>
+    </article>
+    <article>
+      <p class="kicker">What’s mine?</p>
+      <h2>The read side</h2>
+      <p>Who scans, what they learn, what it costs. Compact filters by default, bounded mempool windows, an honest threat model, and why BIP37 is the historically important wrong answer.</p>
+      <a class="lnk" href="read-side.md">Read read-side.md ›</a>
+    </article>
+    <article>
+      <p class="kicker">How it pays</p>
+      <h2>The write side</h2>
+      <p>Coin selection, a fee policy that admits it is blind, signing that holds the seed for one call, silent-payment send, and P2P relay that survives the app being killed.</p>
+      <a class="lnk" href="write-side.md">Read write-side.md ›</a>
+    </article>
+    <article>
+      <p class="kicker">Shared custody</p>
+      <h2>Vaults</h2>
+      <p>Two Taproot policies — NUMS + <span style="font-family:var(--mono);font-size:.92em">multi_a</span> k-of-n, and MuSig2 n-of-n — coordinated by PSBTv2. No coordinator server.</p>
+      <a class="lnk" href="vaults.md">Read vaults.md ›</a>
+    </article>
+    <article>
+      <p class="kicker">Moving a wallet in</p>
+      <h2>Import</h2>
+      <p>There is no back-scan. The previous wallet ships its answers; this one checks them forward from a height. The bundle is the history.</p>
+      <a class="lnk" href="import.md">Read import.md ›</a>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><a href="index.html">btc-swift</a> — free and open source.<br>
+    Also as a set: <a href="https://github.com/posix4e/btc-swift/tree/main/docs">docs/ on GitHub</a>.</p>
+  </div>
+</footer>
+</body>
+</html>

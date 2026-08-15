@@ -22,9 +22,17 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Sources/BTCSwiftApp
-      # The design paper, bundled so Settings can render it offline (the
-      # esplora opt-in warning links here).
+      # Design papers, bundled so Settings can render them offline (the
+      # esplora opt-in warning links the read-side paper).
+      - path: docs/mobile.md
+        buildPhase: resources
       - path: docs/read-side.md
+        buildPhase: resources
+      - path: docs/write-side.md
+        buildPhase: resources
+      - path: docs/vaults.md
+        buildPhase: resources
+      - path: docs/import.md
         buildPhase: resources
     dependencies:
       - package: btc-swift

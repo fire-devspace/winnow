@@ -15,6 +15,7 @@ name: Node e2e
 # ~/.btc-swift-node.env (written by the "simulator test config" step).
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:

@@ -2,7 +2,7 @@
 
 A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one dependency.
 
-- **Pure P2P by default.** The read side is BIP157/158 compact block filters served by full-node peers — no server ever learns your addresses. Bounded **mempool windows** (short full-relay subscriptions while the Receive or Send screen is open) give 0-conf payment detection and propagation tracking without any server. See the design paper: [docs/read-side.md](docs/read-side.md).
+- **Pure P2P by default.** The read side is BIP157/158 compact block filters served by full-node peers — no server ever learns your addresses. Bounded **mempool windows** (short full-relay subscriptions while the Receive or Send screen is open) give 0-conf payment detection and propagation tracking without any server. Design papers, framed around the phone: [docs/](docs/README.md).
 - **Taproot only.** P2TR receiving (BIP86); no legacy address types, no ECDSA signing paths.
 - **Two modern multisig flavors.** MuSig2 (BIP327) n-of-n vaults and script-path k-of-n (`multi_a`, BIP387/388), coordinated over PSBTv2 (BIP370/371/373).
 - **Silent payments, send-side** (BIP352): pay reusable `sp1…` codes.
@@ -18,7 +18,7 @@ Architecture invariant: **all logic lives in the SPM package, where it is tested
 - `Sources/BlockchainBackend` — opt-in esplora client (never contacted unless enabled)
 - `Sources/WalletCore` — wallet/vault actors, sighash + signing, PSBTv2, coin selection, fee policy, import bundles
 - `Sources/BTCSwiftApp` — the iOS app (SwiftUI, iOS 17+)
-- `docs/` — design paper + webpage
+- `docs/` — [design papers](docs/README.md) (phone, read, write, vaults, import) + webpage
 - `Scripts/` — icon generation, App Store Connect API tooling, TestFlight pipeline
 
 ## Build & test

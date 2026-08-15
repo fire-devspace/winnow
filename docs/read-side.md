@@ -1,7 +1,7 @@
 # The Read Side: How a Private Mobile Bitcoin Wallet Learns What's Its Own
 
-*Design paper for btc-swift — a pure-P2P-by-default, fresh-wallet, Taproot-only iOS client.*
-*All numbers marked "approx." are order-of-magnitude estimates for orientation, not measurements; they are labeled as such wherever they appear. Exact protocol constants are exact.*
+*One paper in the btc-swift set. The phone itself is [A phone wallet](mobile.md); paying is [the write side](write-side.md); shared custody is [vaults](vaults.md); moving a wallet in is [import](import.md). This paper owns one question: how the phone learns which coins are its own.*
+*All numbers marked "approx." are order-of-magnitude estimates for orientation, not measurements; they are labeled as such wherever they appear. Exact protocol constants are exact. Signet UI timings are measured and live in `screenshots/timings.json`.*
 
 ---
 
@@ -23,7 +23,7 @@ Every realistic answer falls into one of two families:
 
 This paper walks through every realistic mechanism in both families, with honest cost/privacy/trust accounting, then walks the actual use cases of this product and concludes which mechanism serves each one — and why the answer, for this product, is client-side scanning by default, with a server only ever as an explicit, warned, user-initiated opt-in.
 
-**Scope note:** btc-swift is a *fresh-wallet* product. Wallets are created new in the app; a new wallet has no history, so scanning runs *forward* from the moment of creation. Existing wallets may be imported **only with their history included** — the user supplies an export bundle (descriptor/keys + known transactions and UTXOs + a last-known height) from their previous wallet software, and the app verifies and updates that history by scanning filters forward from the bundle's height. There is no historical back-scan machinery at all: catch-up cost is proportional to how stale the bundle is, and a bundle exported at the tip costs nothing. This constraint — chosen deliberately — is what makes the pure-P2P answer not merely acceptable but cheap.
+**Scope note:** btc-swift is a *fresh-wallet* product. Wallets are created new in the app; a new wallet has no history, so scanning runs *forward* from the moment of creation. Existing wallets may be imported **only with their history included** — the user supplies an export bundle (descriptor/keys + known transactions and UTXOs + a last-known height) from their previous wallet software, and the app verifies and updates that history by scanning filters forward from the bundle's height. There is no historical back-scan machinery at all: catch-up cost is proportional to how stale the bundle is, and a bundle exported at the tip costs nothing. This constraint — chosen deliberately — is what makes the pure-P2P answer not merely acceptable but cheap. The bundle format, the verification algorithm, and what a lying file can still do are specified in [import](import.md), not here.
 
 ---
 
@@ -71,7 +71,7 @@ Costs, stated plainly:
 - **Block headers** (needed to know the chain and anchor filter headers): exactly 80 bytes per block — approx. 75 MB for the entire historical chain, and *zero* for a fresh wallet that starts at the tip.
 - **Filters, steady state:** ~144 blocks/day × approx. 15–20 KB ≈ **3 MB/day** (approx.) of filter download. A once-daily app open pulls a few MB — comparable to loading a couple of web pages.
 - **Matched blocks:** only blocks that actually contain the wallet's transactions, ~1–2 MB each (exact: block size varies up to 4M weight units). For typical personal use this is rare — days to weeks apart.
-- **CPU/battery:** hashing and matching a filter against a watch list of thousands of scripts is milliseconds of work per block on a modern phone.
+- **CPU/battery:** hashing and matching a filter against a watch list of thousands of scripts is milliseconds of work per block on a modern phone. The signet UI suite measured mined→filter-detected at **0.75s** on an iPhone 17 simulator (2026-08-15, `screenshots/timings.json`) — that figure includes mining-propagation and the match, not just GCS lookup, and is a measurement on signet, not a mainnet bandwidth claim.
 
 ### 2.6 Server-side privacy designs (considered, and why none is the default)
 
@@ -96,19 +96,32 @@ Filters win the privacy argument; they lose elsewhere. Said louder than the stre
 2. **Mempool view: bounded by design, not absent.** Filters cover confirmed blocks only, so the steady state is confirmation-time visibility. But the client can open a **bounded mempool window** (§2.8): while the Receive screen is open — i.e., while a payment is actively expected — the app subscribes to full transaction relay and matches locally, so the payment appears as *unconfirmed* within seconds of broadcast. The limits are owned in the UI: the window exists only while the screen is open, anything relayed before it opened is missed, and 0-conf is never final against RBF/double-spend — the app says "unconfirmed", never "received". (The opt-in esplora path shows mempool-stage transactions without these bounds — one of the things the warning dialog can honestly list as the trade.)
 3. **Bandwidth is real, if modest.** ~3 MB/day (approx.) steady state is trivial on Wi-Fi and fine on cellular, but it is not zero, and a phone that hasn't synced in a month downloads ~100 MB (approx.) of filters to catch up. Mempool windows add ~180 KB/min (approx.) while open — bounded by a screen session.
 4. **Fee estimation is blind.** Without a persistent mempool view, the wallet cannot see the current fee market — and relayed transactions alone don't help, since a feerate needs input amounts, which means recursively fetching parent transactions (the bandwidth blowup returns through the back door). Mitigations: BIP133 `feefilter` messages from peers give the network's *minimum relay fee* floor; feerates of transactions in matched blocks give some signal; beyond that, conservative static presets with user override. The result is cruder than any mempool-aware estimator — the price of asking no one. Owned. (Again: the opt-in path gets real fee estimates.)
-5. **Fresh-wallet scope is what makes this viable.** Filters are cheap *because* scanning starts at creation and runs forward. Recovering an old wallet *privately from the chain* would mean back-scanning gigabytes of historical filters (approx.; multiple GB for a multi-year-old mainnet wallet) — so this product doesn't do that. Instead, **import requires the history to come with the wallet**: an export bundle from the previous wallet software carrying the descriptor/keys, the known transactions and UTXOs, and a last-known height. The app verifies the bundle by scanning filters forward from that height — discovering any spends since — which keeps the no-back-scan property absolute and makes import cost proportional to the bundle's staleness, not to the wallet's age.
+5. **Fresh-wallet scope is what makes this viable.** Filters are cheap *because* scanning starts at creation and runs forward. Recovering an old wallet *privately from the chain* would mean back-scanning gigabytes of historical filters (approx.; multiple GB for a multi-year-old mainnet wallet) — so this product doesn't do that. Instead, **import requires the history to come with the wallet**. The format and the residual lies a bundle can still tell (omitted old coins, a too-high height) are [import](import.md).
 
 ---
 
 ### 2.8 Bounded mempool windows
 
-The refinement that removes §2.7.2's sting, added after the first cut of this paper was written:
+The refinement that removes §2.7.2's sting:
 
 - **What:** a time- and screen-bounded subscription to *full transaction relay*. The client sets the relay bit in its `version` handshake for the window's duration, answers every transaction `inv` with `getdata`, and matches the results locally against a watch set (typically the one address currently displayed).
 - **Why it's private:** nothing is queried and nothing is revealed — the client receives public gossip, and a node that fetches every relayed transaction is indistinguishable from an ordinary full node. The cover traffic is the network's own normal behavior.
 - **Cost:** ~180 KB/min (approx.: ~5 tx/s × ~600 B) for the duration of the window — a few MB per receive session. Only ever while the relevant screen is open.
 - **Used for:** (a) receive-side 0-conf visibility while expecting a payment ("unconfirmed — awaiting confirmation" within seconds of the sender broadcasting); (b) send-side propagation confidence (peers echoing our txid back = the network has it).
-- **Still can't:** fee histograms (feerates need prevout amounts → recursive parent fetches → the bandwidth blowup returns); anything relayed before the window opened; safety of unconfirmed funds against RBF/double-spend — which is why the UI never presents 0-conf as final.
+- **Still can't:** fee histograms (feerates need prevout amounts → recursive parent fetches → the bandwidth blowup returns — fee policy lives on [the write side](write-side.md)); anything relayed before the window opened; safety of unconfirmed funds against RBF/double-spend — which is why the UI never presents 0-conf as final.
+
+### 2.9 Threat model (read path)
+
+What an adversary can do to *this* paper's mechanism, not to keys or broadcast (those are [mobile](mobile.md) §5 and [write-side](write-side.md) §8).
+
+| Adversary | Sees | Can do | Mitigation | Residual |
+|-----------|------|--------|------------|----------|
+| Honest-but-curious peer | Your IP; that you are a compact-filter client syncing from height H; the same filter bytes everyone else downloads | Log the connection; infer "this IP runs a light client" | Nothing about scripts or addresses is sent | The connection itself |
+| Lying-by-omission peer | Same | Serve a filter that drops your transaction | `getcfcheckpt` / `getcfheaders` from ≥2 peers; disagreement disconnects the minority; each `cfilter` must reproduce the pinned filter-header chain | Disagreement is detectable; *which* peer lied is not provable |
+| Fully eclipsed peer set | Same, and they agree with each other | Show a consistent false filter-header chain, hide payments, or stall the tip | Manual peers (Settings) so a user who has a node they trust can skip DNS seeds; headers still need PoW + chainwork | A partitioned phone can be lied to — the standard light-client eclipse caveat |
+| Network observer (not a peer) | Timing, sizes, destination IPs of the outbound pool | Infer that this IP is syncing filters from height H | No addresses on the wire | Height H plus "is a BIP157 client" |
+
+Filters are not consensus-committed. A future soft fork committing the filter header into the block would collapse the first three rows' residual column ([§5.1](#51-consensus-committed-block-filters)). Until then this table is the honest one.
 
 ---
 
@@ -119,18 +132,19 @@ The refinement that removes §2.7.2's sting, added after the first cut of this p
 | 1 | Fresh wallet, first launch | Nothing to scan; record creation height; sync filters forward from tip | A new key has no past — the read side starts empty and cheap by construction. |
 | 2 | Daily open / ongoing sync | `getcfilters` for blocks since stored checkpoint (~3 MB/day, approx.), match locally, fetch matched blocks only | Client-side matching means the phone learns its own history without anyone else learning it. |
 | 3 | Receiving a payment | While the Receive screen is open: mempool window (§2.8) shows the payment as **unconfirmed** within seconds; finality arrives via filter match at block confirmation | When you're actively expecting money, a short full-relay subscription is cheap, private, and exactly as honest as "unconfirmed" implies. |
-| 4 | Sending | UTXOs/amounts/scripts already local from scanning; fee from `feefilter` floor + observed feerates + presets; broadcast via P2P relay (`inv` → `getdata` → `tx`) to ≥3 peers, rebroadcast until mined | Everything needed to build and sign is already on the device; relay needs no account, no API, no server. |
+| 4 | Sending | UTXOs/amounts/scripts already local from scanning; the rest is [the write side](write-side.md) | The read side's job ends when the coins and their scripts are on the device. |
 | 5 | Watching a single address | One more scriptPubKey in the local match list — same filter stream, zero extra bandwidth | The P2P protocol has no per-address query (BIP37 is dead); the granularity is per-block filters regardless of watch-list size. |
-| 6 | Multisig vault (k-of-n or MuSig2 n-of-n) | Identical machinery — watch list derived from the vault's `tr()` descriptor | A vault is just a different set of scripts; the read side doesn't care. |
+| 6 | Multisig vault (k-of-n or MuSig2 n-of-n) | Identical machinery — watch list derived from the vault's `tr()` descriptor | A vault is just a different set of scripts; the read side doesn't care. Ceremony is [vaults](vaults.md). |
 | 7 | Balance & history display | Local storage, populated by §2.5 matches | After sync, display is a database read — no network at all. |
 | 8 | "Where's the tip?" | 80-byte block headers over P2P (`getheaders`), PoW + chainwork-checked | Headers are the sync clock and the anchor for the filter-header chain. |
-| 9 | "Did my tx get out?" | Peer `inv` gossip — peers echoing our txid back prove propagation; confirmation observed via filter match | Relay acceptance and network-wide relay are both observable without any server. |
-| 10 | Importing an existing wallet | User supplies a history bundle (descriptor/keys + known txs/UTXOs + height); app verifies by forward filter-scan from that height | Your old wallet already did the scanning — bring its answers with you, then let filters check and continue them. |
+| 9 | "Did my tx get out?" | Peer `inv` gossip — peers echoing our txid back prove propagation; confirmation observed via filter match | Relay acceptance is [write-side](write-side.md) §7; this paper observes the confirmation. |
+| 10 | Importing an existing wallet | History bundle, verified by forward filter-scan from its height | Specified in [import](import.md). |
 | 11 | Optional: everything, faster | User opts into an esplora backend in settings, past a warning naming the leak (address set, balances, IP) and linking to §2.2 | It's the user's threat model; the app's job is to make the trade explicit, not to make it for them. |
 
-One use case is deliberately **absent** from the default path:
+Two use cases are deliberately **absent** from the default path:
 
 - **Always-on mempool awareness** (instant notification of *unexpected* payments, background 0-conf, live fee markets) — all require either a persistent relay subscription (bandwidth/battery cost the product rejects) or a server (privacy cost the product rejects). Bounded windows (§2.8) cover the cases where the user is present and expecting something; everything else waits for confirmation.
+- **Silent-payment receive** (BIP352 scan). Send-side is implemented ([write-side](write-side.md) §6). Receive would mean tweak-checking every output in every block — a different, heavier read-side than matching a small watch list against BIP158 filters. Not in v1.
 
 ---
 
@@ -138,7 +152,7 @@ One use case is deliberately **absent** from the default path:
 
 For a fresh-wallet product, the read side reduces to a steady-state stream of ~3 MB/day (approx.) of compact filters, matched on-device, with full blocks fetched only on hits — plus bounded mempool windows (§2.8) for the moments a user is actively sending or expecting a payment. No server learns anything because no server is asked anything. The costs — confirmation-time visibility for unexpected payments, crude fee estimation, reliance on honest filter peers cross-checked by header comparison — are real, bounded, and stated to the user instead of hidden. Every server-based alternative either resurrects BIP37's mistake (letting someone else match against your addresses) or requires operating trusted infrastructure (self-host, OHTTP pair, TEE+ORAM enclave); those are the user's to choose, knowingly, one toggle away — never the default.
 
-**v1 is therefore: block headers + BIP157/158 compact filters + P2P transaction relay with bounded mempool windows, over `Network.framework`, talking only to full-node peers that signal `NODE_COMPACT_FILTERS` — with an esplora fast path available strictly as an opt-in behind an explicit privacy warning.**
+**v1 on the read side is therefore: block headers + BIP157/158 compact filters + bounded mempool windows, over `Network.framework`, talking only to full-node peers that signal `NODE_COMPACT_FILTERS` — with an esplora fast path available strictly as an opt-in behind an explicit privacy warning.** The phone those bytes land on, the spend, the vault, and the import are the other papers.
 
 ---
 
