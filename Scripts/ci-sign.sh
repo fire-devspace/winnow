@@ -37,9 +37,10 @@ RESPONSE=$(curl -sS -g -X POST -H "Authorization: Bearer $JWT" -H "Content-Type:
   -w '%{http_code}' \
   https://api.appstoreconnect.apple.com/v1/certificates)
 echo "certificates POST: HTTP $RESPONSE; body bytes: $(wc -c < "$WORK/cert-response.json")"
-cat "$WORK/cert-response.json" | python3 - <<'PYEOF'
+python3 - "$WORK/cert-response.json" <<'PYEOF'
 import json, os, sys
-d = json.load(sys.stdin)
+with open(sys.argv[1]) as f:
+    d = json.load(f)
 if "errors" in d:
     print(d["errors"][0].get("detail"), file=sys.stderr)
     sys.exit(1)
