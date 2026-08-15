@@ -7,6 +7,9 @@ on:
   push:
     tags: ["v*.*.*"]
 
+permissions:
+  contents: write # the GitHub Release step needs to create releases
+
 env:
   ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
   ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
