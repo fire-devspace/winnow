@@ -3,737 +3,100 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>btc-swift — a private Bitcoin wallet for iPhone</title>
-<meta name="description" content="A Taproot-only iPhone wallet that finds your coins by matching compact block filters on the device. No server is asked, so no server learns your addresses.">
+<title>Winnow — it finds your money. It asks no one.</title>
+<meta name="description" content="A private, Taproot-only Bitcoin wallet for iPhone. Compact block filters matched on-device. No servers learn your addresses.">
 <style>
-  :root{
-    --canvas:#ffffff;
-    --canvas-alt:#f5f5f7;
-    --ink:#1d1d1f;
-    --ink-2:#6e6e73;
-    --ink-3:#86868b;
-    --hair:#d2d2d7;
-    --btc:#f7931a;
-    --btc-ink:#b3660a;
-    --screen:#ffffff;
-    --screen-alt:#f2f2f7;
-    --screen-sep:#e5e5ea;
-    --shell:#1d1d1f;
-    --shadow:0 22px 60px rgba(0,0,0,.13), 0 3px 10px rgba(0,0,0,.05);
-    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
-  }
-  @media (prefers-color-scheme:dark){
-    :root:not([data-theme="light"]){
-      --canvas:#000000; --canvas-alt:#101012;
-      --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#86868b;
-      --hair:#2a2a2e;
-      --btc:#ff9f2e; --btc-ink:#ffb75c;
-      --screen:#1c1c1e; --screen-alt:#000000; --screen-sep:#38383a;
-      --shell:#0a0a0a;
-      --shadow:0 22px 60px rgba(0,0,0,.6), 0 3px 10px rgba(0,0,0,.4);
-    }
-  }
-  :root[data-theme="dark"]{
-    --canvas:#000000; --canvas-alt:#101012;
-    --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#86868b;
-    --hair:#2a2a2e;
-    --btc:#ff9f2e; --btc-ink:#ffb75c;
-    --screen:#1c1c1e; --screen-alt:#000000; --screen-sep:#38383a;
-    --shell:#0a0a0a;
-    --shadow:0 22px 60px rgba(0,0,0,.6), 0 3px 10px rgba(0,0,0,.4);
-  }
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  html { scroll-behavior:smooth; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.6 system-ui, sans-serif; }
+  .wrap { max-width:68rem; margin:0 auto; padding:0 1.25rem; }
+  a { color:var(--acc); text-decoration:none; }
+  a:hover { text-decoration:underline; }
 
-  *{box-sizing:border-box;margin:0;padding:0}
-  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
-  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-  body{
-    background:var(--canvas);color:var(--ink);
-    font-family:var(--sans);font-size:17px;line-height:1.5;
-    letter-spacing:-.01em;-webkit-font-smoothing:antialiased;
-    overflow-x:hidden;
-  }
-  a{color:inherit;text-decoration:none}
-  ::selection{background:rgba(247,147,26,.25)}
-  :focus-visible{outline:2px solid var(--btc);outline-offset:4px;border-radius:6px}
+  .bar { display:flex; justify-content:space-between; align-items:center; padding:1.1rem 1.25rem; }
+  .mark { font-weight:700; letter-spacing:-.01em; }
+  .mark b { color:var(--acc); }
+  .nlinks { display:flex; gap:1.2rem; font-size:.92rem; }
+  .nlinks a { color:var(--dim); }
+  .nlinks a:hover { color:var(--fg); text-decoration:none; }
 
-  .wrap{width:100%;max-width:62rem;margin:0 auto;padding:0 clamp(1.25rem,5vw,2rem)}
-  .narrow{max-width:44rem;margin-left:auto;margin-right:auto}
-  section{padding:clamp(5rem,12vw,9.5rem) 0;position:relative}
-  .alt{background:var(--canvas-alt)}
+  .hero { text-align:center; padding:4.5rem 1.25rem 2rem; }
+  .hero h1 { font-size:clamp(2rem, 5.5vw, 3.4rem); letter-spacing:-.03em; line-height:1.08; }
+  .hero h1 .soft { color:var(--dim); display:block; }
+  .hero .links { margin-top:1.6rem; display:flex; gap:1.4rem; justify-content:center; font-size:.95rem; }
 
-  h1,h2,h3{letter-spacing:-.035em;line-height:1.05;font-weight:650;text-wrap:balance}
-  h1{font-size:clamp(2.7rem,7.4vw,5rem)}
-  h2{font-size:clamp(2rem,5.4vw,3.4rem)}
-  h3{font-size:clamp(1.35rem,3vw,1.85rem);letter-spacing:-.028em}
-  .kicker{
-    font-size:clamp(.95rem,1.7vw,1.05rem);font-weight:600;color:var(--btc-ink);
-    letter-spacing:.006em;margin-bottom:.7rem;
-  }
-  .sub{
-    font-size:clamp(1.08rem,2.3vw,1.35rem);line-height:1.42;color:var(--ink-2);
-    font-weight:400;letter-spacing:-.012em;
-  }
-  .center{text-align:center}
-  .center .sub{margin-left:auto;margin-right:auto}
-  .caption{font-size:.82rem;color:var(--ink-3);letter-spacing:0}
+  .phone { max-width:340px; margin:2.5rem auto 0; }
+  .phone img, .shot img { width:100%; border-radius:28px; border:1px solid var(--line); display:block; }
+  .caption { color:var(--dim); font-size:.85rem; text-align:center; margin-top:.7rem; }
 
-  .links{display:flex;flex-wrap:wrap;gap:1.6rem;margin-top:1.9rem}
-  .center .links{justify-content:center}
-  .lnk{color:var(--btc-ink);font-size:1.06rem;display:inline-flex;align-items:center;gap:.28em}
-  .lnk .chev{transition:transform .22s ease}
-  .lnk:hover{text-decoration:underline;text-underline-offset:3px}
-  .lnk:hover .chev{transform:translateX(3px)}
+  .strip { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1.6rem; padding:3.5rem 0 1rem; }
+  .shot { text-align:center; }
+  .shot p { color:var(--dim); font-size:.88rem; margin-top:.6rem; }
+  .shot p b { color:var(--fg); font-weight:600; display:block; font-size:.95rem; }
 
-  /* ---------- nav ---------- */
-  nav{
-    position:sticky;top:0;z-index:60;background:color-mix(in srgb, var(--canvas) 82%, transparent);
-    backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
-    border-bottom:1px solid var(--hair);
-  }
-  nav .bar{display:flex;align-items:center;justify-content:space-between;height:44px}
-  nav .mark{font-size:.92rem;font-weight:600;letter-spacing:-.01em}
-  nav .mark b{color:var(--btc)}
-  nav .nlinks{display:flex;gap:1.5rem;font-size:.8rem;color:var(--ink-2)}
-  nav .nlinks a:hover{color:var(--ink)}
+  .fine { text-align:center; color:var(--dim); font-size:.9rem; padding:2.5rem 1.25rem 3.5rem; max-width:40rem; margin:0 auto; }
+  .fine a { color:var(--dim); text-decoration:underline; }
 
-  /* ---------- hero ---------- */
-  .hero{padding-top:clamp(3.5rem,8vw,6rem);padding-bottom:0;overflow:hidden}
-  .hero h1 .soft{color:var(--ink-3);display:block}
-  .hero .sub{max-width:34rem;margin-top:1.5rem}
-
-  /* the demonstration: stream → phone → nothing back */
-  .stage{position:relative;margin-top:clamp(2.5rem,6vw,4rem);padding-bottom:clamp(3rem,7vw,5rem)}
-  #flow{position:absolute;left:50%;transform:translateX(-50%);top:0;width:min(100%,62rem);
-    height:100%;display:block;pointer-events:none;z-index:0;
-    -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 14%,#000 86%,transparent 100%);
-    mask-image:linear-gradient(90deg,transparent 0,#000 14%,#000 86%,transparent 100%)}
-  .phone-wrap{position:relative;z-index:2;display:flex;justify-content:center}
-
-  /* ---------- device ---------- */
-  .device{
-    width:clamp(15rem,66vw,17.5rem);border-radius:2.9rem;padding:.55rem;
-    background:var(--shell);box-shadow:var(--shadow);position:relative;flex:none;
-  }
-  .device::after{ /* side button hint */
-    content:"";position:absolute;right:-2px;top:31%;width:2px;height:3.6rem;border-radius:2px;
-    background:var(--shell);opacity:.85;
-  }
-  .screen{
-    border-radius:2.45rem;background:var(--screen-alt);overflow:hidden;position:relative;
-    aspect-ratio:9/19.5;display:flex;flex-direction:column;
-  }
-  .screen img{width:100%;height:100%;object-fit:cover;display:block}
-  .island{
-    position:absolute;top:.6rem;left:50%;transform:translateX(-50%);
-    width:34%;height:1.35rem;border-radius:1rem;background:var(--shell);z-index:5;
-  }
-  /* iOS chrome */
-  .statusbar{display:flex;justify-content:space-between;align-items:center;
-    padding:.72rem 1.35rem .1rem;font-size:.62rem;font-weight:650;color:var(--ink);letter-spacing:0}
-  .statusbar .rgt{display:flex;gap:.28rem;align-items:center;opacity:.9}
-  .navtitle{padding:.7rem 1.05rem .5rem;font-size:1.32rem;font-weight:700;letter-spacing:-.03em;
-    display:flex;justify-content:space-between;align-items:flex-end}
-  .navtitle .act{font-size:.76rem;font-weight:450;color:#0a84ff;letter-spacing:-.01em}
-  .list{flex:1;overflow:hidden;padding:0 .72rem .72rem;display:flex;flex-direction:column;gap:.6rem}
-  .grp{background:var(--screen);border-radius:.72rem;overflow:hidden}
-  .grp-h{font-size:.55rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-    color:var(--ink-3);padding:.5rem .3rem .28rem .55rem}
-  .row{display:flex;justify-content:space-between;align-items:center;gap:.5rem;
-    padding:.5rem .68rem;border-bottom:.5px solid var(--screen-sep);font-size:.68rem}
-  .row:last-child{border-bottom:none}
-  .row .lab{color:var(--ink)}
-  .row .val{color:var(--ink-2);font-variant-numeric:tabular-nums}
-  .row .blue{color:#0a84ff}
-  .bal{padding:.85rem .68rem .9rem}
-  .bal .t{font-size:.6rem;color:var(--ink-2);margin-bottom:.2rem}
-  .bal .n{font-size:1.55rem;font-weight:700;letter-spacing:-.035em;font-variant-numeric:tabular-nums;
-    display:flex;align-items:baseline;gap:.22rem}
-  .bal .n span{font-size:.72rem;font-weight:600;color:var(--ink-2);letter-spacing:-.01em}
-  .bal .u{font-size:.55rem;color:var(--ink-3);margin-top:.18rem}
-  .tx{display:flex;justify-content:space-between;padding:.5rem .68rem;border-bottom:.5px solid var(--screen-sep)}
-  .tx:last-child{border-bottom:none}
-  .tx .l1{font-size:.68rem;font-weight:600}
-  .tx .l2{font-size:.52rem;color:var(--ink-3);font-family:var(--mono);margin-top:.1rem}
-  .tx .r1{font-size:.68rem;font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
-  .tx .r2{font-size:.52rem;color:var(--ink-3);text-align:right;margin-top:.1rem}
-  .pos{color:#30d158}
-  .pend{color:var(--btc)}
-  .tabbar{display:flex;justify-content:space-around;padding:.5rem .3rem .95rem;
-    border-top:.5px solid var(--screen-sep);background:var(--screen)}
-  .tab{display:flex;flex-direction:column;align-items:center;gap:.16rem;font-size:.48rem;color:var(--ink-3)}
-  .tab.on{color:var(--btc)}
-  .tab .ic{width:.95rem;height:.95rem;display:block}
-  .qr{margin:.5rem auto .4rem;width:7.6rem;height:7.6rem;border-radius:.5rem;
-    background:var(--screen);padding:.4rem;display:block}
-  .addr{font-family:var(--mono);font-size:.5rem;line-height:1.5;color:var(--ink-2);
-    text-align:center;padding:0 .9rem .2rem;word-break:break-all}
-  .pill{display:inline-flex;align-items:center;gap:.25rem;font-size:.5rem;font-weight:600;
-    padding:.18rem .45rem;border-radius:1rem;background:rgba(247,147,26,.14);color:var(--btc-ink)}
-  .warnrow{padding:.5rem .68rem;font-size:.55rem;line-height:1.45;color:var(--ink-2)}
-
-  /* ---------- readout under hero ---------- */
-  .proof{
-    display:flex;flex-wrap:wrap;justify-content:center;gap:.6rem 2.6rem;margin-top:clamp(2rem,4vw,2.8rem);
-    font-family:var(--mono);font-size:.78rem;color:var(--ink-3);letter-spacing:-.005em;
-  }
-  .proof b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
-  .proof .zero{color:var(--btc);font-weight:700}
-  .proof .item{display:flex;align-items:baseline;gap:.5ch}
-
-  /* ---------- side-by-side comparison ---------- */
-  .compare{display:grid;grid-template-columns:1fr 1fr;gap:clamp(1rem,2.5vw,1.6rem);
-    margin-top:clamp(2.8rem,6vw,4.5rem)}
-  .card{background:var(--canvas);border-radius:1.25rem;padding:clamp(1.5rem,3vw,2.1rem);
-    display:flex;flex-direction:column}
-  .card .dia{width:100%;height:auto;display:block;margin-bottom:clamp(1.2rem,2.5vw,1.8rem)}
-  .card .kicker{margin-bottom:.35rem}
-  .card .kicker.plain{color:var(--ink-3)}
-  .card h3{margin-bottom:.6rem}
-  .card p{color:var(--ink-2);font-size:1rem;line-height:1.5}
-  .card.lit{box-shadow:0 0 0 1px rgba(247,147,26,.28), 0 10px 34px rgba(0,0,0,.06)}
-  .dl{font-family:var(--sans);font-size:13px;fill:var(--ink-2)}
-  .dl.strong{fill:var(--ink);font-weight:600}
-  .dm{font-family:ui-monospace,Menlo,monospace;font-size:11px;fill:var(--ink-3)}
-  .dm.warm{fill:var(--btc-ink)}
-
-  /* ---------- feature rows ---------- */
-  .feat{display:grid;grid-template-columns:1fr 1fr;gap:clamp(2rem,6vw,5rem);align-items:center}
-  .feat + .feat{margin-top:clamp(3.5rem,7vw,5.5rem)}
-  .feat.flip .copy{order:2}
-  .feat .copy h3{margin-bottom:.7rem}
-  .feat .copy p{color:var(--ink-2);font-size:1.05rem;max-width:26rem}
-  .feat .shot{display:flex;justify-content:center}
-  .feat .device{width:clamp(13rem,40vw,15.5rem)}
-
-  /* ---------- spec strip ---------- */
-  .specs{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(1.5rem,4vw,2.5rem);
-    margin-top:clamp(2.5rem,6vw,4rem);text-align:center}
-  .spec .n{font-size:clamp(2rem,4.6vw,3rem);font-weight:650;letter-spacing:-.04em;
-    font-variant-numeric:tabular-nums;line-height:1}
-  .spec .n .u{font-size:.42em;font-weight:600;color:var(--ink-2);letter-spacing:-.01em}
-  .spec .l{margin-top:.55rem;font-size:.86rem;color:var(--ink-2);line-height:1.35}
-
-  /* ---------- screenshot gallery ---------- */
-  .shots-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,2.5vw,1.6rem);
-    margin-top:clamp(2.5rem,5vw,3.5rem)}
-  .shots-grid img{width:100%;height:auto;display:block;border-radius:1.1rem;
-    border:1px solid var(--hair);background:var(--screen-alt)}
-  .shots-grid figcaption{margin-top:.55rem;font-size:.8rem;color:var(--ink-3);text-align:center}
-  .shots-grid .mono{font-family:var(--mono);font-size:.9em}
-
-  /* ---------- honest list ---------- */
-  .honest{margin-top:clamp(2.5rem,5vw,3.5rem);border-top:1px solid var(--hair)}
-  .hrow{display:grid;grid-template-columns:9.5rem 1fr;gap:1.5rem;
-    padding:1.55rem 0;border-bottom:1px solid var(--hair);align-items:baseline}
-  .hrow dt{font-size:.9rem;font-weight:600;color:var(--btc-ink);letter-spacing:-.01em}
-  .hrow dd{font-size:1.02rem;color:var(--ink-2);line-height:1.5}
-  .hrow dd b{color:var(--ink);font-weight:600}
-
-  /* ---------- footer ---------- */
-  footer{background:var(--canvas-alt);border-top:1px solid var(--hair);
-    padding:2.6rem 0 3.4rem;font-size:.79rem;color:var(--ink-3);line-height:1.7}
-  footer .frow{display:flex;flex-wrap:wrap;justify-content:space-between;gap:1.2rem}
-  footer a{color:var(--ink-2)}
-  footer a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
-
-  .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.22,.61,.36,1),transform .7s cubic-bezier(.22,.61,.36,1)}
-  .reveal.in{opacity:1;transform:none}
-  @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
-
-  @media (max-width:860px){
-    .compare{grid-template-columns:1fr}
-  }
-  @media (max-width:760px){
-    .feat{grid-template-columns:1fr;gap:2.2rem}
-    .feat.flip .copy{order:0}
-    .feat .copy{text-align:center}
-    .feat .copy p{margin-left:auto;margin-right:auto}
-    .specs{grid-template-columns:repeat(2,1fr);gap:2.2rem 1.2rem}
-    .shots-grid{grid-template-columns:repeat(2,1fr)}
-    .hrow{grid-template-columns:1fr;gap:.35rem}
-    nav .nlinks{gap:1.1rem}
-  }
+  footer { border-top:1px solid var(--line); padding:1.6rem 1.25rem 2.5rem; display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem; font-size:.88rem; color:var(--dim); }
 </style>
 </head>
 <body>
 
-<nav>
-  <div class="wrap bar">
-    <span class="mark"><b>₿</b> btc-swift</span>
-    <div class="nlinks">
-      <a href="#how">How it works</a>
-      <a href="papers.html">Papers</a>
-      <a href="https://github.com/posix4e/btc-swift">GitHub</a>
-    </div>
+<div class="wrap bar">
+  <span class="mark"><b>₿</b> Winnow</span>
+  <div class="nlinks">
+    <a href="https://testflight.apple.com/join/83djpNE7">TestFlight</a>
+    <a href="/read-side">Paper</a>
+    <a href="https://github.com/posix4e/btc-swift">Source</a>
   </div>
-</nav>
+</div>
 
-<!-- ================= HERO — the claim, demonstrated ================= -->
 <header class="hero">
-  <div class="wrap center">
-    <h1>It finds your money.<span class="soft">It asks no one.</span></h1>
-    <p class="sub">A Taproot-only wallet for iPhone. It pulls compact block filters straight from Bitcoin peers and checks them against your keys on the device — so nothing ever has to be told which addresses are yours.</p>
-    <div class="links">
-      <a class="lnk" href="#how">See how it works <span class="chev">›</span></a>
-      <a class="lnk" href="papers.html">Read the papers <span class="chev">›</span></a>
-    </div>
+  <h1>It finds your money.<span class="soft">It asks no one.</span></h1>
+  <div class="links">
+    <a href="https://testflight.apple.com/join/83djpNE7">Join the beta →</a>
+    <a href="/read-side">How it works →</a>
   </div>
-
-  <div class="stage">
-    <canvas id="flow" aria-hidden="true"></canvas>
-    <div class="phone-wrap">
-      <div class="device">
-        <div class="island"></div>
-        <div class="screen">
-          <img src="screenshots/04-home-funded.png"
-               alt="btc-swift home screen captured on signet: confirmed balance, filter-scan sync status, and two confirmed received transactions"
-               fetchpriority="high" decoding="async">
-        </div>
-      </div>
-    </div>
-
-    <div class="wrap">
-      <div class="proof" aria-label="Live counters for this demonstration">
-        <span class="item">filters checked <b id="c-filters">0</b></span>
-        <span class="item">blocks fetched <b id="c-blocks">0</b></span>
-        <span class="item">addresses revealed <b class="zero" id="c-sent">0</b></span>
-      </div>
-      <p class="caption center" style="margin-top:.85rem">Filters stream in. Matching happens on the phone. Nothing goes back.<br>The screen above is an unretouched capture from the automated end-to-end run against signet.</p>
-    </div>
+  <div class="phone">
+    <img src="screenshots/04-home-funded.png" alt="Winnow home screen: a confirmed balance discovered by on-device filter matching, two received transactions listed">
+    <p class="caption">Every screenshot here is a real capture from the automated end-to-end run.</p>
   </div>
 </header>
 
-<!-- ================= HOW ================= -->
-<section id="how" class="alt">
-  <div class="wrap">
-    <div class="center narrow">
-      <p class="kicker">How it works</p>
-      <h2>Bitcoin has no address index.</h2>
-      <p class="sub" style="margin-top:1.1rem">So every wallet has to answer one question — <em>which coins are mine?</em> — and the answer decides who learns about you.</p>
-    </div>
-
-    <div class="compare">
-      <article class="card">
-        <svg class="dia" viewBox="0 0 420 190" role="img" aria-label="Your addresses are sent to an indexer, which learns your whole wallet">
-          <rect x="6" y="62" width="118" height="66" rx="14" fill="none" stroke="var(--hair)" stroke-width="1.5"/>
-          <text x="65" y="91" text-anchor="middle" class="dl">your</text>
-          <text x="65" y="108" text-anchor="middle" class="dl">phone</text>
-
-          <path d="M136 88 H272" stroke="var(--btc)" stroke-width="1.6" stroke-dasharray="5 5"/>
-          <path d="M266 82 l8 6 -8 6" fill="none" stroke="var(--btc)" stroke-width="1.6"/>
-          <text x="204" y="74" text-anchor="middle" class="dm warm">your addresses</text>
-
-          <path d="M272 112 H136" stroke="var(--btc)" stroke-width="1.6" stroke-dasharray="5 5"/>
-          <path d="M142 106 l-8 6 8 6" fill="none" stroke="var(--btc)" stroke-width="1.6"/>
-          <text x="204" y="133" text-anchor="middle" class="dm warm">your history</text>
-
-          <rect x="284" y="52" width="130" height="86" rx="14" fill="none" stroke="var(--btc)" stroke-width="1.5"/>
-          <text x="349" y="83" text-anchor="middle" class="dl strong">indexer</text>
-          <text x="349" y="103" text-anchor="middle" class="dm warm">balance · history</text>
-          <text x="349" y="119" text-anchor="middle" class="dm warm">counterparties · IP</text>
-        </svg>
-        <p class="kicker plain">Most wallets</p>
-        <h3>Ask a server.</h3>
-        <p>You hand an indexer your addresses and it answers. Now it knows your balance, your history and who you pay, tied to your IP. “We don't log” is a policy, not a mechanism — the question itself is the leak.</p>
-      </article>
-
-      <article class="card lit">
-        <svg class="dia" viewBox="0 0 420 190" role="img" aria-label="Public filters flow to your phone, which matches on the device and sends nothing back">
-          <rect x="6" y="52" width="130" height="86" rx="14" fill="none" stroke="var(--hair)" stroke-width="1.5"/>
-          <text x="71" y="83" text-anchor="middle" class="dl">peers</text>
-          <text x="71" y="103" text-anchor="middle" class="dm">the same bytes</text>
-          <text x="71" y="119" text-anchor="middle" class="dm">for everyone</text>
-
-          <path d="M148 88 H278" stroke="var(--ink-3)" stroke-width="1.6"/>
-          <path d="M272 82 l8 6 -8 6" fill="none" stroke="var(--ink-3)" stroke-width="1.6"/>
-          <text x="210" y="74" text-anchor="middle" class="dm">block filters</text>
-
-          <path d="M278 112 H148" stroke="var(--hair)" stroke-width="1.4" stroke-dasharray="2 7"/>
-          <text x="210" y="133" text-anchor="middle" class="dm">nothing</text>
-
-          <rect x="290" y="56" width="124" height="78" rx="14" fill="none" stroke="var(--btc)" stroke-width="1.8"/>
-          <text x="352" y="88" text-anchor="middle" class="dl strong">your phone</text>
-          <text x="352" y="108" text-anchor="middle" class="dm warm">matches here</text>
-        </svg>
-        <p class="kicker">btc-swift</p>
-        <h3>Ask no one.</h3>
-        <p>Peers send a small summary of every block — about 15 KB, identical for everyone who asks. Your phone tests each one against its own keys and pulls a full block only on a hit. Your keys never leave it.</p>
-      </article>
-    </div>
+<div class="wrap strip">
+  <div class="shot">
+    <img src="screenshots/03-receive.png" alt="Receive screen with a fresh Taproot address and QR code">
+    <p><b>Hand over an address.</b>While this screen is open, it privately watches relay traffic — unconfirmed shows in seconds.</p>
   </div>
-</section>
-
-<!-- ================= THE APP ================= -->
-<section id="app">
-  <div class="wrap">
-    <div class="center narrow">
-      <p class="kicker">The app</p>
-      <h2>Modern Bitcoin. Nothing else.</h2>
-      <p class="sub" style="margin-top:1.1rem">Taproot only, so the legacy matrix simply isn't in the binary. Every path you can take is one of these.</p>
-      <p class="caption" style="margin-top:.8rem">Every screen on this page is an unretouched capture from the automated end-to-end suite running against signet.</p>
-    </div>
-
-    <div class="feat" style="margin-top:clamp(3.5rem,8vw,6rem)">
-      <div class="copy">
-        <p class="kicker">Receive</p>
-        <h3>A fresh address, every time.</h3>
-        <p>Taproot receiving addresses derived on the device. While the Receive screen is open, the wallet privately watches live transaction relay and flags incoming payments as “unconfirmed” within seconds; they count once confirmed in a block — 0-conf is never called received.</p>
-      </div>
-      <div class="shot">
-        <div class="device">
-          <div class="island"></div>
-          <div class="screen">
-            <img src="screenshots/03-receive.png"
-                 alt="btc-swift receive screen captured on signet: QR code, fresh tb1p taproot address, and the note that incoming payments show as unconfirmed while the screen is open"
-                 loading="lazy" decoding="async">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feat flip">
-      <div class="copy">
-        <p class="kicker">Send</p>
-        <h3>See it before you sign it.</h3>
-        <p>Every payment is reviewed in full — destination, amount, fee, rate and inputs — before a signature exists. Pay a normal address or a reusable <span style="font-family:var(--mono);font-size:.9em">sp1…</span> silent-payment code.</p>
-      </div>
-      <div class="shot">
-        <div class="device">
-          <div class="island"></div>
-          <div class="screen">
-            <img src="screenshots/06-send-review.png"
-                 alt="btc-swift send review captured on signet: destination, amount, fee, rate, inputs and change, all shown before signing"
-                 loading="lazy" decoding="async">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feat">
-      <div class="copy">
-        <p class="kicker">Vaults</p>
-        <h3>Shared custody, on one screen.</h3>
-        <p>MuSig2 vaults that look like an ordinary single signature on-chain, and k-of-n vaults for a 2-of-3. Cosigning shows you every destination and the fee before your key is used.</p>
-      </div>
-      <div class="shot">
-        <div class="device">
-          <div class="island"></div>
-          <div class="screen">
-            <img src="screenshots/15-vault-cosign.png"
-                 alt="btc-swift vault cosigning captured on signet: the review section showing destination, vault change, fee and sighash before any key is used"
-                 loading="lazy" decoding="async">
-          </div>
-        </div>
-      </div>
-    </div>
+  <div class="shot">
+    <img src="screenshots/07-send-broadcast.png" alt="Send screen showing transaction relayed to peers">
+    <p><b>Send.</b>Signed on-device, relayed to ordinary Bitcoin peers. No API, no account.</p>
   </div>
-</section>
-
-<!-- ================= SPECS ================= -->
-<section id="specs" class="alt">
-  <div class="wrap">
-    <div class="center narrow">
-      <p class="kicker">Built small on purpose</p>
-      <h2>Less to trust.</h2>
-    </div>
-    <div class="specs">
-      <div class="spec">
-        <div class="n">1</div>
-        <div class="l">runtime dependency —<br>Bitcoin Core's libsecp256k1</div>
-      </div>
-      <div class="spec">
-        <div class="n">203</div>
-        <div class="l">tests against<br>official BIP vectors</div>
-      </div>
-      <div class="spec">
-        <div class="n">~3<span class="u">MB</span></div>
-        <div class="l">per day of filters,<br>steady state</div>
-      </div>
-      <div class="spec">
-        <div class="n">0</div>
-        <div class="l">servers asked<br>by default</div>
-      </div>
-    </div>
+  <div class="shot">
+    <img src="screenshots/08-send-confirmed.png" alt="Send screen showing transaction seen in a block">
+    <p><b>Confirmed.</b>Seen by its own compact filters, not by a server’s say-so.</p>
   </div>
-</section>
-
-<!-- ================= SCREENSHOTS ================= -->
-<section id="screenshots">
-  <div class="wrap">
-    <div class="center narrow">
-      <p class="kicker">Proof, not mockups</p>
-      <h2>Every screen, from the test suite.</h2>
-      <p class="sub" style="margin-top:1.1rem">Unretouched captures from the automated end-to-end suite: the app runs against a local signet node while the test creates the wallet, mines blocks to it, spends from it, builds a vault and verifies an import. Per-scenario timings from the latest run are in <a class="lnk mono" href="screenshots/timings.json">timings.json</a>, regenerated with the screenshots on every run.</p>
-    </div>
-    <div class="shots-grid">
-      <figure>
-        <img src="screenshots/01-onboarding.png"
-             alt="btc-swift onboarding on signet: create or import a wallet"
-             loading="lazy" decoding="async">
-        <figcaption>Onboarding</figcaption>
-      </figure>
-      <figure>
-        <img src="screenshots/07-send-broadcast.png"
-             alt="btc-swift send status captured on signet: transaction broadcast, relayed to a peer, awaiting confirmation"
-             loading="lazy" decoding="async">
-        <figcaption>Broadcast, relayed to peers</figcaption>
-      </figure>
-      <figure>
-        <img src="screenshots/08-send-confirmed.png"
-             alt="btc-swift send status captured on signet: seen in a block"
-             loading="lazy" decoding="async">
-        <figcaption>Seen in a block</figcaption>
-      </figure>
-      <figure>
-        <img src="screenshots/11-vault-list.png"
-             alt="btc-swift vault list captured on signet: a saved 2-of-3 script-path vault"
-             loading="lazy" decoding="async">
-        <figcaption>Vaults</figcaption>
-      </figure>
-      <figure>
-        <img src="screenshots/13-esplora-warning.png"
-             alt="btc-swift esplora opt-in warning captured on signet, naming exactly what the server backend learns"
-             loading="lazy" decoding="async">
-        <figcaption>The opt-in, behind its warning</figcaption>
-      </figure>
-      <figure>
-        <img src="screenshots/14-import-report.png"
-             alt="btc-swift import verification report captured on signet: bundle verified by forward filter scan"
-             loading="lazy" decoding="async">
-        <figcaption>Import, verified</figcaption>
-      </figure>
-    </div>
+  <div class="shot">
+    <img src="screenshots/10-vault-create.png" alt="Creating a 2-of-3 multisig vault">
+    <p><b>Vaults.</b>MuSig2 n-of-n and k-of-n multisig, coordinated with PSBTs.</p>
   </div>
-</section>
-
-<!-- ================= HONEST ================= -->
-<section id="trade">
-  <div class="wrap">
-    <div class="narrow">
-      <p class="kicker">The trade</p>
-      <h2>Asking no one costs something.</h2>
-      <p class="sub" style="margin-top:1.1rem">Every wallet makes this trade. Most don't tell you. Here is ours, in full.</p>
-
-      <dl class="honest">
-        <div class="hrow">
-          <dt>Slower news</dt>
-          <dd>Payments appear <b>when they confirm in a block</b> — with one bounded exception: while the Receive screen is open, the app privately watches live relay traffic (it fetches every relayed transaction, indistinguishable from a full node, so nothing is revealed) and shows incoming payments as <b>unconfirmed in seconds</b>. Close the screen and the window closes. Everything else waits for confirmation — and unconfirmed is never called received.</dd>
-        </div>
-        <div class="hrow">
-          <dt>Coarser fees</dt>
-          <dd>Fees come from <b>what peers will relay and what you've paid before</b>, not a live fee market. Good enough to confirm; honest about being blunt.</dd>
-        </div>
-        <div class="hrow">
-          <dt>Bring your history</dt>
-          <dd>A new wallet scans forward from the day you make it. Moving an existing one in means <b>bringing its history with you</b> — never handing a server your keys to re-scan.</dd>
-        </div>
-        <div class="hrow">
-          <dt>Sending still shows</dt>
-          <dd>Filters protect what you <em>read</em>. Broadcasting a payment still <b>links your address to your transaction</b> at the peers you send through.</dd>
-        </div>
-        <div class="hrow">
-          <dt>An exit, if you want it</dt>
-          <dd>A server backend is <b>one switch away</b>, off by default, behind a warning that names exactly what you give up.</dd>
-        </div>
-      </dl>
-    </div>
+  <div class="shot">
+    <img src="screenshots/13-esplora-warning.png" alt="Warning dialog explaining the privacy cost of enabling the esplora fast path">
+    <p><b>One shortcut, clearly priced.</b>An esplora fast path exists. It’s off by default and tells you exactly what it costs.</p>
   </div>
-</section>
-
-<!-- ================= STATUS ================= -->
-<section id="status" class="alt center">
-  <div class="wrap narrow">
-    <p class="kicker">Where it is</p>
-    <h2>Running on signet today.</h2>
-    <p class="sub" style="margin-top:1.1rem">The protocol core, both multisig schemes and silent payments are complete and vector-tested. The app runs on signet — Bitcoin's test network — while mainnet gets the care it deserves.</p>
-    <div class="links">
-      <a class="lnk" href="papers.html">Read the design papers <span class="chev">›</span></a>
-      <a class="lnk" href="https://github.com/posix4e/btc-swift">View the source <span class="chev">›</span></a>
-    </div>
+  <div class="shot">
+    <img src="screenshots/12-settings-peers.png" alt="Settings screen listing connected full-node peers">
+    <p><b>The whole backend.</b>A few ordinary full nodes. That’s the entire server infrastructure.</p>
   </div>
-</section>
+</div>
+
+<p class="fine">Taproot-only · MuSig2 + k-of-n vaults · silent payments · one dependency · <a href="https://github.com/posix4e/btc-swift">fully open source</a> · measured timings from the last run: <a href="screenshots/timings.json">timings.json</a></p>
 
 <footer>
-  <div class="wrap frow">
-    <p>btc-swift — free and open source.<br>Bitcoin-only, signet-first, mainnet-careful.</p>
-    <p style="text-align:right">
-      <a href="papers.html">Design papers</a> · <a href="read-side.md">read side</a><br>
-      <a href="https://github.com/posix4e/btc-swift">github.com/posix4e/btc-swift</a><br>
-      This page loads nothing from anyone else — like the wallet.
-    </p>
-  </div>
+  <span>Winnow — pure-P2P Bitcoin wallet for iOS</span>
+  <span><a href="/read-side">The read side (design paper)</a> · <a href="/privacy">Privacy</a></span>
 </footer>
 
-<script>
-(function(){
-  /* ---- scroll reveals ---- */
-  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var targets = document.querySelectorAll('.feat, .specs, .honest, .proof, .shots-grid');
-  targets.forEach(function(el){ el.classList.add('reveal'); });
-  if(reduce || !('IntersectionObserver' in window)){
-    targets.forEach(function(el){ el.classList.add('in'); });
-  } else {
-    var io = new IntersectionObserver(function(entries){
-      entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
-    }, {rootMargin:'0px 0px -12% 0px', threshold:.08});
-    targets.forEach(function(el){ io.observe(el); });
-    /* Safety net: content must never stay invisible because an observer did
-       not fire (prerender, restored tab, odd viewport). */
-    setTimeout(function(){ targets.forEach(function(el){ el.classList.add('in'); }); }, 1600);
-  }
-
-  /* ---- the demonstration: filters flow in, match on the phone, nothing returns ---- */
-  var cv = document.getElementById('flow');
-  if(!cv) return;
-  var ctx = cv.getContext('2d');
-  var stage = cv.parentElement;
-
-  var css = getComputedStyle(document.documentElement);
-  function tok(n, fb){ var v = css.getPropertyValue(n).trim(); return v || fb; }
-  var COOL, WARM, HAIR;
-  function readTokens(){
-    var s = getComputedStyle(document.documentElement);
-    COOL = (s.getPropertyValue('--ink-3').trim()||'#86868b');
-    WARM = (s.getPropertyValue('--btc').trim()||'#f7931a');
-    HAIR = (s.getPropertyValue('--hair').trim()||'#d2d2d7');
-  }
-  readTokens();
-  if(window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', readTokens);
-
-  var W=0,H=0,dpr=1,laneY=0,midX=0,gateHalf=0;
-  /* First match lands quickly — the whole point should be visible on arrival. */
-  var ticks=[], flares=[], acc=0, since=0, gap=1.1, t0=0, raf=null, running=false;
-  var nFilters=0, nBlocks=0, balance=124000;
-  var eF=document.getElementById('c-filters'), eB=document.getElementById('c-blocks'),
-      eBal=document.getElementById('bal-n'), eU=document.getElementById('utxo-n'),
-      eScan=document.getElementById('scan-n');
-  var utxos=3, scanH=262144;
-
-  function resize(){
-    dpr = Math.min(devicePixelRatio||1, 2);
-    W = stage.clientWidth; H = stage.clientHeight;
-    cv.style.width = W+'px'; cv.style.height = H+'px';
-    cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
-    ctx.setTransform(dpr,0,0,dpr,0,0);
-    var dev = stage.querySelector('.device');
-    var db = dev.getBoundingClientRect(), sb = stage.getBoundingClientRect();
-    midX = db.left - sb.left + db.width/2;
-    gateHalf = db.width/2;
-    laneY = Math.max(26, db.top - sb.top + db.height*0.30);
-  }
-
-  /* Varied heights so the lane reads as a signal, not a measuring scale. */
-  function mkTick(x){ return {x:x, matched:false, s:0.25 + Math.random()*1.4}; }
-  function spawn(){ ticks.push(mkTick(W + 20)); nFilters++; }
-
-  /* Pre-populate the lane so the stream reads as already flowing on arrival,
-     rather than filling in one tick at a time after load. */
-  function prime(){
-    ticks.length = 0;
-    for(var x = W + 20; x > -20; x -= 31 + Math.random()*16){ ticks.push(mkTick(x)); }
-    nFilters = ticks.length;            /* absolute, so re-priming can't double-count */
-    /* Light the tick that has just cleared the phone, so the still frame alone
-       tells the story: public stream in, one match found on the device. */
-    var best = null, bestD = Infinity;
-    for(var i=0;i<ticks.length;i++){
-      var d = midX - gateHalf - ticks[i].x;      /* just past the phone, moving left */
-      if(d > 0 && d < bestD){ bestD = d; best = ticks[i]; }
-    }
-    if(best){ best.matched = true; nBlocks = 1; }
-    if(eF) eF.textContent = nFilters.toLocaleString();
-    if(eB) eB.textContent = nBlocks.toLocaleString();
-  }
-
-  /* Paints the current state. dt = 0 renders a still composition. */
-  function render(dt){
-    ctx.clearRect(0,0,W,H);
-
-    if(dt > 0){
-      acc += dt; since += dt;
-      while(acc >= 0.5){ acc -= 0.5; spawn(); }
-    }
-
-    /* No baseline rule: ticks alone read as a signal passing through, whereas
-       marks sitting on a line read as a measuring scale. */
-    for(var i=ticks.length-1;i>=0;i--){
-      var t = ticks[i];
-      t.x -= 74*dt;
-      /* a filter meets the phone: it is tested here, on the device */
-      if(dt > 0 && !t.matched && Math.abs(t.x - midX) < 6 && since >= gap){
-        t.matched = true; since = 0; gap = 2.4 + Math.random()*2.6;
-        nBlocks++; utxos++; balance += 8000 + Math.floor(Math.random()*9)*1000;
-        flares.push({x: midX, y: laneY, r: 0, a: 1});
-        if(eBal) eBal.textContent = balance.toLocaleString();
-        if(eU) eU.textContent = utxos + ' UTXOs';
-      }
-      var inside = Math.abs(t.x - midX) < gateHalf;
-      ctx.globalAlpha = inside ? 0.18 : (t.matched ? 0.95 : 0.30 + 0.42*t.s);
-      ctx.fillStyle = t.matched ? WARM : COOL;
-      var w = t.matched ? 3.4 : 2, h = t.matched ? 17 : 7 + 15*t.s;
-      ctx.fillRect(t.x - w/2, laneY - h/2, w, h);
-      ctx.globalAlpha = 1;
-      if(t.x < -30) ticks.splice(i,1);
-    }
-
-    for(var j=flares.length-1;j>=0;j--){
-      var f = flares[j];
-      f.r += 62*dt; f.a -= dt*1.15;
-      if(f.a <= 0){ flares.splice(j,1); continue; }
-      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI*2);
-      ctx.strokeStyle = WARM; ctx.globalAlpha = Math.max(0, f.a)*.6; ctx.lineWidth = 1.4; ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
-    if(dt > 0) scanH += Math.random() < dt*0.9 ? 1 : 0;
-    if(eF) eF.textContent = nFilters.toLocaleString();
-    if(eB) eB.textContent = nBlocks.toLocaleString();
-    if(eScan) eScan.textContent = 'block ' + scanH.toLocaleString();
-  }
-
-  function drawOnce(){ render(0); }
-
-  function frame(now){
-    if(!t0) t0 = now;
-    var dt = Math.min(0.05, (now-t0)/1000); t0 = now;
-    render(dt);
-    raf = requestAnimationFrame(frame);
-  }
-
-  function start(){ if(running || reduce) return; running = true; t0 = 0; raf = requestAnimationFrame(frame); }
-  function stop(){ running = false; if(raf) cancelAnimationFrame(raf); raf = null; }
-
-  /* Reduced motion: one composed still — the stream populated and a couple of
-     matches already found, so the idea reads without anything moving. */
-  function staticFrame(){ prime(); render(0); }
-
-  /* Re-measure, and refill the lane if the previous measurement was too narrow
-     to populate it (a page laid out at zero width in a hidden/background tab). */
-  function remeasure(){
-    var was = running;
-    stop();
-    resize();
-    if(reduce){ staticFrame(); return; }
-    if(ticks.length < Math.floor(W/74)) prime();
-    drawOnce();
-    if(was) start();
-  }
-  var ro = new ResizeObserver(remeasure);
-  ro.observe(stage);
-  addEventListener('resize', remeasure);
-  document.addEventListener('visibilitychange', function(){ document.hidden ? stop() : start(); });
-
-  /* Init synchronously: a page opened in a background tab gets no rAF at all,
-     so the composition must be painted without waiting for one. */
-  resize();
-  if(reduce){
-    staticFrame();
-  } else {
-    prime();
-    drawOnce();
-    start();
-  }
-})();
-</script>
 </body>
 </html>
