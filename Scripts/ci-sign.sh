@@ -21,17 +21,27 @@ security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user
 openssl req -new -newkey rsa:2048 -nodes -keyout "$WORK/dist.key" \
   -out "$WORK/dist.csr" -subj "/CN=btc-swift-ci" 2>/dev/null
 JWT=$(swift "$(dirname "$0")/asc-jwt.swift" "$WORK/AuthKey.p8" "$ASC_KEY_ID" "$ASC_ISSUER_ID")
-CSR=$(cat "$WORK/dist.csr")
+export WORK
+BODY=$(python3 - <<'PYEOF'
+import json, os
+with open(os.path.join(os.environ["WORK"], "dist.csr")) as f:
+    csr = f.read()
+print(json.dumps({"data": {"type": "certificates", "attributes": {
+    "certificateType": "IOS_DISTRIBUTION", "csrContent": csr}}}))
+PYEOF
+)
 RESPONSE=$(curl -sS -g -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
-  -d '{"data":{"type":"certificates","attributes":{"certificateType":"IOS_DISTRIBUTION","csrContent":'"$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' < "$WORK/dist.csr")'}}}' \
+  -d "$BODY" \
   https://api.appstoreconnect.apple.com/v1/certificates)
-echo "$RESPONSE" | python3 -c '
-import json,sys,base64
+echo "$RESPONSE" | python3 - <<'PYEOF'
+import json, os, sys
 d = json.load(sys.stdin)
 if "errors" in d:
-    print(d["errors"][0].get("detail"), file=sys.stderr); sys.exit(1)
-open("'"$WORK"'/dist.cer","w").write(d["data"]["attributes"]["certificateContent"])
-'
+    print(d["errors"][0].get("detail"), file=sys.stderr)
+    sys.exit(1)
+with open(os.path.join(os.environ["WORK"], "dist.cer"), "w") as f:
+    f.write(d["data"]["attributes"]["certificateContent"])
+PYEOF
 openssl x509 -inform PEM -in "$WORK/dist.cer" -outform PEM -out "$WORK/dist.pem"
 openssl pkcs12 -export -inkey "$WORK/dist.key" -in "$WORK/dist.pem" \
   -out "$WORK/dist.p12" -passout pass:"$KEYCHAIN_PASSWORD" -name "btc-swift-ci"
