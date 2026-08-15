@@ -38,14 +38,17 @@ RESPONSE=$(curl -sS -g -X POST -H "Authorization: Bearer $JWT" -H "Content-Type:
   https://api.appstoreconnect.apple.com/v1/certificates)
 echo "certificates POST: HTTP $RESPONSE; body bytes: $(wc -c < "$WORK/cert-response.json")"
 python3 - "$WORK/cert-response.json" <<'PYEOF'
-import json, os, sys
+import json, os, sys, textwrap
 with open(sys.argv[1]) as f:
     d = json.load(f)
 if "errors" in d:
     print(d["errors"][0].get("detail"), file=sys.stderr)
     sys.exit(1)
+# ASC API returns bare base64 DER without PEM armor — wrap it.
+body = d["data"]["attributes"]["certificateContent"]
+pem = "-----BEGIN CERTIFICATE-----\n" + "\n".join(textwrap.wrap(body, 64)) + "\n-----END CERTIFICATE-----\n"
 with open(os.path.join(os.environ["WORK"], "dist.cer"), "w") as f:
-    f.write(d["data"]["attributes"]["certificateContent"])
+    f.write(pem)
 PYEOF
 openssl x509 -inform PEM -in "$WORK/dist.cer" -outform PEM -out "$WORK/dist.pem"
 openssl pkcs12 -export -inkey "$WORK/dist.key" -in "$WORK/dist.pem" \
