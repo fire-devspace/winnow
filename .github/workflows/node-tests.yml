@@ -81,8 +81,13 @@ jobs:
         run: |
           DD="${BTC_SWIFT_DATADIR:-$HOME/.bitcoin-mysignet}"
           mkdir -p "$DD/signet"
+          # bitcoin-cli derives the chain from the conf file; without it the
+          # CLI assumes mainnet and looks for $DD/.cookie instead of
+          # $DD/signet/.cookie — write both plus a minimal conf.
+          printf 'signet=1\nserver=1\n' > "$DD/bitcoin.conf"
+          printf '%s' "$BTC_SWIFT_RPC_COOKIE" > "$DD/.cookie"
           printf '%s' "$BTC_SWIFT_RPC_COOKIE" > "$DD/signet/.cookie"
-          chmod 600 "$DD/signet/.cookie"
+          chmod 600 "$DD/.cookie" "$DD/signet/.cookie"
 
       - name: Locate developer tools
         id: devtools
