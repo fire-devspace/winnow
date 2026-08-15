@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="the-write-side-how-a-phone-pays-without-asking-anyone">The Write
+Side: How a Phone Pays Without Asking Anyone</h1>
+<p><em>Design paper for btc-swift. Companion to <a
+href="read-side.md">the read side</a> — that paper ends when the UTXOs
+are local. This one starts there. Framing: <a href="mobile.md">a phone
+wallet</a>.</em></p>
+<hr />
+<h2 id="the-problem">1. The problem</h2>
+<p>Once compact filters have answered “what’s mine?”, spending is four
+mechanical steps:</p>
+<ol type="1">
+<li><strong>Choose coins and a feerate</strong> so the transaction
+clears dust rules and will relay.</li>
+<li><strong>Build</strong> an unsigned transaction whose change is not a
+fingerprint.</li>
+<li><strong>Sign</strong> without leaving the seed in memory or in a
+file.</li>
+<li><strong>Get it out</strong> — and know that it got out — without an
+API key and without calling the spend “received” at 0-conf.</li>
+</ol>
+<p>On a server-backed wallet these collapse to <code>POST /tx</code>. On
+a phone that refuses that server, each step has to be possible with
+only: the local UTXO set, a handful of outbound peers, and the keychain.
+This paper is those four steps, as implemented.</p>
+<hr />
+<h2 id="one-spend-shape">2. One spend shape</h2>
+<p>Everyday spends are BIP86 P2TR key-path. The signed witness is one
+64-byte Schnorr signature (<code>SIGHASH_DEFAULT</code>); fee math uses
+66 witness bytes per input (compact-size count + length + 64).
+Script-path and MuSig2 shapes belong to <a href="vaults.md">vaults</a>
+and plug into the same builder via
+<code>witnessBytesPerInput</code>.</p>
+<p>The phone <em>receives</em> only P2TR. It <em>pays</em> any standard
+address (bech32 / bech32m, base58 P2PKH / P2SH) and BIP352
+silent-payment codes. Destination diversity is a payment-layer concern;
+the wallet’s own outputs stay one type so coin selection, change, and
+watch-list code have a single script shape.</p>
+<p>Transactions are version 2, empty <code>scriptSig</code>s, and
+sequence <code>0xFFFFFFFD</code> (locktime-disabled, BIP125 opt-in RBF).
+Replace-by-fee is signaled even though the first-cut UI does not yet
+offer a bump — a stuck transaction must be replaceable later without a
+policy surprise.</p>
+<hr />
+<h2 id="coin-selection-and-change">3. Coin selection and change</h2>
+<p>Largest-first, with Bitcoin Core’s dust rule (<code>policy.cpp</code>
+<code>GetDustThreshold</code>). At the default dust relay feerate (3000
+sat/kvB) a 43-byte P2TR output is dust below <strong>330 sats</strong>.
+The often-quoted 294 sats is the P2WPKH threshold; using it here would
+produce outputs some peers will not relay.</p>
+<p>The loop accumulates the largest UTXOs until the selection covers the
+payment plus the fee of the transaction <em>as currently shaped</em>
+(each added input grows vsize, so the fee target moves). A change output
+is created when the remainder clears the change script’s dust threshold;
+otherwise the remainder is folded into the fee. Feerates outside
+<code>(0, 10_000]</code> sat/vB are rejected (Core’s
+<code>maxTxFee</code> ceiling is 0.10 BTC/kvB). Payment outputs that are
+themselves dust are rejected before a transaction is built — a sub-dust
+payment would strand the inputs in a tx no peer will take.</p>
+<p>Change, when any, goes to the next unused internal address
+(<code>tr(…/&lt;0;1&gt;/*)</code>, choice 1). Its position among the
+outputs is chosen uniformly at random so change is not “always last” — a
+well-known chain-analysis fingerprint. After a successful broadcast the
+spent UTXOs leave the local set immediately and the change UTXO enters
+it at height 0, so a second send cannot double-spend the unconfirmed
+inputs. Height 0 is pending, never “confirmed.”</p>
+<p><strong>Commit-after-broadcast.</strong>
+<code>Wallet.buildSend</code> produces a signed transaction without
+mutating wallet state. <code>commit</code> runs only after the bytes
+have been handed to the broadcaster. Committing first and then failing
+to leave the device would strand inputs in a locally-spent,
+on-chain-unspent limbo that forward-only scanning cannot repair.</p>
+<hr />
+<h2 id="fees-without-a-mempool">4. Fees without a mempool</h2>
+<p>A filter-only client does not see the fee market. Feerates of
+stranger transactions require their input amounts, which means
+recursively fetching parents — the bandwidth blowup the read side
+refused. So this product does not estimate from gossip.</p>
+<p>Resolution, strongest first (<code>FeePolicy</code>):</p>
+<ol type="1">
+<li><strong>User override</strong> (sat/vB), when the send form set
+one.</li>
+<li><strong>Median of this wallet’s own recently confirmed
+spends.</strong> Those feerates are exact: the wallet knows every input
+amount because it selected them.</li>
+<li><strong>Static presets</strong> — low 2, medium 5, high 12 sat/vB.
+Deliberately above typical minima. A mempool-blind wallet must overpay
+rather than stall.</li>
+</ol>
+<p>The result is clamped from below by the strictest BIP133
+<code>feefilter</code> among connected peers (the minimum that will
+relay at all). If every remaining peer’s floor later rises above a
+pending transaction’s feerate, the broadcaster emits
+<code>feeFloorExceeded</code> once; the caller decides whether to bump.
+There is no live histogram and no “arrives in 10 minutes” claim.</p>
+<p>This is cruder than any mempool-aware estimator. It is also the only
+estimator that does not reintroduce a server or a persistent relay
+subscription. Owned, and said in the send UI as a rate, not as a
+promise.</p>
+<hr />
+<h2 id="signing">5. Signing</h2>
+<p>The everyday path is PSBTv2 even for single-sig (BIP370/371): creator
+attaches witness UTXOs and Taproot key-origin metadata, the signer
+writes <code>PSBT_IN_TAP_KEY_SIG</code>, the finalizer extracts a raw
+transaction. One pipeline with <a href="vaults.md">vaults</a>, instead
+of a private “just sign it” shortcut that would drift.</p>
+<p>Secrets:</p>
+<ul>
+<li>The seed is a BIP39 mnemonic (12 words, 16 bytes of entropy) or a
+master xprv, stored by <code>KeychainStore</code> under the wallet id
+(master fingerprint, 8 hex chars).</li>
+<li>Accessibility is <code>WhenUnlockedThisDeviceOnly</code>;
+<code>kSecAttrSynchronizable</code> is false. The JSON wallet file on
+disk holds the descriptor, UTXOs, and history — public material.</li>
+<li><code>Wallet.tweakedPrivateKey</code> loads the secret, derives
+<code>m/86'/coin'/account'/chain/index</code>, applies the BIP86 tweak
+(no merkle root), signs, and drops the key. The actor never holds the
+seed in <code>WalletState</code>.</li>
+</ul>
+<p>All secret-key operations go through libsecp256k1 (P256K). The
+sighash is BIP341 <code>SIGHASH_DEFAULT</code> — also the BIP352-safe
+choice for taproot inputs, which matters in §6. Auxiliary nonce
+randomness is 32 fresh bytes per signature.</p>
+<p>A server that lied about a UTXO <em>amount</em> on the (opt-in)
+esplora path produces an invalid signature, not a theft: the sighash
+commits to input amounts. A server that hid a payment can only hide it;
+it cannot spend it. The default path never asks a server.</p>
+<hr />
+<h2 id="silent-payments-send-side-only">6. Silent payments, send-side
+only</h2>
+<p>BIP352 <code>sp1…</code> / <code>tsp1…</code> codes are first-class
+destinations. The P2TR output script is not known until the input set is
+fixed — the shared secret is <code>input_hash · a · B_scan</code> over
+the selected inputs’ tweaked keys — so coin selection runs against a
+same-size P2TR <em>placeholder</em>, then
+<code>SilentPaymentSending.outputScripts</code> replaces the
+placeholders at signing time.</p>
+<p>Receiving silent payments is out of scope. A receiver must
+tweak-check every output in every block, which is a different read-side
+(and a different battery budget) than matching a small watch list
+against BIP158 filters. The product does not pretend a send-only
+implementation is “silent payments support.” Send is done and
+vector-tested; receive is a deliberate absence, recorded in <a
+href="read-side.md">the read side</a> §3.</p>
+<p>Inputs to a silent-payment send are this wallet’s own P2TR key-path
+spends, which is exactly the BIP352 wallet case (the sender controls
+every eligible input key; shared-control inputs are excluded from
+derivation).</p>
+<hr />
+<h2 id="getting-it-out">7. Getting it out</h2>
+<p><code>TxBroadcaster</code> is P2P relay, not an API client:</p>
+<ul>
+<li>Announce <code>inv(MSG_WITNESS_TX)</code> to the connected pool
+(default 3 peers).</li>
+<li>Answer <code>getdata</code> with the raw transaction.</li>
+<li>Per-peer state: <code>announced → requested → served</code>, plus
+<code>failed</code> on timeout/disconnect and <code>deprioritized</code>
+if a peer never answers <code>maxAnnouncementsPerPeer</code> invs (then
+skipped for that tx).</li>
+<li>Re-announce on exponential backoff (60s base, cap 1h) until
+<code>FilterSync</code> reports the tx in a matched block, or the caller
+cancels (e.g. a replacement).</li>
+<li>Pending txs persist as JSON (raw tx, feerate, next attempt) so a
+killed app resumes relay.</li>
+</ul>
+<p>While the Send screen is open, a <a
+href="read-side.md#28-bounded-mempool-windows">bounded mempool
+window</a> watches for peers echoing our txid back. An echo is evidence
+the network has the bytes; it is not confirmation. The UI says
+“broadcast” / “relayed” / “seen in a block”, never “sent” at 0-conf.</p>
+<p>The opt-in esplora path may POST the same raw transaction as a second
+route. That POST links the txid to the phone’s IP at that server — one
+of the things the Settings warning names.</p>
+<hr />
+<h2 id="what-still-leaks">8. What still leaks</h2>
+<p>Filters protect the <em>read</em>. The write is a public
+announcement.</p>
+<ul>
+<li>The peers you <code>inv</code> see your IP and your transaction.
+They learn the inputs you spend and the outputs you create. Change
+randomization and Taproot-only outputs shrink fingerprints; they do not
+hide the spend from the relay peer.</li>
+<li>A network observer between you and those peers sees the same.</li>
+<li>RBF signaling and a recognizable vsize (one 64-byte witness per
+input) are visible on the wire. That is the cost of a simple spend
+shape.</li>
+</ul>
+<p>There is no Dandelion, no Tor requirement, no equal-output coinjoin.
+A user who needs those wants a different product (or a vault plus a
+coordinator they bring themselves). This paper will not claim broadcast
+privacy the implementation does not provide.</p>
+<hr />
+<h2 id="use-cases">9. Use cases</h2>
+<table>
+<colgroup>
+<col style="width: 12%" />
+<col style="width: 41%" />
+<col style="width: 45%" />
+</colgroup>
+<thead>
+<tr>
+<th>#</th>
+<th>Use case</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Pay a bech32m / bech32 / base58 address</td>
+<td>Decode → select → build (random change slot) → PSBT sign →
+broadcast</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Pay a silent-payment code</td>
+<td>Same, with output scripts derived after selection</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Pick a fee</td>
+<td>Override / observed median / preset, clamped by
+<code>feefilter</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>“Is it out?”</td>
+<td>Peer <code>getdata</code> + txid echo while Send is open</td>
+</tr>
+<tr>
+<td>5</td>
+<td>“Is it done?”</td>
+<td>Filter match on a confirmed block; height 0 change flips to that
+height</td>
+</tr>
+<tr>
+<td>6</td>
+<td>App killed mid-relay</td>
+<td>Persisted pending set resumes backoff</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Peers will not take this feerate</td>
+<td><code>feeFloorExceeded</code>; user may bump (RBF already
+signaled)</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Vault spend</td>
+<td>Same builder and broadcaster; signing is the <a
+href="vaults.md">vault</a> ceremony</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="conclusion">10. Conclusion</h2>
+<p>The write side of a phone wallet is not a REST client. It is coin
+selection that knows P2TR dust, a feerate that admits it is blind, a
+signing path that holds the seed for one call, and a relay state machine
+that survives the app being killed. Confirmation still comes from <a
+href="read-side.md">the read side</a>. Nothing in this paper asks a
+server, unless the user turned one on and was told what that means.</p>
+<p><strong>v1 is therefore: largest-first P2TR selection +
+<code>FeePolicy</code> + PSBTv2 key-path signing via libsecp256k1 +
+<code>TxBroadcaster</code> over the same peer pool that serves
+filters.</strong></p>
+</main>
+</body>
+</html>

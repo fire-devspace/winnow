@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="vaults-shared-custody-that-still-fits-on-a-phone">Vaults: Shared
+Custody That Still Fits on a Phone</h1>
+<p><em>Design paper for btc-swift. A vault is another descriptor on the
+same <a href="read-side.md">read</a> / <a href="write-side.md">write</a>
+path — not a second wallet architecture. Framing: <a href="mobile.md">a
+phone wallet</a>.</em></p>
+<hr />
+<h2 id="the-problem">1. The problem</h2>
+<p>Shared custody on a phone usually means one of three things, all bad
+for this product:</p>
+<ul>
+<li>A <strong>vendor coordinator</strong> that sees every proposal,
+every cosigner, and when you spend.</li>
+<li>A <strong>legacy multisig</strong> script
+(<code>OP_CHECKMULTISIG</code>) with ECDSA, redeem-script fingerprints,
+and a larger on-chain footprint than the everyday Taproot wallet.</li>
+<li>A <strong>QR-code theatre</strong> that hides an underspecified PSBT
+behind “scan this” and hopes the review screen shows the right
+destination.</li>
+</ul>
+<p>The constraint is the same as the rest of the app: no server by
+default, Taproot only, logic in the library, the phone is a signer you
+can hold. So a vault here is a descriptor plus a PSBTv2 file you can
+AirDrop. The phone never runs a coordinator. The PSBT <em>is</em> the
+coordinator.</p>
+<p>Two policies are supported — and only these two. Both are Taproot.
+Both reuse <code>FilterSync</code>, <code>CoinSelection</code>,
+<code>FeePolicy</code>, and <code>TxBroadcaster</code>.</p>
+<hr />
+<h2 id="the-two-policies">2. The two policies</h2>
+<h3 id="script-path-k-of-n-trnums-sortedmulti_ak">2.1 Script-path k-of-n
+— <code>tr(NUMS, sortedmulti_a(k, …))</code></h3>
+<p>BIP387 <code>multi_a</code> / <code>sortedmulti_a</code> in a single
+tapscript leaf. The internal key is the BIP341 NUMS
+(nothing-up-my-sleeve) point
+(<code>Taproot.unspendableInternalKey</code>). No party has the
+corresponding secret, so <strong>there is no key-path spend</strong>.
+The only way out is the leaf.</p>
+<p><code>sortedmulti_a</code> is the constructor the app emits
+(<code>Vault.multiADescriptor</code>): keys are sorted, so independently
+constructed descriptors agree. <code>multi_a</code> (unsorted) is
+accepted on import so a descriptor built elsewhere still opens.</p>
+<p>On-chain this is visibly a script-path spend: control block + leaf
+script + k signatures. That is a privacy cost relative to everyday
+key-path spends, paid for an honest k-of-n (a 2-of-3 inheritance vault,
+a 2-of-2 with a recovery key, and so on). The witness is larger; coin
+selection is told the exact <code>witnessBytesPerInput</code> for that
+leaf so the fee is not a guess.</p>
+<h3 id="key-path-n-of-n-trmusigk1-k2">2.2 Key-path n-of-n —
+<code>tr(musig(k1, k2, …)/…)</code></h3>
+<p>BIP390 <code>musig()</code> aggregated with BIP327 MuSig2, typically
+with a BIP328 derivation suffix. The on-chain output is an ordinary P2TR
+key-path spend: one 64-byte signature. Watchers cannot tell a MuSig2
+vault from the everyday single-sig wallet.</p>
+<p>The cost is interactive signing (nonces, then partials) and the
+n-of-n shape — there is no k &lt; n. A party who loses a key cannot fall
+back to a leaf; if you need that, use §2.1.</p>
+<p>The app does not mix the two in one descriptor (no
+<code>tr(musig(…), multi_a(…))</code> first cut). One policy per vault
+keeps the review screen and the PSBT fields honest.</p>
+<hr />
+<h2 id="why-these-two-and-not-the-rest">3. Why these two, and not the
+rest</h2>
+<ul>
+<li><strong>No <code>OP_CHECKMULTISIG</code> / P2WSH / P2SH.</strong>
+They reintroduce ECDSA, a second address type, and a watch-list the
+compact-filter path would have to treat as special. The product is
+Taproot-only (<a href="mobile.md">mobile</a> §4.2).</li>
+<li><strong>No unspendable-internal-key <em>and</em> a MuSig2 key-path
+in one output.</strong> That construction exists in the BIP zoo; it is a
+third review surface and a third witness-size path. Two policies cover
+the two stories users actually have: “k of us must agree, and nobody has
+an escape hatch” versus “all of us must agree, and the chain sees a
+single signature.”</li>
+<li><strong>No coordinator protocol.</strong> Frost, MuSig2 with a
+signing server, or a proprietary “vault API” would put a third party on
+the write path. Cosigners exchange PSBTs. How they exchange them is
+their problem — the library does not open a socket for it.</li>
+</ul>
+<hr />
+<h2 id="the-ceremony-is-psbtv2">4. The ceremony is PSBTv2</h2>
+<p>Roles (BIP370/371/373), as the library actually implements them:</p>
+<ol type="1">
+<li><strong>Creator</strong> (<code>Vault.createSpend</code>). Same coin
+selection and unsigned tx as <code>Wallet.buildSend</code>, then vault
+fields:
+<ul>
+<li><em>multi_a:</em> BIP371 leaf script, control block, per-key origins
+(fingerprint + full path at <code>(choice, index)</code>).</li>
+<li><em>MuSig2:</em> BIP373 participant pubkeys and the BIP328-derived
+internal key.</li>
+<li>Change, if any, goes to choice 1 at <code>changeIndex</code> and
+carries <code>PSBT_OUT_TAP_TREE</code> / internal key / derivations so a
+cosigner can see it is <em>this vault’s</em> change, not an unknown
+output.</li>
+</ul></li>
+<li><strong>Signer</strong> (per cosigner, on their own phone). For
+multi_a: a BIP342 script-path signature with the plain x-only key (no
+taproot tweak — the sighash commits to the leaf). For MuSig2: nonce
+generation, then a partial signature, in the BIP373 fields. Secrets load
+from that device’s keychain for the call, same as the everyday
+wallet.</li>
+<li><strong>Combiner.</strong> Union-merge of partial PSBTs.
+Order-independent; a 2-of-3 can combine in any sequence.</li>
+<li><strong>Finalizer / extractor.</strong> Witnesses assembled, raw
+transaction out, then <a href="write-side.md">the write side</a> §7
+broadcasts it.</li>
+</ol>
+<p>The review screen (<code>VaultSignView</code>) runs <em>before</em>
+the key is used. It lists every destination, flags vault change via the
+output derivation fields, and shows the fee and sighash. A cosigner who
+cannot explain an output does not sign. That is the whole anti-“QR
+theatre” mechanism: the PSBT carries enough metadata to review, and the
+UI refuses to skip it.</p>
+<hr />
+<h2 id="the-read-side-does-not-care">5. The read side does not care</h2>
+<p>A vault is a <code>tr(…)</code> descriptor.
+<code>watchScripts(upTo:)</code> derives both multipath choices for a
+gap of indices and drops them into the same filter stream as the
+everyday wallet. There is no per-vault server, no “subscribe this
+multisig,” no extra bandwidth for a 2-of-3 versus a 1-of-1.</p>
+<p>Creation height still matters. A vault whose first output is older
+than the phone’s scan start will not be discovered by filters — same
+fresh-wallet / forward-only rule as everything else. Import the history,
+or create the vault in this app and use it from now on. <a
+href="import.md">Import</a>.</p>
+<hr />
+<h2 id="what-a-vault-is-not">6. What a vault is not</h2>
+<ul>
+<li><strong>Not a recovery mnemonic for the everyday wallet.</strong>
+Losing the phone still loses the everyday seed unless the user wrote it
+down. A 2-of-3 vault is how you <em>plan</em> for lost devices; it is
+not automatic.</li>
+<li><strong>Not threshold MuSig.</strong> k-of-n with a single-signature
+on-chain footprint is a different scheme (FROST, etc.) and a different
+paper. Here, k-of-n is the leaf, n-of-n is MuSig2.</li>
+<li><strong>Not private against your cosigners.</strong> They see the
+spend. They should: they are signing it.</li>
+<li><strong>Not private against chain watchers in the multi_a
+case.</strong> Script-path is visible. MuSig2 is not.</li>
+</ul>
+<hr />
+<h2 id="conclusion">7. Conclusion</h2>
+<p>Shared custody on this phone is two Taproot descriptors and a file
+format. The NUMS internal key makes k-of-n honest (no hidden key-path).
+MuSig2 makes n-of-n quiet (one signature). PSBTv2 is the only
+coordinator. The read path does not change.</p>
+<p><strong>v1 is therefore: <code>tr(NUMS, sortedmulti_a(k, …))</code>
+and <code>tr(musig(…)/…)</code>, created and cosigned on-device,
+broadcast on the same P2P path as a single-sig spend.</strong></p>
+</main>
+</body>
+</html>

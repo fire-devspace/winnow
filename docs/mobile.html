@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="a-private-bitcoin-wallet-on-a-phone">A Private Bitcoin Wallet on
+a Phone</h1>
+<p><em>Framing paper for btc-swift. The other papers — <a
+href="read-side.md">read</a>, <a href="write-side.md">write</a>, <a
+href="vaults.md">vaults</a>, <a href="import.md">import</a> — each own
+one job. This one owns the device.</em></p>
+<hr />
+<h2 id="the-constraint">1. The constraint</h2>
+<p>A Bitcoin wallet is keys plus four questions about the chain (what’s
+mine, where’s the tip, what fee, did my transaction get out). On a
+desktop, any of the usual answers work. On a phone, most of them
+don’t.</p>
+<p>A phone is not a full node: it will not download, store, or validate
+the chain. A phone is also a poor thin client of someone else’s node: it
+has a stable identity (an IP, an Apple ID, a push token), it is almost
+always on a network that can be logged, and the user will not read a
+privacy policy before tapping Receive.</p>
+<p>The product lives in the space between those two refusals.
+<strong>The phone does the matching. Nobody is asked which addresses are
+yours. The chain is not stored. Work happens while the app is
+open.</strong> Everything else — Taproot-only, fresh wallets,
+import-with-history, bounded mempool windows, an esplora toggle behind a
+warning — is a consequence of that sentence, not a feature list.</p>
+<p>This paper states the device constraints, the architecture they
+force, and which paper answers which question. It does not re-argue
+compact filters; that is <a href="read-side.md">the read side</a>.</p>
+<hr />
+<h2 id="what-a-phone-actually-is">2. What a phone actually is</h2>
+<p>Constraints that are load-bearing, not stylistic:</p>
+<ul>
+<li><strong>Outbound TCP only.</strong> The app talks to full-node peers
+over <code>Network.framework</code>. No inbound ports, no hidden
+services, no background socket the OS will kill. Peers are a small
+outbound pool (default 3): manual endpoints first, then a persisted
+good-peers list, then DNS seeds. No addr gossip, no scoring buckets — a
+misbehaving peer is dropped and replaced.</li>
+<li><strong>Foreground only.</strong> There is no
+<code>UIBackgroundModes</code> entry. Sync-while-active is the design,
+not a v1 omission. A payment you are not looking at waits for the next
+open, or for a confirmation the next time filters are scanned. Push
+notifications would require a server that knows your addresses or your
+txids.</li>
+<li><strong>This-device keychain.</strong> Secrets live in the iOS
+Keychain as <code>kSecAttrAccessibleWhenUnlockedThisDeviceOnly</code>,
+with iCloud Keychain sync off. They are not in the app’s JSON state, not
+in iCloud backup, not in the mnemonic UI after the first screen. Signing
+loads the secret for the call and drops it.</li>
+<li><strong>One runtime dependency.</strong> <a
+href="https://github.com/21-DOT-DEV/swift-secp256k1"><code>swift-secp256k1</code></a>
+— Bitcoin Core’s libsecp256k1. Swift never does raw curve math on
+secrets. Everything else (filters, headers, PSBT, descriptors, P2P) is
+in-tree.</li>
+<li><strong>App Store reality.</strong> No embedded full node, no
+always-on VPN, no custom kernel. iOS 17+, iPhone only, portrait. The app
+target is a thin SwiftUI shell; if the UI needs a capability, a library
+exposes it. That split is an architecture invariant, not a directory
+preference: tests run against the SPM package, not against views.</li>
+</ul>
+<p>Bandwidth and battery are real but secondary. Steady-state compact
+filters are a few megabytes a day (approx.; see <a
+href="read-side.md">read-side</a> §2.5). The worse mobile cost is
+<em>policy</em>: an always-on mempool subscription, a historical
+back-scan, or a server that answers <code>getbalance</code>. Those are
+refused even when the radio would allow them.</p>
+<hr />
+<h2 id="the-four-jobs-and-two-more">3. The four jobs, and two more</h2>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 64%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr>
+<th>Job</th>
+<th>Default on this phone</th>
+<th>Paper</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>What’s mine?</td>
+<td>BIP157/158 filters, matched on-device, from creation height
+forward</td>
+<td><a href="read-side.md">read-side</a></td>
+</tr>
+<tr>
+<td>Where’s the tip?</td>
+<td>80-byte headers, PoW + chainwork</td>
+<td><a href="read-side.md">read-side</a></td>
+</tr>
+<tr>
+<td>What fee?</td>
+<td>User override, else median of <em>our</em> confirmed spends, else
+presets; clamped by BIP133 <code>feefilter</code></td>
+<td><a href="write-side.md">write-side</a></td>
+</tr>
+<tr>
+<td>Did my tx get out?</td>
+<td><code>inv</code> → <code>getdata</code> → <code>tx</code> to the
+peer pool, rebroadcast until a filter match, echo-watch while Send is
+open</td>
+<td><a href="write-side.md">write-side</a></td>
+</tr>
+<tr>
+<td>Who holds the keys?</td>
+<td>This-device Keychain; Taproot key-path for the everyday wallet</td>
+<td>this paper, <a href="write-side.md">write-side</a></td>
+</tr>
+<tr>
+<td>Shared custody?</td>
+<td>MuSig2 n-of-n or <code>multi_a</code> k-of-n, coordinated by PSBTv2,
+no server</td>
+<td><a href="vaults.md">vaults</a></td>
+</tr>
+<tr>
+<td>Moving a wallet in?</td>
+<td>A history bundle. There is no back-scan.</td>
+<td><a href="import.md">import</a></td>
+</tr>
+</tbody>
+</table>
+<p>One opt-in crosses several rows: an esplora backend, off by default,
+named in Settings with exactly what it learns. It is a user-initiated
+exception, never the default path.</p>
+<hr />
+<h2 id="what-the-device-forces-onto-the-wallet">4. What the device
+forces onto the wallet</h2>
+<h3 id="fresh-and-forward-only">4.1 Fresh, and forward-only</h3>
+<p>A new wallet is created in the app. It has no history, so scanning
+starts at the tip (or the height at creation) and runs forward.
+Recovering an old wallet <em>privately from the chain</em> would mean
+gigabytes of historical filters on a radio the user pays for. The
+product does not do that. Import requires the previous wallet’s answers
+to come along — descriptor, UTXOs, history, a last-known height — and
+the phone verifies them by scanning <em>forward</em> from that height.
+The argument and the bundle format are <a
+href="import.md">import</a>.</p>
+<p>This is the constraint that makes the rest cheap. It is not a v1
+shortcut.</p>
+<h3 id="taproot-only">4.2 Taproot only</h3>
+<p>Receiving is BIP86 P2TR. There is no legacy / nested-segwit / P2WPKH
+path, and no ECDSA signing path. One output type means one watch-list
+shape, one sighash, one witness size for fee math (66 bytes for a
+key-path spend), and no “which address type did this contact use?”
+branch in the UI.</p>
+<p>The phone can <em>pay</em> any standard address (bech32/bech32m,
+base58 P2PKH/P2SH) and can <em>send to</em> BIP352 silent-payment codes
+(<code>sp1…</code> / <code>tsp1…</code>). It cannot <em>receive</em>
+silent payments — that scan is a different, heavier read-side, and is a
+deliberate absence (<a href="read-side.md">read-side</a> §3).</p>
+<h3 id="two-modern-multisig-flavors-same-read-path">4.3 Two modern
+multisig flavors, same read path</h3>
+<p>A vault is another descriptor and another watch list. The phone does
+not run a coordinator, a coinjoin server, or a notification service for
+cosigners. The PSBT <em>is</em> the coordinator; AirDrop, a file, a
+message are the transport. <a href="vaults.md">Vaults</a>.</p>
+<h3 id="default-network-is-signet">4.4 Default network is signet</h3>
+<p>Development and the shipped TestFlight path target signet. Mainnet is
+in the Settings picker and has its own on-device wallet; it is not the
+network the e2e suite, the screenshots, or the timings are taken on. The
+papers describe the protocol as it runs on any network; the numbers in
+<code>screenshots/timings.json</code> are signet.</p>
+<hr />
+<h2 id="trust-on-a-phone">5. Trust on a phone</h2>
+<p>What the user is asked to trust, stated as mechanisms rather than
+intentions:</p>
+<ul>
+<li><strong>The keychain and the device.</strong> A stolen backup does
+not contain the seed. A stolen <em>phone</em> that can be unlocked does.
+This-device-only is not a substitute for a passphrase or a vault; it is
+the floor.</li>
+<li><strong>libsecp256k1.</strong> Curve math on secrets is not our
+Swift. Side-channel claims against the wallet’s signing path are claims
+against that library, or against how we call it (we pass 32-byte
+auxiliary randomness from <code>SystemRandomNumberGenerator</code> per
+BIP340).</li>
+<li><strong>The peers you can reach.</strong> Compact filters are not
+consensus-committed. Multi-peer <code>cfcheckpt</code> /
+<code>cfheaders</code> comparison detects disagreement; it cannot prove
+which peer lied, and a fully eclipsed phone can be shown a consistent
+lie. Manual peers exist so a user who <em>has</em> a node they trust can
+skip DNS seeds. The residual risk is <a
+href="read-side.md">read-side</a> §2.7.1 and §2.9.</li>
+<li><strong>No one, on the read path, by default.</strong> No server is
+handed an address, an xpub, or a scripthash. A network observer sees a
+compact-filter client syncing from a height — the same bytes every such
+client downloads.</li>
+</ul>
+<p>What the user is <em>not</em> asked to trust: an indexer operator’s
+retention policy, a push-notification vendor, iCloud Keychain, or the
+app target. Wallet, protocol, and crypto logic are forbidden from moving
+into <code>BTCSwiftApp</code>.</p>
+<hr />
+<h2 id="deliberate-absences">6. Deliberate absences</h2>
+<p>These are product decisions, not missing tickets:</p>
+<ul>
+<li>Always-on mempool / background 0-conf / live fee histograms</li>
+<li>Historical filter back-scan</li>
+<li>Silent-payment receive</li>
+<li>BIP37, Electrum, or any “ask a node about my address”</li>
+<li>An embedded consensus engine or fraud-proof verifier</li>
+<li>A vault coordinator server</li>
+<li>Cloud backup of the seed</li>
+</ul>
+<p>Each absence has a paper that says what you get instead. The landing
+page lists the user-visible costs (slower news, coarser fees, bring your
+history, sending still shows at the relay peers). This list is the
+engineering version of the same honesty.</p>
+<hr />
+<h2 id="how-the-implementation-is-checked">7. How the implementation is
+checked</h2>
+<p>The validation appendix of <a href="read-side.md">the read side</a>
+covers the stack. The mobile-specific claim — that the <em>app</em> does
+what the libraries promise — is the signet UI suite: it drives the real
+binary, mines to it, spends from it, cosigns a vault, verifies an
+import, and writes the screenshots on this site plus
+<code>screenshots/timings.json</code>. Latest run (iPhone 17 simulator,
+2026-08-15): wallet create 1.78s, address shown 2.17s,
+mined→filter-detected 0.75s, form→broadcast 0.67s.</p>
+<p>The suite is ~200 tests plus those UI scenarios, on every push.</p>
+<hr />
+<h2 id="status">8. Status</h2>
+<p>Protocol core, both vault schemes, silent-payment send, and the P2P
+read/write path are complete and vector-tested. The app runs on signet.
+Mainnet is available and treated as needing more care than a picker
+flip.</p>
+<p><strong>v1 is therefore: a foreground iOS client, Taproot-only,
+fresh-wallet, one dependency, talking only to
+<code>NODE_COMPACT_FILTERS</code> peers unless the user opts into a
+named server — with the four jobs split across the papers that
+follow.</strong></p>
+</main>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="design-papers">Design papers</h1>
+<p>btc-swift is a private Bitcoin wallet <strong>for a phone</strong>.
+The papers are separate on purpose: each one owns a constraint the
+device cannot drop.</p>
+<table>
+<colgroup>
+<col style="width: 41%" />
+<col style="width: 58%" />
+</colgroup>
+<thead>
+<tr>
+<th>Paper</th>
+<th>Question</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mobile.md">A phone wallet</a></td>
+<td>What does the device force, and what does the product refuse?</td>
+</tr>
+<tr>
+<td><a href="read-side.md">The read side</a></td>
+<td>How does the phone learn which coins are its own?</td>
+</tr>
+<tr>
+<td><a href="write-side.md">The write side</a></td>
+<td>How does it build, price, sign, and get a transaction out?</td>
+</tr>
+<tr>
+<td><a href="vaults.md">Vaults</a></td>
+<td>How does shared custody work without a coordinator server?</td>
+</tr>
+<tr>
+<td><a href="import.md">Import</a></td>
+<td>How does an existing wallet move onto the phone without a
+back-scan?</td>
+</tr>
+</tbody>
+</table>
+<p>The <a href="index.html">landing page</a> is the popularization.
+These files are the arguments. Numbers labeled “approx.” are
+order-of-magnitude; numbers cited from
+<code>screenshots/timings.json</code> are measured on signet by the UI
+test suite.</p>
+</main>
+</body>
+</html>

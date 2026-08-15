@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="btc-swift-privacy-policy">btc-swift Privacy Policy</h1>
+<p><strong>btc-swift collects nothing.</strong> No accounts, no
+analytics, no crash-reporting beacons, no advertising SDKs, no server of
+ours exists to collect anything with.</p>
+<h2 id="what-the-app-does-with-your-data">What the app does with your
+data</h2>
+<ul>
+<li><strong>Keys never leave your device.</strong> Seed material is
+generated on-device and stored in the iOS Keychain (this-device-only,
+never synced).</li>
+<li><strong>No address leakage by default.</strong> The wallet learns
+its own transaction history by downloading compact block filters
+(BIP157/158) from random Bitcoin full-node peers and matching them
+<em>on your device</em>. Your addresses are never transmitted. As with
+any direct network connection, peers see your IP address; the app
+deliberately rotates and holds no fixed relationship with any peer.</li>
+<li><strong>Mempool windows.</strong> While the Receive screen is open,
+the app subscribes to ordinary transaction-relay traffic and matches it
+locally — the same data every full node sees. Nothing about you is
+queried or revealed.</li>
+<li><strong>Broadcasting.</strong> Signed transactions are relayed
+directly to P2P peers.</li>
+<li><strong>Optional esplora mode.</strong> If you explicitly enable an
+esplora backend in Settings (off by default, behind a warning), that
+server operator can link the addresses you query to your IP. The app
+tells you this before you turn it on.</li>
+<li><strong>Third-party code.</strong> One dependency: libsecp256k1 (via
+the P256K Swift package). It makes no network calls.</li>
+</ul>
+<h2 id="contact">Contact</h2>
+<p>a@wuli.nu · Source code: https://github.com/posix4e/btc-swift</p>
+</main>
+</body>
+</html>
