@@ -36,6 +36,10 @@ jobs:
           brew install xcodegen && xcodegen && xcodebuild -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
           -configuration Release -destination 'generic/platform=iOS'
           -archivePath build/BTCSwiftApp.xcarchive
+          -allowProvisioningUpdates
+          -authenticationKeyPath "${RUNNER_TEMP}/btc-swift-signing/AuthKey.p8"
+          -authenticationKeyID "$ASC_KEY_ID"
+          -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           -skipPackagePluginValidation -skipMacroValidation archive
 
       - name: Upload to App Store Connect
