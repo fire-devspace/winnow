@@ -269,6 +269,11 @@ public actor Wallet {
     private let keyStore: any KeyStore
     private let storageURL: URL?
     private var state: WalletState
+    /// Transient silent-payment scan state: the scanner (which holds b_scan —
+    /// deliberately weaker than the signing rule below, a view key can't
+    /// spend) and the filter-stage candidates by height. Never persisted.
+    private var spScanner: SilentPaymentBlockScanner?
+    private var spCandidates: [UInt32: [SilentPaymentCandidate]] = [:]
 
     init(network: BitcoinNetwork, descriptor: Descriptor, accountKey: HDKey,
          keyStore: any KeyStore, storageURL: URL?, state: WalletState) throws {
@@ -406,10 +411,19 @@ public actor Wallet {
 
     /// Forward-only filter scan (docs/read-side.md §2.5): matched blocks are
     /// applied to the UTXO set and history; the scan position mirrors into the
-    /// persisted state afterwards.
-    public func scan(using sync: FilterSync) async throws {
+    /// persisted state afterwards. With a tweak index, silent-payment
+    /// candidates ride the same filter stream (fail-closed — see
+    /// FilterSync.sync).
+    public func scan(using sync: FilterSync,
+                     silentPaymentIndex: (any TweakIndexClient)? = nil) async throws {
         let scripts = try watchScripts()
-        try await sync.sync(watchScripts: scripts) { match in
+        var extras: (@Sendable (ClosedRange<UInt32>) async throws -> [UInt32: [Data]])?
+        if let index = silentPaymentIndex {
+            extras = { range in
+                try await self.silentPaymentCandidateScripts(range: range, index: index)
+            }
+        }
+        try await sync.sync(watchScripts: scripts, extraScripts: extras) { match in
             try await self.apply(match: match)
         }
         try recordScanHeight(await sync.nextScanHeight)
@@ -426,12 +440,58 @@ public actor Wallet {
         try persist()
     }
 
+    /// Per-height silent-payment candidate scripts for a filter batch: the
+    /// index's tweaks become k=0 output scripts under this wallet's keys.
+    /// Hand the result to FilterSync's `extraScripts`; the candidates stay
+    /// cached so `apply(match:)` can credit silent payments in matched blocks.
+    public func silentPaymentCandidateScripts(
+        range: ClosedRange<UInt32>, index: any TweakIndexClient) async throws -> [UInt32: [Data]] {
+        let scanner = try spBlockScanner()
+        // The frontier is forward-only; drop cache entries the scan moved past.
+        spCandidates = spCandidates.filter { $0.key >= range.lowerBound }
+        var scripts: [UInt32: [Data]] = [:]
+        for height in range {
+            let tweaks = try await index.tweaks(forBlockAt: height)
+            guard !tweaks.isEmpty else { continue }
+            let candidates = try scanner.candidates(tweaks: tweaks)
+            spCandidates[height] = candidates
+            scripts[height] = candidates.map(\.script)
+        }
+        return scripts
+    }
+
+    private func spBlockScanner() throws -> SilentPaymentBlockScanner {
+        if let spScanner { return spScanner }
+        let master = try masterKey()
+        let coinType = Self.coinType(for: network)
+        let scan = try SilentPaymentReceiving.scanKey(from: master, coinType: coinType,
+                                                      account: accountIndex)
+        let spend = try SilentPaymentReceiving.spendKey(from: master, coinType: coinType,
+                                                        account: accountIndex)
+        guard let scanSecret = scan.privateKey else {
+            throw WalletError.invalidDescriptor("neutered key in scan path")
+        }
+        let scanner = SilentPaymentBlockScanner(scanPrivateKey: scanSecret,
+                                                spendPublicKey: spend.publicKey)
+        spScanner = scanner
+        return scanner
+    }
+
     /// Consumes one matched block: pays to watched scripts become UTXOs (and
     /// advance gap-limit bookkeeping), spends of our UTXOs shrink the set, and
     /// any touching transaction lands in history. Idempotent per block.
     @discardableResult
     public func apply(match: BlockMatch) throws -> MatchEffect {
         let map = try watchMap()
+        // Silent payments: resolve this height's cached filter-stage
+        // candidates against the merkle-verified block. The index only
+        // steered the block fetch — credits come from the block itself.
+        var silentPaymentsByTxid: [Data: [SilentPaymentFound]] = [:]
+        if let candidates = spCandidates[match.height], let scanner = spScanner {
+            silentPaymentsByTxid = Dictionary(
+                grouping: try scanner.matches(in: match.block, candidates: candidates),
+                by: \.txid)
+        }
         var effect = MatchEffect()
         for tx in match.block.transactions {
             let txid = tx.txid
@@ -480,6 +540,21 @@ public actor Wallet {
                 default:
                     break
                 }
+            }
+
+            // Silent-payment outputs of this tx: same idempotency guard as
+            // above, and folded into `receivedAmount` so a tx paying us both
+            // ways still yields one merged history entry.
+            for found in silentPaymentsByTxid[txid] ?? [] {
+                guard !state.utxos.contains(where: { $0.txid == found.txid && $0.vout == found.vout })
+                else { continue }
+                let utxo = WalletUTXO(txid: found.txid, vout: found.vout, amount: found.amount,
+                                      scriptPubKey: found.scriptPubKey, chain: .receive,
+                                      index: 0, height: match.height,
+                                      silentPaymentTweak: found.tweak)
+                state.utxos.append(utxo)
+                receivedAmount += found.amount
+                effect.received.append(utxo)
             }
 
             let touchesWallet = spentAmount > 0 || receivedAmount > 0
