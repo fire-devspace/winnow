@@ -413,6 +413,14 @@ final class AppModel {
         return report
     }
 
+    /// Live wallet as a v1 import-bundle JSON string (docs/import.md).
+    /// Watch-only unless `includeMnemonic` is set; an xprv-only wallet
+    /// throws ``WalletError/mnemonicUnavailable`` rather than a fake seed.
+    func exportWalletBundle(includeMnemonic: Bool) async throws -> String {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.exportBundle(includeMnemonic: includeMnemonic).serialized()
+    }
+
     /// Switches to a just-created/imported wallet: anything chain-facing from
     /// a previous wallet (filter progress, pending broadcasts, vault records)
     /// is that wallet's view and is reset; the new wallet's scan starts from

@@ -101,6 +101,55 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         self.transactions = transactions
     }
 
+    /// Writer for the documented v1 schema. Txids go out as display hex —
+    /// the same convention `claimedUTXOs()` reverses on the way back in.
+    public static func export(descriptor: String, network: String, lastKnownHeight: UInt32,
+                              utxos: [WalletUTXO], history: [HistoryEntry],
+                              mnemonic: String? = nil) -> ImportBundle {
+        ImportBundle(
+            network: network,
+            descriptor: descriptor,
+            mnemonic: mnemonic,
+            lastKnownHeight: lastKnownHeight,
+            utxos: utxos.map { utxo in
+                UTXO(txid: utxo.txid.displayHex, vout: utxo.vout, amount: utxo.amount,
+                     scriptPubKey: utxo.scriptPubKey.hex, chain: utxo.chain.rawValue,
+                     index: utxo.index, height: utxo.height)
+            },
+            transactions: history.map { entry in
+                KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
+                                 received: entry.received, spent: entry.spent)
+            }
+        )
+    }
+
+    /// Pretty-printed, sorted-key JSON ready for a share sheet. Nil optionals
+    /// (mnemonic / descriptor) are omitted rather than encoded as `null`.
+    public func serialized() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(self)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw WalletError.invalidBundle("export is not UTF-8")
+        }
+        return text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, network, descriptor, mnemonic, lastKnownHeight, utxos, transactions
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(network, forKey: .network)
+        try container.encodeIfPresent(descriptor, forKey: .descriptor)
+        try container.encodeIfPresent(mnemonic, forKey: .mnemonic)
+        try container.encode(lastKnownHeight, forKey: .lastKnownHeight)
+        try container.encode(utxos, forKey: .utxos)
+        try container.encode(transactions, forKey: .transactions)
+    }
+
     /// The bundle's claimed UTXOs in wallet form.
     public func claimedUTXOs() throws -> [WalletUTXO] {
         try utxos.map { utxo in

@@ -162,7 +162,7 @@ private struct ImportBundleView: View {
                 } header: {
                     Text("Import bundle (JSON)")
                 } footer: {
-                    Text("Exported by the previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.")
+                    Text("Exported by Winnow (Settings → Export wallet bundle) or by previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.")
                 }
                 if busy {
                     Section { ProgressView("Importing and verifying…") }

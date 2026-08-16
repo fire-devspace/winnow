@@ -148,4 +148,92 @@ struct ImportBundleTests {
         #expect(report.confirmedUTXOs.count == 2)
         #expect(report.discoveredUTXOs.isEmpty)
     }
+
+    /// Funds a wallet at receive index 0 so export has a live UTXO + history.
+    private func fundedWallet(keyStore: KeyStore = InMemoryKeyStore()) async throws -> Wallet {
+        let wallet = try await Wallet.create(network: .signet, keyStore: keyStore,
+                                             entropy: testEntropy, creationHeight: 100)
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 200_000, scriptPubKey: script),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        return wallet
+    }
+
+    @Test("export → import round trip carries balance, history and scan frontier")
+    func exportRoundTrip() async throws {
+        let original = try await fundedWallet()
+        let bundle = try await original.exportBundle()
+        #expect(bundle.mnemonic == nil)
+        #expect(bundle.descriptor != nil)
+        #expect(bundle.lastKnownHeight == 99) // nextScanHeight 100 − 1
+        #expect(bundle.utxos.count == 1)
+        #expect(bundle.transactions.count == 1)
+
+        // Display-hex hop: the file's txid is reversed relative to internal order.
+        let originalTxid = try #require(await original.utxos.first).txid
+        #expect(bundle.utxos[0].txid == originalTxid.displayHex)
+        #expect(bundle.utxos[0].txid != originalTxid.hex)
+
+        let json = try bundle.serialized()
+        #expect(!json.contains("\"mnemonic\""))
+        let parsed = try JSONDecoder().decode(ImportBundle.self, from: Data(json.utf8))
+        #expect(parsed == bundle)
+
+        let restored = try Wallet.importing(parsed, keyStore: InMemoryKeyStore())
+        #expect(await restored.id == original.id)
+        #expect(await restored.balance == 200_000)
+        #expect(await restored.utxos.count == 1)
+        #expect(await restored.utxos[0].txid == originalTxid)
+        #expect(await restored.history.count == 1)
+        #expect(await restored.history[0].received == 200_000)
+        #expect(await restored.nextScanHeight == 100)
+        #expect(await restored.creationHeight == 99)
+        // Watch-only import must not invent a seed.
+        let emptyStore = InMemoryKeyStore()
+        _ = try Wallet.importing(parsed, keyStore: emptyStore)
+        #expect(throws: KeyStoreError.notFound(walletID: "73c5da0a")) {
+            _ = try emptyStore.load(walletID: "73c5da0a")
+        }
+    }
+
+    @Test("export with the mnemonic is opt-in and yields a spendable wallet")
+    func exportWithMnemonic() async throws {
+        let original = try await fundedWallet()
+        let watchOnly = try await original.exportBundle(includeMnemonic: false)
+        #expect(watchOnly.mnemonic == nil)
+
+        let hot = try await original.exportBundle(includeMnemonic: true)
+        #expect(hot.mnemonic == testMnemonic)
+        let json = try hot.serialized()
+        #expect(json.contains(testMnemonic))
+
+        let keyStore = InMemoryKeyStore()
+        let restored = try Wallet.importing(hot, keyStore: keyStore)
+        #expect(await restored.id == "73c5da0a")
+        #expect(try keyStore.load(walletID: "73c5da0a") == .mnemonic(testMnemonic))
+        #expect(try await restored.address(chain: .receive, index: 0)
+                    == (try await original.address(chain: .receive, index: 0)))
+    }
+
+    @Test("export with the mnemonic refuses an xprv-only wallet")
+    func exportXprvRefusesSeed() async throws {
+        let keyStore = InMemoryKeyStore()
+        let wallet = try await fundedWallet(keyStore: keyStore)
+        let id = await wallet.id
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        try keyStore.delete(walletID: id)
+        try keyStore.store(.masterKey(master.serialized(network: .testnet)), for: id)
+        do {
+            _ = try await wallet.exportBundle(includeMnemonic: true)
+            Issue.record("expected WalletError.mnemonicUnavailable")
+        } catch let error as WalletError {
+            #expect(error == .mnemonicUnavailable)
+        }
+        // Watch-only export still works — the descriptor is public material.
+        let watchOnly = try await wallet.exportBundle()
+        #expect(watchOnly.mnemonic == nil)
+        #expect(watchOnly.descriptor != nil)
+    }
 }

@@ -107,7 +107,17 @@ This is the import analogue of [read-side](read-side.md) §2.7.1 (filters can li
 
 ---
 
-## 5. What this is not
+## 5. Export (the writer)
+
+Winnow produces the same v1 JSON it consumes. Settings → **Export wallet bundle** writes descriptor + known UTXOs + history + `lastKnownHeight` = current scan height (`nextScanHeight − 1`). The mnemonic is **excluded by default**; including it is a hot backup and takes an explicit toggle plus a confirm.
+
+A Winnow-native wallet that is never exported cannot be recovered here from the 12 words alone — that is the no-back-scan rule, not a missing feature of import. Export is the other half.
+
+Pending (height 0) change outputs stay in the UTXO set: they are live spendable state.
+
+---
+
+## 6. What this is not
 
 - **Not a BIP39-only import.** A 12-word phrase without history would force a back-scan. The onboarding UI does not offer "type your words and we'll find your coins."
 - **Not an xpub watcher that asks an indexer.** Descriptor-only import is watch-only and still uses filters, from the bundle height forward. The opt-in esplora path does not get to skip the bundle.
@@ -115,7 +125,7 @@ This is the import analogue of [read-side](read-side.md) §2.7.1 (filters can li
 
 ---
 
-## 6. Conclusion
+## 7. Conclusion
 
 Moving a wallet onto this phone is a data-portability problem, not a scanning problem. The previous wallet ships its answers; this wallet checks the answers it can check (spends after `lastKnownHeight`, script/descriptor agreement) and refuses to pretend the rest of history can be privately reconstructed on a radio.
 

@@ -2,7 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 
-public enum WalletError: Error, Equatable {
+public enum WalletError: Error, Equatable, LocalizedError {
     /// Descriptor isn't the wallet's single-sig form: tr(KEY) with a ranged
     /// BIP389 `<0;1>/*` derivation and origin info (see `Wallet.descriptor`).
     case invalidDescriptor(String)
@@ -12,6 +12,27 @@ public enum WalletError: Error, Equatable {
     case noPayments
     /// The built transaction lost its change output (should not happen).
     case changeOutputMissing
+    /// A seed-bearing export was requested, but the secret is an xprv (or
+    /// missing) rather than a BIP39 mnemonic. Refusing is safer than emitting
+    /// a bundle that looks spendable and is not.
+    case mnemonicUnavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidDescriptor(text):
+            "Invalid descriptor: \(text)"
+        case .descriptorMismatch:
+            "Bundle descriptor does not match the mnemonic."
+        case let .invalidBundle(reason):
+            "Invalid import bundle: \(reason)"
+        case .noPayments:
+            "Nothing to send."
+        case .changeOutputMissing:
+            "The built transaction lost its change output."
+        case .mnemonicUnavailable:
+            "This wallet has no recovery phrase to export — it was imported from an extended key, not a BIP39 mnemonic."
+        }
+    }
 }
 
 /// Which chain of the wallet's multipath descriptor an address lives on
@@ -623,6 +644,38 @@ public actor Wallet {
             throw WalletError.invalidDescriptor("neutered key in signing path")
         }
         return try BIP86.tweakedPrivateKey(secret)
+    }
+
+    // MARK: - Export
+
+    /// Live wallet → import bundle. `lastKnownHeight` is the scan frontier
+    /// (`nextScanHeight - 1`, or 0 at genesis) so `verifyImport` resumes at
+    /// the same height this wallet would scan next.
+    ///
+    /// Watch-only by default. The seed is included only on an explicit
+    /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``
+    /// rather than silently exporting a non-spendable "backup".
+    public func exportBundle(includeMnemonic: Bool = false) throws -> ImportBundle {
+        let lastKnownHeight = state.nextScanHeight == 0 ? 0 : state.nextScanHeight - 1
+        let mnemonic: String?
+        if includeMnemonic {
+            switch try keyStore.load(walletID: id) {
+            case let .mnemonic(words):
+                mnemonic = words
+            case .masterKey:
+                throw WalletError.mnemonicUnavailable
+            }
+        } else {
+            mnemonic = nil
+        }
+        return ImportBundle.export(
+            descriptor: descriptor.serialized(),
+            network: network.rawValue,
+            lastKnownHeight: lastKnownHeight,
+            utxos: state.utxos,
+            history: state.history,
+            mnemonic: mnemonic
+        )
     }
 
     // MARK: - Persistence

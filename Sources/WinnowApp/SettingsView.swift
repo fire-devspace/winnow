@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var showEsploraWarning = false
     @State private var showReadSide = false
     @State private var showPapers = false
+    @State private var showExport = false
 
     struct PeerInfo: Equatable, Identifiable {
         var id: String { endpoint }
@@ -36,6 +37,16 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("Each network has its own wallet on this device. Switching opens that network's wallet, or onboarding when it has none.")
+                }
+
+                Section {
+                    Button("Export wallet bundle") { showExport = true }
+                        .disabled(model.walletID == nil)
+                        .accessibilityIdentifier("exportBundleButton")
+                } header: {
+                    Text("Backup")
+                } footer: {
+                    Text("The bundle is the history. A new phone cannot recover this wallet from the 12 words alone — export this file and keep it with the words.")
                 }
 
                 Section {
@@ -138,6 +149,9 @@ struct SettingsView: View {
             .sheet(isPresented: $showPapers) {
                 DesignPapersView()
             }
+            .sheet(isPresented: $showExport) {
+                ExportBundleView()
+            }
         }
     }
 
@@ -164,5 +178,97 @@ struct SettingsView: View {
                                   feeFilter: await peer.feeFilter))
         }
         connectedPeers = infos
+    }
+}
+
+/// Settings → Backup → Export: emit the v1 ImportBundle JSON (watch-only
+/// by default; seed behind an explicit confirm).
+private struct ExportBundleView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var includeMnemonic = false
+    @State private var confirmSeed = false
+    @State private var json: String?
+    @State private var fileURL: URL?
+    @State private var error: String?
+    @State private var busy = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("Include recovery phrase", isOn: $includeMnemonic)
+                        .accessibilityIdentifier("exportIncludeMnemonicToggle")
+                        .onChange(of: includeMnemonic) { _, _ in
+                            json = nil
+                            fileURL = nil
+                            error = nil
+                        }
+                    if includeMnemonic {
+                        Text("A bundle with the seed is a hot backup. Anyone who has the file can spend. Share it the same way you would share the words — not through iCloud or a chat.")
+                            .foregroundStyle(.orange)
+                            .font(.footnote)
+                    }
+                } footer: {
+                    Text("Off by default. Without the phrase the bundle restores history and the descriptor, not the ability to spend.")
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                }
+                if let json {
+                    Section("Bundle") {
+                        CopyableTextBlock(text: json)
+                        if let fileURL {
+                            ShareLink("Share \(fileURL.lastPathComponent)", item: fileURL)
+                                .accessibilityIdentifier("exportShareLink")
+                        }
+                    }
+                } else {
+                    Section {
+                        Button(includeMnemonic ? "Export with recovery phrase" : "Export watch-only bundle") {
+                            if includeMnemonic {
+                                confirmSeed = true
+                            } else {
+                                export()
+                            }
+                        }
+                        .disabled(busy)
+                        .accessibilityIdentifier("exportConfirmButton")
+                    }
+                }
+            }
+            .navigationTitle("Export wallet")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .alert("Include the recovery phrase?", isPresented: $confirmSeed) {
+                Button("Export with phrase", role: .destructive) { export() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The file will contain the 12 words. Treat it as cash.")
+            }
+        }
+    }
+
+    private func export() {
+        busy = true
+        error = nil
+        Task {
+            do {
+                let text = try await model.exportWalletBundle(includeMnemonic: includeMnemonic)
+                let name = "winnow-\(model.network.rawValue)-\(model.walletID ?? "wallet").json"
+                let url = FileManager.default.temporaryDirectory.appending(path: name)
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                json = text
+                fileURL = url
+            } catch {
+                self.error = error.localizedDescription
+            }
+            busy = false
+        }
     }
 }
