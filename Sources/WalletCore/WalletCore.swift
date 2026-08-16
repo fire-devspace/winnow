@@ -13,8 +13,8 @@
 /// - ``Wallet``: the aggregate — BIP86 multipath descriptor, gap-limited
 ///   watch list, forward-only ``FilterSync`` scanning → UTXO set + history,
 ///   JSON persistence, send pipeline.
-/// - ``ImportBundle`` / ``ImportReport``: import with history, verified by
-///   forward-scanning from the bundle height (docs/import.md).
+/// - ``ImportBundle`` / ``ImportReport``: export and import with history,
+///   verified by forward-scanning from the bundle height (docs/import.md).
 /// - ``CoinSelection`` / ``FeePolicy``: largest-first selection with dust
 ///   guard; feefilter-floor/observed/preset/override feerate resolution.
 public enum WalletCore {

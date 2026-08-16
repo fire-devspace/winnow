@@ -326,8 +326,15 @@ final class AppModel {
                     await broadcaster.markConfirmed(tx.txid)
                 }
             }
+            // apply() does not move the wallet frontier — FilterSync is
+            // authoritative here. Persist it so exportBundle() and the next
+            // launch's startHeight match what the UI already shows.
+            try await wallet.recordScanHeight(await filters.nextScanHeight)
             status.lastSyncError = nil
         } catch {
+            // A later batch may have thrown after earlier ones persisted
+            // in FilterSync. Keep WalletState from lagging that progress.
+            try? await wallet.recordScanHeight(await filters.nextScanHeight)
             status.lastSyncError = error.localizedDescription
         }
         await refresh()
@@ -411,6 +418,19 @@ final class AppModel {
         let report = try await wallet.verifyImport(bundle, using: filters)
         await refresh()
         return report
+    }
+
+    /// Live wallet as a v1 import-bundle JSON string (docs/import.md).
+    /// Watch-only unless `includeMnemonic` is set; an xprv-only wallet
+    /// throws ``WalletError/mnemonicUnavailable`` rather than a fake seed.
+    func exportWalletBundle(includeMnemonic: Bool) async throws -> String {
+        guard let wallet else { throw AppError.noWallet }
+        // The UI snapshot already prefers filters.nextScanHeight; export
+        // must too, in case the last persist was skipped (failed pass).
+        if let filters = stack?.filters {
+            try await wallet.recordScanHeight(await filters.nextScanHeight)
+        }
+        return try await wallet.exportBundle(includeMnemonic: includeMnemonic).serialized()
     }
 
     /// Switches to a just-created/imported wallet: anything chain-facing from

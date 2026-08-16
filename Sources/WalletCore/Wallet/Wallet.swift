@@ -2,7 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 
-public enum WalletError: Error, Equatable {
+public enum WalletError: Error, Equatable, LocalizedError {
     /// Descriptor isn't the wallet's single-sig form: tr(KEY) with a ranged
     /// BIP389 `<0;1>/*` derivation and origin info (see `Wallet.descriptor`).
     case invalidDescriptor(String)
@@ -12,6 +12,27 @@ public enum WalletError: Error, Equatable {
     case noPayments
     /// The built transaction lost its change output (should not happen).
     case changeOutputMissing
+    /// A seed-bearing export was requested, but the secret is an xprv (or
+    /// missing) rather than a BIP39 mnemonic. Refusing is safer than emitting
+    /// a bundle that looks spendable and is not.
+    case mnemonicUnavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidDescriptor(text):
+            "Invalid descriptor: \(text)"
+        case .descriptorMismatch:
+            "Bundle descriptor does not match the mnemonic."
+        case let .invalidBundle(reason):
+            "Invalid import bundle: \(reason)"
+        case .noPayments:
+            "Nothing to send."
+        case .changeOutputMissing:
+            "The built transaction lost its change output."
+        case .mnemonicUnavailable:
+            "This wallet has no recovery phrase to export — it was imported from an extended key, not a BIP39 mnemonic."
+        }
+    }
 }
 
 /// Which chain of the wallet's multipath descriptor an address lives on
@@ -372,7 +393,17 @@ public actor Wallet {
         try await sync.sync(watchScripts: scripts) { match in
             try await self.apply(match: match)
         }
-        state.nextScanHeight = await sync.nextScanHeight
+        try recordScanHeight(await sync.nextScanHeight)
+    }
+
+    /// Mirrors FilterSync's frontier into persisted wallet state.
+    ///
+    /// `apply(match:)` does not move `nextScanHeight` — only this call (or
+    /// `scan(using:)`, which ends in it) does. The live app drives FilterSync
+    /// directly and must record after each pass, or `exportBundle()` will
+    /// emit the creation/import height while the UI shows the filter actor.
+    public func recordScanHeight(_ nextScanHeight: UInt32) throws {
+        state.nextScanHeight = nextScanHeight
         try persist()
     }
 
@@ -623,6 +654,50 @@ public actor Wallet {
             throw WalletError.invalidDescriptor("neutered key in signing path")
         }
         return try BIP86.tweakedPrivateKey(secret)
+    }
+
+    // MARK: - Export
+
+    /// Live wallet → import bundle. `lastKnownHeight` is the scan frontier
+    /// (`nextScanHeight - 1`, or 0 at genesis) so `verifyImport` resumes at
+    /// the same height this wallet would scan next. Callers that drive
+    /// FilterSync themselves must `recordScanHeight` first — `apply` does
+    /// not move the frontier.
+    ///
+    /// Watch-only by default. The seed is included only on an explicit
+    /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``
+    /// rather than silently exporting a non-spendable "backup".
+    public func exportBundle(includeMnemonic: Bool = false) throws -> ImportBundle {
+        let lastKnownHeight = state.nextScanHeight == 0 ? 0 : state.nextScanHeight - 1
+        let mnemonic: String?
+        if includeMnemonic {
+            let secret: WalletSecret
+            do {
+                secret = try keyStore.load(walletID: id)
+            } catch let error as KeyStoreError {
+                // Missing entry is the same user-facing outcome as an xprv:
+                // there is no recovery phrase to put in the file. Don't leak
+                // the raw KeyStoreError through the export boundary.
+                if case .notFound = error { throw WalletError.mnemonicUnavailable }
+                throw error
+            }
+            switch secret {
+            case let .mnemonic(words):
+                mnemonic = words
+            case .masterKey:
+                throw WalletError.mnemonicUnavailable
+            }
+        } else {
+            mnemonic = nil
+        }
+        return ImportBundle.export(
+            descriptor: descriptor.serialized(),
+            network: network.rawValue,
+            lastKnownHeight: lastKnownHeight,
+            utxos: state.utxos,
+            history: state.history,
+            mnemonic: mnemonic
+        )
     }
 
     // MARK: - Persistence
