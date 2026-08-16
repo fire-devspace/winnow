@@ -530,4 +530,83 @@ final class WinnowAppUITests: XCTestCase {
         Timings.record("vault", step: "cosign-review", from: reviewStart)
         Screenshots.capture(app, "15-vault-cosign", testCase: self)
     }
+
+    // MARK: - 08 Export bundle (Settings -> Backup, #18)
+
+    /// Walks the export flow on the funded "main" wallet: watch-only by
+    /// default (no mnemonic key and no seed words in the preview, which for
+    /// watch-only IS the real JSON), the staged share link and its system
+    /// share sheet, then the seed path behind the explicit confirm with the
+    /// on-screen preview redacted to "<redacted>". The shared file's real
+    /// content and deletion lifecycle are unit-tested (ExportStagingFile /
+    /// ImportBundle tests); test06 walks the import UI on an equivalent
+    /// bundle, closing the round trip.
+    func test08ExportBundle() throws {
+        let app = launchApp()
+        app.tabBars.buttons["Settings"].tap()
+        let exportButton = app.buttons["exportBundleButton"]
+        XCTAssertTrue(scrollUntilExists(app, exportButton), "no export button in Settings")
+        exportButton.tap()
+
+        // Watch-only is the default: no toggle flip, straight to export.
+        let confirm = app.buttons["exportConfirmButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 20), "no export confirm button")
+        XCTAssertEqual(confirm.label, "Export watch-only bundle",
+                       "seed export must not be the default")
+        confirm.tap()
+        let shareLink = app.buttons["exportShareLink"]
+        XCTAssertTrue(shareLink.waitForExistence(timeout: 60), "no staged share link after export")
+        let preview = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "\"version\"")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20), "no bundle preview")
+        var json = preview.label
+        XCTAssertTrue(json.contains("\"descriptor\""), "preview lacks the descriptor")
+        XCTAssertTrue(json.contains("\"lastKnownHeight\""), "preview lacks the scan frontier")
+        XCTAssertFalse(json.contains("mnemonic"), "watch-only preview has a mnemonic key")
+        XCTAssertFalse(json.contains(Self.mnemonic), "watch-only preview contains the seed")
+        Screenshots.capture(app, "16-export-watch-only", testCase: self)
+
+        // The share link stages a real file and opens the system share sheet.
+        shareLink.tap()
+        let sheetTitle = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "winnow-signet-")).firstMatch
+        let shareSheet = poll(timeout: 20, interval: 1, "share sheet") {
+            app.otherElements["ActivityListView"].exists || sheetTitle.exists
+        }
+        XCTAssertTrue(shareSheet, "share sheet did not appear")
+        Screenshots.capture(app, "17-export-share-sheet", testCase: self)
+        let closeShare = app.buttons["Close"].firstMatch
+        if closeShare.waitForExistence(timeout: 5), closeShare.isHittable {
+            closeShare.tap()
+        } else {
+            // Fallback: drag the sheet down to dismiss.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+                .press(forDuration: 0.05, thenDragTo:
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+        }
+        // Back on the export form (the next step's scroll asserts the toggle).
+
+        // Seed path: the toggle resets the export, the alert gates it, and
+        // the on-screen preview redacts the phrase.
+        let toggle = app.switches["exportIncludeMnemonicToggle"]
+        XCTAssertTrue(scrollUntilExists(app, toggle, up: true), "no seed toggle")
+        app.flipSwitch(toggle)
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "toggle did not reset the export")
+        confirm.tap()
+        let alert = app.alerts["Include the recovery phrase?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10), "no seed confirm alert")
+        Screenshots.capture(app, "18-export-seed-confirm", testCase: self)
+        alert.buttons["Export with phrase"].tap()
+        XCTAssertTrue(shareLink.waitForExistence(timeout: 60), "no share link after seed export")
+        XCTAssertTrue(preview.waitForExistence(timeout: 20), "no seed-export preview")
+        json = preview.label
+        XCTAssertTrue(json.contains("\"mnemonic\""), "seed preview lacks the mnemonic key")
+        XCTAssertTrue(json.contains("<redacted>"), "seed preview is not redacted")
+        XCTAssertFalse(json.contains(Self.mnemonic), "on-screen preview shows the real phrase")
+        XCTAssertTrue(app.staticTexts["The recovery phrase is in the shared file, not shown here."]
+            .exists, "no shared-file note")
+        Screenshots.capture(app, "19-export-seed-redacted", testCase: self)
+
+        app.buttons["Close"].tap()
+    }
 }
