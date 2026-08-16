@@ -109,7 +109,7 @@ This is the import analogue of [read-side](read-side.md) §2.7.1 (filters can li
 
 ## 5. Export (the writer)
 
-Winnow produces the same v1 JSON it consumes. Settings → **Export wallet bundle** writes descriptor + known UTXOs + history + `lastKnownHeight` = current scan height (`nextScanHeight − 1`). The mnemonic is **excluded by default**; including it is a hot backup and takes an explicit toggle plus a confirm.
+Winnow produces the same v1 JSON it consumes. Settings → **Export wallet bundle** writes descriptor + known UTXOs + history + `lastKnownHeight` = the live FilterSync frontier (`nextScanHeight − 1`). The app persists that frontier back into `WalletState` after each sync pass — `apply(match:)` alone does not move it — so an export after ordinary app use resumes where the phone actually stopped, not at the creation/import height. The mnemonic is **excluded by default**; including it is a hot backup and takes an explicit toggle plus a confirm. The share-sheet file is a unique, backup-excluded temp that is deleted when the sheet closes, the seed toggle flips, or the write fails.
 
 A Winnow-native wallet that is never exported cannot be recovered here from the 12 words alone — that is the no-back-scan rule, not a missing feature of import. Export is the other half.
 

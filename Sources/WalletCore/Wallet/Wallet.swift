@@ -393,7 +393,17 @@ public actor Wallet {
         try await sync.sync(watchScripts: scripts) { match in
             try await self.apply(match: match)
         }
-        state.nextScanHeight = await sync.nextScanHeight
+        try recordScanHeight(await sync.nextScanHeight)
+    }
+
+    /// Mirrors FilterSync's frontier into persisted wallet state.
+    ///
+    /// `apply(match:)` does not move `nextScanHeight` — only this call (or
+    /// `scan(using:)`, which ends in it) does. The live app drives FilterSync
+    /// directly and must record after each pass, or `exportBundle()` will
+    /// emit the creation/import height while the UI shows the filter actor.
+    public func recordScanHeight(_ nextScanHeight: UInt32) throws {
+        state.nextScanHeight = nextScanHeight
         try persist()
     }
 
@@ -650,7 +660,9 @@ public actor Wallet {
 
     /// Live wallet → import bundle. `lastKnownHeight` is the scan frontier
     /// (`nextScanHeight - 1`, or 0 at genesis) so `verifyImport` resumes at
-    /// the same height this wallet would scan next.
+    /// the same height this wallet would scan next. Callers that drive
+    /// FilterSync themselves must `recordScanHeight` first — `apply` does
+    /// not move the frontier.
     ///
     /// Watch-only by default. The seed is included only on an explicit
     /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``

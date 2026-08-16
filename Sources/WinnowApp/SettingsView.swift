@@ -193,6 +193,7 @@ private struct ExportBundleView: View {
     @State private var fileURL: URL?
     @State private var error: String?
     @State private var busy = false
+    @State private var staging = ExportStagingFile()
 
     var body: some View {
         NavigationStack {
@@ -201,9 +202,7 @@ private struct ExportBundleView: View {
                     Toggle("Include recovery phrase", isOn: $includeMnemonic)
                         .accessibilityIdentifier("exportIncludeMnemonicToggle")
                         .onChange(of: includeMnemonic) { _, _ in
-                            json = nil
-                            fileURL = nil
-                            error = nil
+                            resetExport()
                         }
                     if includeMnemonic {
                         Text("A bundle with the seed is a hot backup. Anyone who has the file can spend. Share it the same way you would share the words — not through iCloud or a chat.")
@@ -242,7 +241,10 @@ private struct ExportBundleView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") {
+                        staging.remove()
+                        dismiss()
+                    }
                 }
             }
             .alert("Include the recovery phrase?", isPresented: $confirmSeed) {
@@ -251,7 +253,15 @@ private struct ExportBundleView: View {
             } message: {
                 Text("The file will contain the 12 words. Treat it as cash.")
             }
+            .onDisappear { staging.remove() }
         }
+    }
+
+    private func resetExport() {
+        json = nil
+        fileURL = nil
+        error = nil
+        staging.remove()
     }
 
     private func export() {
@@ -261,11 +271,13 @@ private struct ExportBundleView: View {
             do {
                 let text = try await model.exportWalletBundle(includeMnemonic: includeMnemonic)
                 let name = "winnow-\(model.network.rawValue)-\(model.walletID ?? "wallet").json"
-                let url = FileManager.default.temporaryDirectory.appending(path: name)
-                try text.write(to: url, atomically: true, encoding: .utf8)
+                let url = try staging.write(text, suggestedName: name)
                 json = text
                 fileURL = url
             } catch {
+                staging.remove()
+                fileURL = nil
+                json = nil
                 self.error = error.localizedDescription
             }
             busy = false

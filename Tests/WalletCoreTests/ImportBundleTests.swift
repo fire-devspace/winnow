@@ -236,4 +236,39 @@ struct ImportBundleTests {
         #expect(watchOnly.mnemonic == nil)
         #expect(watchOnly.descriptor != nil)
     }
+
+    /// The live app path (`AppModel.syncOnce`) calls `apply(match:)` and
+    /// drives FilterSync itself — it never goes through `Wallet.scan`.
+    /// Without `recordScanHeight`, export would still emit the
+    /// creation/import height.
+    @Test("app-style apply + recordScanHeight exports the live frontier")
+    func exportAfterAppStyleFilterProgress() async throws {
+        let storage = tempFileURL("wallet.json")
+        let keyStore = InMemoryKeyStore()
+        // App path: apply(match:) + independent FilterSync progress, never
+        // Wallet.scan. Persist must land on disk so a reopen sees it.
+        let wallet = try Wallet.create(network: .signet, keyStore: keyStore,
+                                       storageURL: storage, entropy: testEntropy,
+                                       creationHeight: 100)
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 200_000, scriptPubKey: script),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+
+        #expect(await wallet.nextScanHeight == 100)
+        let stale = try await wallet.exportBundle()
+        #expect(stale.lastKnownHeight == 99)
+
+        // FilterSync finished a pass whose next height is 250.
+        try await wallet.recordScanHeight(250)
+        #expect(await wallet.nextScanHeight == 250)
+        let live = try await wallet.exportBundle()
+        #expect(live.lastKnownHeight == 249)
+        #expect(live.utxos.count == 1)
+
+        let reopened = try Wallet.open(storageURL: storage, keyStore: keyStore)
+        #expect(await reopened.nextScanHeight == 250)
+        #expect(try await reopened.exportBundle().lastKnownHeight == 249)
+    }
 }
