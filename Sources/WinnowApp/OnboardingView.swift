@@ -53,10 +53,21 @@ struct OnboardingView: View {
             .sheet(isPresented: $showImport) {
                 ImportBundleView()
             }
-            .sheet(item: mnemonicString) { words in
+            .sheet(item: mnemonicString, onDismiss: {
+                // A swipe-dismiss without the confirmed Done leaves the backup
+                // pending — re-present instead of stranding the user on the
+                // onboarding list. Done clears the flag before this fires, so
+                // the confirmed path cannot loop.
+                mnemonic = model.pendingBackupMnemonic()
+            }) { words in
                 MnemonicBackupView(mnemonic: words.text, writtenDown: $writtenDown) {
                     model.finishOnboarding()
                 }
+            }
+            .task {
+                // Relaunched mid-backup: resume the sheet with the same words,
+                // straight from the Keychain (#5).
+                if mnemonic == nil { mnemonic = model.pendingBackupMnemonic() }
             }
         }
     }

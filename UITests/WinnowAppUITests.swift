@@ -530,4 +530,62 @@ final class WinnowAppUITests: XCTestCase {
         Timings.record("vault", step: "cosign-review", from: reviewStart)
         Screenshots.capture(app, "15-vault-cosign", testCase: self)
     }
+
+    // MARK: - 09 Backup resume + recovery-phrase reveal (#5)
+
+    /// Mine-free. Kills the app on the mnemonic backup sheet and asserts the
+    /// relaunch resumes it (the backup-pending flag survives restarts), then
+    /// completes the backup, proves a further relaunch stays on home, and
+    /// reveals the phrase from Settings -> Backup (device auth is bypassed in
+    /// E2E mode; simulators have no passcode). Numbered after PR #22's
+    /// test08 — whichever branch lands second rebases this file.
+    func test09BackupResumeAndReveal() throws {
+        let backupEnvironment: [String: String] = [
+            "WINNOW_E2E": "1",
+            "WINNOW_E2E_RUN": "backup",
+            "WINNOW_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
+            "WINNOW_E2E_CHALLENGE": BitcoinCLI.challengeHex,
+            "WINNOW_E2E_ENTROPY": Self.entropyHex,
+        ]
+        let app = launchApp(run: "backup", reset: true, expectOnboarding: true)
+        app.buttons["createWalletButton"].tap()
+        XCTAssertTrue(app.switches["writtenDownToggle"].waitForExistence(timeout: 180),
+                      "backup sheet did not appear after create")
+        Screenshots.capture(app, "20-backup-sheet", testCase: self)
+
+        // Kill mid-backup, before Done.
+        app.terminate()
+        let resumed = XCUIApplication()
+        resumed.launchEnvironment = backupEnvironment // same run, NO reset
+        resumed.launch()
+        XCTAssertTrue(resumed.switches["writtenDownToggle"].waitForExistence(timeout: 60),
+                      "relaunch did not resume the backup sheet — backup skipped (#5)")
+        Screenshots.capture(resumed, "21-backup-resumed", testCase: self)
+
+        // Complete the backup: toggle + Done -> wallet home.
+        resumed.flipSwitch(resumed.switches["writtenDownToggle"])
+        resumed.buttons["backupDoneButton"].tap()
+        XCTAssertTrue(resumed.staticTexts["balanceText"].waitForExistence(timeout: 60),
+                      "home did not appear after backup Done")
+
+        // A confirmed backup must not re-prompt on the next launch.
+        resumed.terminate()
+        let settled = XCUIApplication()
+        settled.launchEnvironment = backupEnvironment
+        settled.launch()
+        XCTAssertTrue(settled.staticTexts["balanceText"].waitForExistence(timeout: 60),
+                      "confirmed backup re-prompted on relaunch")
+
+        // Reveal from Settings -> Backup: the fixed entropy's numbered first
+        // word renders in the grid.
+        settled.tabBars.buttons["Settings"].tap()
+        let revealButton = settled.buttons["revealPhraseButton"]
+        XCTAssertTrue(scrollUntilExists(settled, revealButton), "no reveal button in Backup")
+        revealButton.tap()
+        let firstWord = "1. " + (Self.mnemonic.split(separator: " ").first.map(String.init) ?? "")
+        XCTAssertTrue(settled.staticTexts[firstWord].waitForExistence(timeout: 30),
+                      "revealed phrase grid missing \(firstWord)")
+        Screenshots.capture(settled, "22-phrase-revealed", testCase: self)
+        settled.buttons["Close"].tap()
+    }
 }

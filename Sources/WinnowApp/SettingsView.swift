@@ -1,4 +1,5 @@
 import BitcoinP2P
+import LocalAuthentication
 import SwiftUI
 import WalletCore
 
@@ -14,6 +15,9 @@ struct SettingsView: View {
     @State private var showReadSide = false
     @State private var showPapers = false
     @State private var showExport = false
+    @State private var revealedMnemonic: String?
+    @State private var revealError: String?
+    @State private var revealing = false
 
     struct PeerInfo: Equatable, Identifiable {
         var id: String { endpoint }
@@ -43,10 +47,16 @@ struct SettingsView: View {
                     Button("Export wallet bundle") { showExport = true }
                         .disabled(model.walletID == nil)
                         .accessibilityIdentifier("exportBundleButton")
+                    Button("Show recovery phrase") { reveal() }
+                        .disabled(model.walletID == nil || revealing)
+                        .accessibilityIdentifier("revealPhraseButton")
+                    if let revealError {
+                        Text(revealError).foregroundStyle(.red).font(.footnote)
+                    }
                 } header: {
                     Text("Backup")
                 } footer: {
-                    Text("The bundle is the history. A new phone cannot recover this wallet from the 12 words alone — export this file and keep it with the words.")
+                    Text("The bundle is the history. A new phone cannot recover this wallet from the 12 words alone — export this file and keep it with the words. Showing the phrase asks for device authentication first.")
                 }
 
                 Section {
@@ -149,9 +159,40 @@ struct SettingsView: View {
             .sheet(isPresented: $showPapers) {
                 DesignPapersView()
             }
+            .sheet(item: revealedItem) { words in
+                RevealPhraseView(mnemonic: words.text)
+            }
             .sheet(isPresented: $showExport) {
                 ExportBundleView()
             }
+        }
+    }
+
+    private struct RevealedItem: Identifiable {
+        var id: String { text }
+        let text: String
+    }
+
+    /// Bridges the optional revealed mnemonic to an Identifiable sheet item.
+    private var revealedItem: Binding<RevealedItem?> {
+        Binding(
+            get: { revealedMnemonic.map(RevealedItem.init) },
+            set: { revealedMnemonic = $0?.text }
+        )
+    }
+
+    private func reveal() {
+        revealing = true
+        revealError = nil
+        Task {
+            do {
+                revealedMnemonic = try await model.revealMnemonic()
+            } catch let error as LAError where error.code == .userCancel {
+                // Cancelling the auth prompt is a decision, not a failure.
+            } catch {
+                revealError = error.localizedDescription
+            }
+            revealing = false
         }
     }
 
@@ -287,6 +328,42 @@ private struct ExportBundleView: View {
                 self.error = error.localizedDescription
             }
             busy = false
+        }
+    }
+}
+
+/// Settings → Backup → Show recovery phrase: the words, read-only, after
+/// device authentication. No copy control on purpose — the phrase belongs on
+/// paper, not on the pasteboard.
+private struct RevealPhraseView: View {
+    let mnemonic: String
+    @Environment(\.dismiss) private var dismiss
+
+    private var words: [String] { mnemonic.split(separator: " ").map(String.init) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(Array(words.enumerated()), id: \.offset) { index, word in
+                            Text("\(index + 1). \(word)")
+                                .font(.system(.body, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .accessibilityIdentifier("revealedPhraseGrid")
+                } footer: {
+                    Text("These words are the wallet. Anyone who sees them can spend — keep them offline, on paper, and close this screen when done.")
+                }
+            }
+            .navigationTitle("Recovery phrase")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import BlockchainBackend
 import Foundation
+import LocalAuthentication
 import SwiftUI
 import UIKit
 import WalletCore
@@ -27,6 +28,8 @@ final class AppModel {
         case invalidPeer(String)
         case wrongNetwork(String)
         case duplicateVault
+        case deviceAuthUnavailable
+        case deviceAuthFailed
 
         var errorDescription: String? {
             switch self {
@@ -37,6 +40,8 @@ final class AppModel {
             case let .invalidPeer(text): "Invalid peer “\(text)” — use host:port."
             case let .wrongNetwork(network): "This bundle is for \(network); switch the network in Settings first."
             case .duplicateVault: "A vault with this descriptor already exists."
+            case .deviceAuthUnavailable: "Set a device passcode first — the recovery phrase only shows after device authentication."
+            case .deviceAuthFailed: "Device authentication failed."
             }
         }
     }
@@ -140,6 +145,9 @@ final class AppModel {
         static let manualPeers = "manualPeers"
         static let esploraEnabled = "esploraEnabled"
         static let esploraURL = "esploraURL"
+        /// Set at wallet creation, cleared only by the backup sheet's
+        /// confirmed Done — a relaunch in between resumes the backup.
+        static func backupPending(_ walletID: String) -> String { "backupPending.\(walletID)" }
     }
 
     init() {
@@ -173,7 +181,9 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            stage = .ready
+            // A wallet whose backup was never confirmed re-enters onboarding:
+            // the backup sheet resumes from the Keychain (#5).
+            stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
         } else {
             stage = .onboarding
         }
@@ -392,6 +402,11 @@ final class AppModel {
         let wallet = try Wallet.create(network: network, keyStore: keyStore,
                                        storageURL: walletURL, entropy: e2e?.entropy,
                                        creationHeight: tip)
+        // Flag BEFORE adopt(): the wallet is already in the Keychain, so a
+        // throw below must not leave it unflagged — the next boot would land
+        // on .ready with the backup silently skipped, the exact bug class #5
+        // kills. A stuck-true flag merely re-presents the sheet: fail-safe.
+        UserDefaults.standard.set(true, forKey: DefaultsKey.backupPending(await wallet.id))
         try await adopt(wallet: wallet)
         guard let walletID, case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw AppError.mnemonicUnavailable
@@ -469,7 +484,46 @@ final class AppModel {
 
     /// Leaves onboarding once the backup flow (or import report) is done.
     func finishOnboarding() {
+        if let walletID {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.backupPending(walletID))
+        }
         if wallet != nil { stage = .ready }
+    }
+
+    /// The mnemonic of a wallet created but never backup-confirmed — non-nil
+    /// only between `createWallet()` and the backup sheet's Done. Read from
+    /// the Keychain on demand so a relaunch mid-backup resumes the sheet with
+    /// the same words.
+    func pendingBackupMnemonic() -> String? {
+        guard let walletID,
+              UserDefaults.standard.bool(forKey: DefaultsKey.backupPending(walletID)),
+              case let .mnemonic(words) = try? keyStore.load(walletID: walletID)
+        else { return nil }
+        return words
+    }
+
+    /// Settings → Backup → Show recovery phrase: the words, behind
+    /// device-owner authentication (passcode or biometrics). Fail-closed —
+    /// no passcode set means no reveal, not a silent skip. E2E test mode
+    /// bypasses the prompt (simulators have no passcode); an xprv-only wallet
+    /// throws `WalletError.mnemonicUnavailable`.
+    func revealMnemonic() async throws -> String {
+        guard let walletID else { throw AppError.noWallet }
+        if e2e == nil {
+            let context = LAContext()
+            var unavailable: NSError?
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {
+                throw AppError.deviceAuthUnavailable
+            }
+            let passed = try await context.evaluatePolicy(
+                .deviceOwnerAuthentication,
+                localizedReason: "Reveal this wallet's recovery phrase")
+            guard passed else { throw AppError.deviceAuthFailed }
+        }
+        guard case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
+            throw WalletError.mnemonicUnavailable
+        }
+        return words
     }
 
     /// Polls the pool until a peer completes the handshake (or the timeout
@@ -698,7 +752,9 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            stage = .ready
+            // A wallet whose backup was never confirmed re-enters onboarding:
+            // the backup sheet resumes from the Keychain (#5).
+            stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
         } else {
             stage = .onboarding
         }
