@@ -386,6 +386,41 @@ struct WalletTests {
         #expect(!(await wallet.utxos).contains { $0.txid == replacement.built.transaction.txid })
     }
 
+    @Test("a middle replacement confirming discards only its later descendants")
+    func feeBumpMiddleConfirmation() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        try await wallet.commit(original)
+        let first = try await wallet.buildFeeBump(
+            txid: original.built.transaction.txid, feeRateSatPerVByte: 5)
+        try await wallet.commitFeeBump(first)
+        let second = try await wallet.buildFeeBump(
+            txid: first.built.transaction.txid, feeRateSatPerVByte: 8)
+        try await wallet.commitFeeBump(second)
+
+        let effect = try await wallet.apply(match: fakeMatch(
+            height: 150, transactions: [first.built.transaction]))
+        #expect(effect.discardedReplacements == [second.built.transaction.txid])
+        let history = await wallet.history
+        #expect(history.first { $0.txid == original.built.transaction.txid }?.replacedBy
+                == first.built.transaction.txid)
+        #expect(history.first { $0.txid == first.built.transaction.txid }?.height == 150)
+        #expect(history.first { $0.txid == first.built.transaction.txid }?.replacedBy == nil)
+        #expect(history.first { $0.txid == second.built.transaction.txid } == nil)
+        #expect(await wallet.utxos.contains {
+            $0.txid == first.built.transaction.txid && $0.height == 150
+        })
+        #expect(!(await wallet.utxos).contains { $0.txid == second.built.transaction.txid })
+        #expect(await wallet.feeBumpableTxids.isEmpty)
+    }
+
     @Test("an already-relayed replacement confirms safely if its state commit failed")
     func uncommittedFeeBumpConfirmation() async throws {
         let wallet = try await makeWallet()
@@ -420,6 +455,40 @@ struct WalletTests {
         #expect(await wallet.balance == replacementChange)
         #expect(await wallet.feeBumpableTxids.isEmpty)
         #expect(!(await wallet.utxos).contains { $0.txid == original.built.transaction.txid })
+    }
+
+    @Test("a reordered-input replacement reconciles the losing pending send")
+    func reorderedInputReplacementConfirmation() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 80_000, scriptPubKey: fundingScript),
+            Transaction.Output(value: 80_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x33, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 120_000, scriptPubKey: destination)],
+            feeRateSatPerVByte: 2)
+        #expect(original.built.transaction.inputs.count == 2)
+        try await wallet.commit(original)
+
+        let prepared = try await wallet.buildFeeBump(
+            txid: original.built.transaction.txid, feeRateSatPerVByte: 5)
+        let built = prepared.built.transaction
+        let reordered = Transaction(version: built.version, inputs: Array(built.inputs.reversed()),
+                                    outputs: built.outputs, locktime: built.locktime)
+        let effect = try await wallet.apply(match: fakeMatch(
+            height: 150, transactions: [reordered]))
+
+        #expect(effect.discardedReplacements == [original.built.transaction.txid])
+        #expect(await wallet.history.first {
+            $0.txid == original.built.transaction.txid
+        }?.replacedBy == reordered.txid)
+        #expect(await wallet.history.first { $0.txid == reordered.txid }?.height == 150)
+        #expect(!(await wallet.utxos).contains { $0.txid == original.built.transaction.txid })
+        #expect(await wallet.utxos.contains { $0.txid == reordered.txid && $0.height == 150 })
+        #expect(await wallet.feeBumpableTxids.isEmpty)
     }
 
     @Test("persistence: state round-trips through Wallet.open")

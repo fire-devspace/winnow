@@ -350,9 +350,13 @@ final class AppModel {
         if let wallet {
             snapshot.balance = await wallet.balance
             snapshot.utxoCount = await wallet.utxos.count
-            // Pending (height 0) entries first, then newest block first.
+            // Active pending entries first, then newest blocks, with replaced
+            // height-0 originals last instead of pinning them as pending.
             snapshot.history = await wallet.history.sorted {
-                ($0.height == 0 ? UInt32.max : $0.height) > ($1.height == 0 ? UInt32.max : $1.height)
+                let lhsPending = $0.height == 0 && $0.replacedBy == nil
+                let rhsPending = $1.height == 0 && $1.replacedBy == nil
+                if lhsPending != rhsPending { return lhsPending }
+                return $0.height > $1.height
             }
             snapshot.feeBumpableTxids = await wallet.feeBumpableTxids
             snapshot.observedFeeRates = await wallet.observedFeeRates

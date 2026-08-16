@@ -693,7 +693,12 @@ public actor Wallet {
             guard pending.txid != transaction.txid, let candidate = pending.transaction else {
                 return false
             }
-            return candidate.inputs.map(\.previousOutput) == confirmedInputs
+            var unmatched = confirmedInputs
+            for outpoint in candidate.inputs.map(\.previousOutput) {
+                guard let match = unmatched.firstIndex(of: outpoint) else { return false }
+                unmatched.remove(at: match)
+            }
+            return unmatched.isEmpty
         }) else { return nil }
 
         let pending = state.pendingSends.remove(at: index)
