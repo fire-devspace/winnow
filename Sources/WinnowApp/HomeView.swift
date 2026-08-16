@@ -1,4 +1,5 @@
 import BitcoinP2P
+import Foundation
 import SwiftUI
 import WalletCore
 
@@ -70,7 +71,8 @@ struct HomeView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(Array(model.status.history.enumerated()), id: \.offset) { _, entry in
-                        HistoryRow(entry: entry)
+                        HistoryRow(entry: entry,
+                                   canBump: model.status.feeBumpableTxids.contains(entry.txid))
                     }
                 }
             }
@@ -93,6 +95,8 @@ struct HomeView: View {
 
 private struct HistoryRow: View {
     let entry: HistoryEntry
+    let canBump: Bool
+    @State private var showFeeBump = false
 
     /// Net effect on the wallet: received (incl. our own change) minus spent.
     private var net: Int64 { entry.received - entry.spent }
@@ -105,12 +109,23 @@ private struct HistoryRow: View {
                 Text(entry.txid.displayHex.prefix(16) + "…")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
+                if canBump {
+                    Button("Bump fee") { showFeeBump = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("bumpFeeButton")
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(net >= 0 ? "+" : "−")\(abs(net).formatted()) sats")
                     .foregroundStyle(net >= 0 ? .green : .primary)
-                if entry.height > 0 {
+                if let replacement = entry.replacedBy {
+                    Text("replaced by \(replacement.displayHex.prefix(8))…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("transactionReplaced")
+                } else if entry.height > 0 {
                     Text("block \(entry.height)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -125,6 +140,145 @@ private struct HistoryRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .sheet(isPresented: $showFeeBump) {
+            FeeBumpView(txid: entry.txid)
+        }
+    }
+}
+
+/// Explicit same-input RBF flow. The suggested rate is one sat/vB above the
+/// current effective rate; WalletCore may raise the actual result further to
+/// satisfy BIP125's incremental-relay-fee rule.
+private struct FeeBumpView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    let txid: Data
+    @State private var currentRate: Double?
+    @State private var targetRateText = ""
+    @State private var preview: FeeBumpPreview?
+    @State private var error: String?
+    @State private var bumping = false
+    @State private var replacementTxid: Data?
+
+    private var targetRate: Double? {
+        Double(targetRateText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Transaction") {
+                    Text(txid.displayHex)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                    LabeledContent("Current rate", value: currentRate.map(feeRateText) ?? "—")
+                }
+
+                if replacementTxid == nil {
+                    Section {
+                        TextField("Higher rate (sat/vB)", text: $targetRateText)
+                            .keyboardType(.decimalPad)
+                            .accessibilityIdentifier("bumpFeeRateField")
+                        Button("Review replacement") { review() }
+                            .accessibilityIdentifier("reviewFeeBumpButton")
+                            .disabled(targetRate == nil)
+                    } header: {
+                        Text("Replacement fee")
+                    } footer: {
+                        Text("The recipient and inputs stay the same. The extra fee comes from change; Winnow enforces a higher absolute fee, a higher feerate, and the incremental relay fee.")
+                    }
+                }
+
+                if let preview, replacementTxid == nil {
+                    Section("Review") {
+                        LabeledContent("Actual rate", value: feeRateText(preview.feeRateSatPerVByte))
+                        LabeledContent("Replacement fee", value: satsText(preview.fee))
+                        if let change = preview.changeAmount {
+                            LabeledContent("Change back", value: satsText(change))
+                        } else {
+                            LabeledContent("Change back", value: "none (remainder becomes fee)")
+                        }
+                        Button(bumping ? "Signing & broadcasting…" : "Sign & replace") { bump() }
+                            .accessibilityIdentifier("confirmFeeBumpButton")
+                            .disabled(bumping)
+                    }
+                }
+
+                if let replacementTxid {
+                    Section("Replacement broadcast") {
+                        Label("Original marked replaced", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.green)
+                        Text(replacementTxid.displayHex)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                        Button("Done") { dismiss() }
+                    }
+                }
+
+                if let error {
+                    Section {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("feeBumpError")
+                    }
+                }
+            }
+            .navigationTitle("Bump fee")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .onChange(of: targetRateText) {
+                preview = nil
+                error = nil
+            }
+            .task { await load() }
+        }
+    }
+
+    private func load() async {
+        do {
+            let rate = try await model.pendingFeeRate(txid: txid)
+            currentRate = rate
+            let suggestedRate = ceil(rate + 1)
+            targetRateText = String(format: "%.0f", suggestedRate)
+            preview = try await model.previewFeeBump(
+                txid: txid, feeRateSatPerVByte: suggestedRate)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func review() {
+        guard let targetRate else { return }
+        error = nil
+        preview = nil
+        Task {
+            do {
+                preview = try await model.previewFeeBump(txid: txid,
+                                                         feeRateSatPerVByte: targetRate)
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func bump() {
+        guard let targetRate else { return }
+        bumping = true
+        error = nil
+        Task {
+            do {
+                replacementTxid = try await model.bumpFee(txid: txid,
+                                                         feeRateSatPerVByte: targetRate)
+            } catch {
+                self.error = error.localizedDescription
+            }
+            bumping = false
         }
     }
 }

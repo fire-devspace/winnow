@@ -35,6 +35,32 @@ public enum WalletError: Error, Equatable, LocalizedError {
     }
 }
 
+/// A fee bump can only replace one of this wallet's still-pending sends. The
+/// replacement keeps the same inputs and recipient outputs, and pays its
+/// higher fee by shrinking (or, when it becomes dust, removing) change.
+public enum FeeBumpError: Error, Equatable, LocalizedError {
+    case transactionNotPending
+    case noChangeOutput
+    case invalidFeeRate(Double)
+    case feeRateNotHigher(current: Double, requested: Double)
+    case insufficientChange(requiredFee: Int64, maximumFee: Int64)
+
+    public var errorDescription: String? {
+        switch self {
+        case .transactionNotPending:
+            "This transaction is no longer pending or was created before fee-bump metadata was available."
+        case .noChangeOutput:
+            "This transaction has no change output to reduce for a same-input fee bump."
+        case let .invalidFeeRate(rate):
+            "Invalid replacement fee rate: \(rate) sat/vB."
+        case let .feeRateNotHigher(current, requested):
+            "Choose a fee rate above \(current.formatted(.number.precision(.fractionLength(2)))) sat/vB (requested \(requested.formatted(.number.precision(.fractionLength(2))))) sat/vB."
+        case let .insufficientChange(requiredFee, maximumFee):
+            "The available change can pay at most \(maximumFee) sats in fees; this bump needs \(requiredFee) sats."
+        }
+    }
+}
+
 /// Which chain of the wallet's multipath descriptor an address lives on
 /// (BIP44 external/internal).
 public enum AddressChain: Int, Codable, Sendable {
@@ -119,16 +145,22 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
     public var spent: Int64
     /// Fee paid — known only when every input was ours.
     public var fee: Int64?
+    /// The pending transaction that superseded this entry via BIP125. Kept in
+    /// history so the old tx is rendered as replaced, not as a second pending
+    /// payment. Internal byte order; JSON uses display hex.
+    public var replacedBy: Data?
 
-    public init(txid: Data, height: UInt32, received: Int64, spent: Int64, fee: Int64? = nil) {
+    public init(txid: Data, height: UInt32, received: Int64, spent: Int64,
+                fee: Int64? = nil, replacedBy: Data? = nil) {
         self.txid = txid
         self.height = height
         self.received = received
         self.spent = spent
         self.fee = fee
+        self.replacedBy = replacedBy
     }
 
-    private enum CodingKeys: String, CodingKey { case txid, height, received, spent, fee }
+    private enum CodingKeys: String, CodingKey { case txid, height, received, spent, fee, replacedBy }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -136,11 +168,22 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
             throw DecodingError.dataCorruptedError(forKey: .txid, in: container,
                                                    debugDescription: "bad txid hex")
         }
+        let replacedBy: Data?
+        if let replacementHex = try container.decodeIfPresent(String.self, forKey: .replacedBy) {
+            guard let replacement = Data(hex: replacementHex) else {
+                throw DecodingError.dataCorruptedError(forKey: .replacedBy, in: container,
+                                                       debugDescription: "bad replacement txid hex")
+            }
+            replacedBy = Data(replacement.reversed())
+        } else {
+            replacedBy = nil
+        }
         self.init(txid: Data(txid.reversed()),
                   height: try container.decode(UInt32.self, forKey: .height),
                   received: try container.decode(Int64.self, forKey: .received),
                   spent: try container.decode(Int64.self, forKey: .spent),
-                  fee: try container.decodeIfPresent(Int64.self, forKey: .fee))
+                  fee: try container.decodeIfPresent(Int64.self, forKey: .fee),
+                  replacedBy: replacedBy)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -150,6 +193,7 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
         try container.encode(received, forKey: .received)
         try container.encode(spent, forKey: .spent)
         try container.encodeIfPresent(fee, forKey: .fee)
+        try container.encodeIfPresent(replacedBy?.displayHex, forKey: .replacedBy)
     }
 }
 
@@ -171,10 +215,65 @@ public struct MatchEffect: Equatable, Sendable {
 
     public var received: [WalletUTXO] = []
     public var spent: [Spend] = []
+    /// Pending conflict-chain transactions invalidated by the confirmed
+    /// transaction. Callers should stop relaying these txids.
+    public var discardedReplacements: [Data] = []
 
-    public init(received: [WalletUTXO] = [], spent: [Spend] = []) {
+    public init(received: [WalletUTXO] = [], spent: [Spend] = [],
+                discardedReplacements: [Data] = []) {
         self.received = received
         self.spent = spent
+        self.discardedReplacements = discardedReplacements
+    }
+}
+
+/// Private persistence needed to rebuild and sign a same-input replacement
+/// after relaunch. The public history deliberately remains a compact display
+/// model; this record carries the exact prevouts and raw transaction.
+struct PendingSend: Equatable, Sendable, Codable {
+    var rawTransaction: Data
+    var selected: [WalletUTXO]
+    var changeIndex: UInt32?
+    var changeOutputIndex: UInt32?
+    var fee: Int64
+
+    var transaction: Transaction? { try? Transaction.decode(rawTransaction) }
+    var txid: Data? { transaction?.txid }
+
+    private enum CodingKeys: String, CodingKey {
+        case rawTransaction, selected, changeIndex, changeOutputIndex, fee
+    }
+
+    init(rawTransaction: Data, selected: [WalletUTXO], changeIndex: UInt32?,
+         changeOutputIndex: UInt32?, fee: Int64) {
+        self.rawTransaction = rawTransaction
+        self.selected = selected
+        self.changeIndex = changeIndex
+        self.changeOutputIndex = changeOutputIndex
+        self.fee = fee
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawHex = try container.decode(String.self, forKey: .rawTransaction)
+        guard let raw = Data(hex: rawHex), (try? Transaction.decode(raw)) != nil else {
+            throw DecodingError.dataCorruptedError(forKey: .rawTransaction, in: container,
+                                                   debugDescription: "bad raw transaction hex")
+        }
+        self.init(rawTransaction: raw,
+                  selected: try container.decode([WalletUTXO].self, forKey: .selected),
+                  changeIndex: try container.decodeIfPresent(UInt32.self, forKey: .changeIndex),
+                  changeOutputIndex: try container.decodeIfPresent(UInt32.self, forKey: .changeOutputIndex),
+                  fee: try container.decode(Int64.self, forKey: .fee))
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(rawTransaction.hex, forKey: .rawTransaction)
+        try container.encode(selected, forKey: .selected)
+        try container.encodeIfPresent(changeIndex, forKey: .changeIndex)
+        try container.encodeIfPresent(changeOutputIndex, forKey: .changeOutputIndex)
+        try container.encode(fee, forKey: .fee)
     }
 }
 
@@ -192,6 +291,8 @@ public struct WalletState: Codable, Equatable, Sendable {
     public var history: [HistoryEntry]
     /// Feerate samples (sat/vB) from our own confirmed transactions, newest last.
     public var observedFeeRates: [Double]
+    /// Exact data for locally-created sends that are still replaceable.
+    var pendingSends: [PendingSend]
 
     public init(descriptor: String, network: String, creationHeight: UInt32,
                 nextReceiveIndex: UInt32 = 0, nextChangeIndex: UInt32 = 0,
@@ -206,6 +307,26 @@ public struct WalletState: Codable, Equatable, Sendable {
         self.utxos = utxos
         self.history = history
         self.observedFeeRates = observedFeeRates
+        pendingSends = []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case descriptor, network, creationHeight, nextReceiveIndex, nextChangeIndex
+        case nextScanHeight, utxos, history, observedFeeRates, pendingSends
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        descriptor = try container.decode(String.self, forKey: .descriptor)
+        network = try container.decode(String.self, forKey: .network)
+        creationHeight = try container.decode(UInt32.self, forKey: .creationHeight)
+        nextReceiveIndex = try container.decode(UInt32.self, forKey: .nextReceiveIndex)
+        nextChangeIndex = try container.decode(UInt32.self, forKey: .nextChangeIndex)
+        nextScanHeight = try container.decode(UInt32.self, forKey: .nextScanHeight)
+        utxos = try container.decode([WalletUTXO].self, forKey: .utxos)
+        history = try container.decode([HistoryEntry].self, forKey: .history)
+        observedFeeRates = try container.decodeIfPresent([Double].self, forKey: .observedFeeRates) ?? []
+        pendingSends = try container.decodeIfPresent([PendingSend].self, forKey: .pendingSends) ?? []
     }
 }
 
@@ -220,6 +341,25 @@ public struct BuiltTransaction: Equatable, Sendable {
     public init(psbt: PSBT, transaction: Transaction, fee: Int64, changeAmount: Int64?) {
         self.psbt = psbt
         self.transaction = transaction
+        self.fee = fee
+        self.changeAmount = changeAmount
+    }
+}
+
+/// The economic result of a same-input BIP125 replacement. Previewing does
+/// not load keys or mutate wallet state.
+public struct FeeBumpPreview: Equatable, Sendable {
+    public var originalTxid: Data
+    public var currentFeeRateSatPerVByte: Double
+    public var feeRateSatPerVByte: Double
+    public var fee: Int64
+    public var changeAmount: Int64?
+
+    public init(originalTxid: Data, currentFeeRateSatPerVByte: Double,
+                feeRateSatPerVByte: Double, fee: Int64, changeAmount: Int64?) {
+        self.originalTxid = originalTxid
+        self.currentFeeRateSatPerVByte = currentFeeRateSatPerVByte
+        self.feeRateSatPerVByte = feeRateSatPerVByte
         self.fee = fee
         self.changeAmount = changeAmount
     }
@@ -347,6 +487,10 @@ public actor Wallet {
     public var utxos: [WalletUTXO] { state.utxos }
     public var history: [HistoryEntry] { state.history }
     public var observedFeeRates: [Double] { state.observedFeeRates }
+    /// Locally-created pending sends with enough persisted metadata to bump.
+    public var feeBumpableTxids: [Data] {
+        state.pendingSends.compactMap { $0.changeIndex == nil ? nil : $0.txid }
+    }
 
     /// scriptPubKey at (chain, index), derived from the multipath descriptor.
     public func scriptPubKey(chain: AddressChain, index: UInt32) throws -> Data {
@@ -416,6 +560,11 @@ public actor Wallet {
         var effect = MatchEffect()
         for tx in match.block.transactions {
             let txid = tx.txid
+            effect.discardedReplacements += reconcileReplacementDescendants(ifAncestorConfirmed: txid)
+            let conflictingPending = reconcilePendingConflict(confirmed: tx)
+            if let conflictingTxid = conflictingPending?.txid {
+                effect.discardedReplacements.append(conflictingTxid)
+            }
             let isCoinbase = tx.inputs.first.map {
                 $0.previousOutput.txid == Data(repeating: 0, count: 32)
                     && $0.previousOutput.vout == 0xFFFF_FFFF
@@ -437,6 +586,12 @@ public actor Wallet {
                     effect.spent.append(MatchEffect.Spend(txid: utxo.txid, vout: utxo.vout,
                                                           spentBy: txid, height: match.height))
                 }
+            }
+            if conflictingPending != nil {
+                // The original inputs left the spendable set when its pending
+                // send was committed. Exact input-set equality supplies their
+                // persisted amounts when a different replacement confirms.
+                allInputsOurs = true
             }
 
             for (vout, output) in tx.outputs.enumerated() {
@@ -463,15 +618,18 @@ public actor Wallet {
                 }
             }
 
-            let touchesWallet = spentAmount > 0 || receivedAmount > 0
+            let accountedSpent = conflictingPending?.selected.reduce(Int64(0)) {
+                $0 + $1.amount
+            } ?? spentAmount
+            let touchesWallet = spentAmount > 0 || receivedAmount > 0 || conflictingPending != nil
                 || state.history.contains(where: { $0.txid == txid })
             guard touchesWallet else { continue }
 
             // Fee + feerate sample: exact only when every input was ours (the
             // BIP341 sighash commits to amounts, so our own sends qualify).
             var fee: Int64? = nil
-            if allInputsOurs, spentAmount > 0 {
-                let candidate = spentAmount - tx.outputs.reduce(0) { $0 + $1.value }
+            if allInputsOurs, accountedSpent > 0 {
+                let candidate = accountedSpent - tx.outputs.reduce(0) { $0 + $1.value }
                 if candidate > 0 {
                     fee = candidate
                     let vsize = TransactionBuilder.vsize(of: tx)
@@ -486,11 +644,55 @@ public actor Wallet {
                 state.history[existing].height = match.height
             } else {
                 state.history.append(HistoryEntry(txid: txid, height: match.height,
-                                                  received: receivedAmount, spent: spentAmount, fee: fee))
+                                                  received: receivedAmount, spent: accountedSpent, fee: fee))
             }
+            state.pendingSends.removeAll { $0.txid == txid }
         }
         try persist()
         return effect
+    }
+
+    /// A replacement is only a proposal until one member of its conflict
+    /// chain confirms. If an ancestor wins the race, discard every descendant
+    /// and its locally-counted pending change before applying the winner.
+    private func reconcileReplacementDescendants(ifAncestorConfirmed txid: Data) -> [Data] {
+        guard let root = state.history.firstIndex(where: { $0.txid == txid }),
+              state.history[root].replacedBy != nil else { return [] }
+        var descendants: [Data] = []
+        var next = state.history[root].replacedBy
+        while let txid = next, !descendants.contains(txid) {
+            descendants.append(txid)
+            next = state.history.first(where: { $0.txid == txid })?.replacedBy
+        }
+        state.history[root].replacedBy = nil
+        state.utxos.removeAll { utxo in descendants.contains(utxo.txid) }
+        state.pendingSends.removeAll { pending in
+            pending.txid.map(descendants.contains) ?? false
+        }
+        state.history.removeAll { entry in descendants.contains(entry.txid) }
+        return descendants
+    }
+
+    /// Handles a replacement that reached the chain without a committed local
+    /// state swap (for example, persistence failed after broadcast). Pending
+    /// sends retain the exact inputs, so an exact-input conflict can remove the
+    /// losing change and preserve correct history/balance accounting.
+    private func reconcilePendingConflict(confirmed transaction: Transaction) -> PendingSend? {
+        let confirmedInputs = transaction.inputs.map(\.previousOutput)
+        guard let index = state.pendingSends.firstIndex(where: { pending in
+            guard pending.txid != transaction.txid, let candidate = pending.transaction else {
+                return false
+            }
+            return candidate.inputs.map(\.previousOutput) == confirmedInputs
+        }) else { return nil }
+
+        let pending = state.pendingSends.remove(at: index)
+        guard let pendingTxid = pending.txid else { return pending }
+        state.utxos.removeAll { $0.txid == pendingTxid }
+        if let historyIndex = state.history.firstIndex(where: { $0.txid == pendingTxid }) {
+            state.history[historyIndex].replacedBy = transaction.txid
+        }
+        return pending
     }
 
     // MARK: - Sending
@@ -503,6 +705,7 @@ public actor Wallet {
         let selected: [WalletUTXO]
         let change: Payment?
         let changeIndex: UInt32
+        let changeOutputIndex: UInt32?
         let fee: Int64
     }
 
@@ -548,33 +751,18 @@ public actor Wallet {
         let change = selection.changeAmount.map { Payment(amount: $0, scriptPubKey: changeScript) }
         let tx = try TransactionBuilder.build(inputs: selection.selected.map(\.outpoint),
                                               payments: resolvedPayments, change: change)
-
-        let origin = try Self.origin(of: descriptor)
-        let inputInfo = try selection.selected.map { utxo in
-            try PSBT.InputInfo(spentOutput: utxo.spentOutput,
-                               key: taprootKey(chain: utxo.chain, index: utxo.index,
-                                               fingerprint: origin.fingerprint, originPath: origin.path))
+        let changeOutputIndex = change.flatMap { change in
+            tx.outputs.firstIndex { $0.scriptPubKey == change.scriptPubKey && $0.value == change.amount }
         }
-        let outputInfo = tx.outputs.map { output -> PSBT.OutputInfo in
-            guard let change, output.scriptPubKey == change.scriptPubKey,
-                  let key = try? taprootKey(chain: .change, index: changeIndex,
-                                            fingerprint: origin.fingerprint, originPath: origin.path)
-            else { return PSBT.OutputInfo(key: nil) }
-            return PSBT.OutputInfo(key: key)
-        }
-
-        var psbt = try PSBT(unsignedTx: tx, inputs: inputInfo, outputs: outputInfo)
-        for (index, utxo) in selection.selected.enumerated() {
-            try psbt.signKeyPath(input: index,
-                                 tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index))
-        }
-        try psbt.finalize()
-        let signed = try psbt.extractedTransaction()
+        let (psbt, signed) = try sign(transaction: tx, selected: selection.selected,
+                                      changeIndex: changeOutputIndex.map { _ in changeIndex },
+                                      changeOutputIndex: changeOutputIndex)
 
         let built = BuiltTransaction(psbt: psbt, transaction: signed, fee: selection.fee,
                                      changeAmount: selection.changeAmount)
         return PreparedSend(built: built, selected: selection.selected, change: change,
-                            changeIndex: changeIndex, fee: selection.fee)
+                            changeIndex: changeIndex,
+                            changeOutputIndex: changeOutputIndex.map(UInt32.init), fee: selection.fee)
     }
 
     /// Commits a prepared send to wallet state: the spent UTXOs leave the
@@ -590,10 +778,12 @@ public actor Wallet {
         let signed = prepared.built.transaction
         state.utxos.removeAll { utxo in prepared.selected.contains { $0.outpoint == utxo.outpoint } }
         if let change = prepared.change {
-            let vout = signed.outputs.firstIndex { $0.scriptPubKey == change.scriptPubKey
-                && $0.value == change.amount }
-            guard let vout else { throw WalletError.changeOutputMissing }
-            state.utxos.append(WalletUTXO(txid: signed.txid, vout: UInt32(vout), amount: change.amount,
+            guard let vout = prepared.changeOutputIndex,
+                  signed.outputs.indices.contains(Int(vout)),
+                  signed.outputs[Int(vout)].scriptPubKey == change.scriptPubKey,
+                  signed.outputs[Int(vout)].value == change.amount
+            else { throw WalletError.changeOutputMissing }
+            state.utxos.append(WalletUTXO(txid: signed.txid, vout: vout, amount: change.amount,
                                           scriptPubKey: change.scriptPubKey, chain: .change,
                                           index: prepared.changeIndex, height: 0))
             state.nextChangeIndex += 1
@@ -602,6 +792,10 @@ public actor Wallet {
                                           received: prepared.change?.amount ?? 0,
                                           spent: prepared.selected.reduce(0) { $0 + $1.amount },
                                           fee: prepared.fee))
+        state.pendingSends.append(PendingSend(
+            rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,
+            changeIndex: prepared.change == nil ? nil : prepared.changeIndex,
+            changeOutputIndex: prepared.changeOutputIndex, fee: prepared.fee))
         try persist()
     }
 
@@ -615,6 +809,230 @@ public actor Wallet {
                                      silentPayments: silentPayments)
         try commit(prepared)
         return prepared.built
+    }
+
+    // MARK: - Fee bumping
+
+    /// Prepared replacement whose wallet mutation is deferred until after the
+    /// new transaction has been accepted by the broadcaster.
+    public struct PreparedFeeBump: Sendable {
+        public let originalTxid: Data
+        public let built: BuiltTransaction
+        let selected: [WalletUTXO]
+        let originalChangeOutputIndex: UInt32
+        let change: Payment?
+        let changeIndex: UInt32
+        let changeOutputIndex: UInt32?
+    }
+
+    private struct FeeBumpCandidate {
+        var pending: PendingSend
+        var originalTxid: Data
+        var transaction: Transaction
+        var fee: Int64
+        var change: Payment?
+        var changeIndex: UInt32
+        var originalChangeOutputIndex: UInt32
+        var changeOutputIndex: UInt32?
+        var currentFeeRate: Double
+        var replacementFeeRate: Double
+    }
+
+    /// Bitcoin Core's default incremental relay fee. BIP125 rule 4 requires
+    /// the fee increase to pay at least this rate for the replacement's own
+    /// virtual size, in addition to exceeding the original absolute fee.
+    static let incrementalRelayFeeSatPerVByte = 1.0
+
+    public func pendingFeeRate(txid: Data) throws -> Double {
+        guard let pending = state.pendingSends.first(where: { $0.txid == txid }),
+              let transaction = pending.transaction else { throw FeeBumpError.transactionNotPending }
+        let vsize = TransactionBuilder.vsize(of: transaction)
+        guard vsize > 0 else { throw FeeBumpError.transactionNotPending }
+        return Double(pending.fee) / Double(vsize)
+    }
+
+    /// Computes the exact replacement fee and remaining change without
+    /// loading the seed, signing, or changing wallet state.
+    public func previewFeeBump(txid: Data, feeRateSatPerVByte: Double) throws -> FeeBumpPreview {
+        let candidate = try feeBumpCandidate(txid: txid, feeRateSatPerVByte: feeRateSatPerVByte)
+        return FeeBumpPreview(originalTxid: txid,
+                              currentFeeRateSatPerVByte: candidate.currentFeeRate,
+                              feeRateSatPerVByte: candidate.replacementFeeRate,
+                              fee: candidate.fee, changeAmount: candidate.change?.amount)
+    }
+
+    /// Rebuilds and signs a BIP125 replacement with the same inputs and
+    /// recipient outputs. The original change output is shrunk, or removed if
+    /// the remainder would be dust. Like `buildSend`, this is mutation-free.
+    public func buildFeeBump(txid: Data, feeRateSatPerVByte: Double) throws -> PreparedFeeBump {
+        let candidate = try feeBumpCandidate(txid: txid, feeRateSatPerVByte: feeRateSatPerVByte)
+        let (psbt, signed) = try sign(
+            transaction: candidate.transaction, selected: candidate.pending.selected,
+            changeIndex: candidate.change.map { _ in candidate.changeIndex },
+            changeOutputIndex: candidate.changeOutputIndex.map(Int.init))
+        let built = BuiltTransaction(psbt: psbt, transaction: signed, fee: candidate.fee,
+                                     changeAmount: candidate.change?.amount)
+        return PreparedFeeBump(originalTxid: txid, built: built,
+                               selected: candidate.pending.selected,
+                               originalChangeOutputIndex: candidate.originalChangeOutputIndex,
+                               change: candidate.change, changeIndex: candidate.changeIndex,
+                               changeOutputIndex: candidate.changeOutputIndex)
+    }
+
+    /// Applies a replacement after it has been handed to the broadcaster.
+    /// The original history row becomes `replaced`, its pending change is
+    /// swapped for the replacement's change, and the derivation index is not
+    /// advanced a second time because the same change script is reused.
+    public func commitFeeBump(_ prepared: PreparedFeeBump) throws {
+        guard let pendingIndex = state.pendingSends.firstIndex(where: {
+            $0.txid == prepared.originalTxid
+        }), let historyIndex = state.history.firstIndex(where: {
+            $0.txid == prepared.originalTxid && $0.height == 0 && $0.replacedBy == nil
+        }) else { throw FeeBumpError.transactionNotPending }
+
+        let signed = prepared.built.transaction
+        var updated = state
+        updated.utxos.removeAll {
+            $0.txid == prepared.originalTxid && $0.vout == prepared.originalChangeOutputIndex
+        }
+        if let change = prepared.change {
+            guard let vout = prepared.changeOutputIndex,
+                  signed.outputs.indices.contains(Int(vout)),
+                  signed.outputs[Int(vout)].scriptPubKey == change.scriptPubKey,
+                  signed.outputs[Int(vout)].value == change.amount
+            else { throw WalletError.changeOutputMissing }
+            updated.utxos.append(WalletUTXO(txid: signed.txid, vout: vout, amount: change.amount,
+                                          scriptPubKey: change.scriptPubKey, chain: .change,
+                                          index: prepared.changeIndex, height: 0))
+        }
+        updated.history[historyIndex].replacedBy = signed.txid
+        updated.history.append(HistoryEntry(
+            txid: signed.txid, height: 0, received: prepared.change?.amount ?? 0,
+            spent: prepared.selected.reduce(0) { $0 + $1.amount }, fee: prepared.built.fee))
+        updated.pendingSends.remove(at: pendingIndex)
+        updated.pendingSends.append(PendingSend(
+            rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,
+            changeIndex: prepared.change == nil ? nil : prepared.changeIndex,
+            changeOutputIndex: prepared.changeOutputIndex, fee: prepared.built.fee))
+        try persist(updated)
+        state = updated
+    }
+
+    private func feeBumpCandidate(txid: Data, feeRateSatPerVByte: Double) throws -> FeeBumpCandidate {
+        guard feeRateSatPerVByte.isFinite, feeRateSatPerVByte > 0,
+              feeRateSatPerVByte <= 10_000 else {
+            throw FeeBumpError.invalidFeeRate(feeRateSatPerVByte)
+        }
+        guard let pending = state.pendingSends.first(where: { $0.txid == txid }),
+              let original = pending.transaction,
+              let changeIndex = pending.changeIndex,
+              let originalChangeOutputIndex = pending.changeOutputIndex,
+              original.outputs.indices.contains(Int(originalChangeOutputIndex))
+        else {
+            if state.pendingSends.contains(where: { $0.txid == txid }) {
+                throw FeeBumpError.noChangeOutput
+            }
+            throw FeeBumpError.transactionNotPending
+        }
+        let oldVSize = TransactionBuilder.vsize(of: original)
+        guard oldVSize > 0 else { throw FeeBumpError.transactionNotPending }
+        let currentRate = Double(pending.fee) / Double(oldVSize)
+        guard feeRateSatPerVByte > currentRate else {
+            throw FeeBumpError.feeRateNotHigher(current: currentRate, requested: feeRateSatPerVByte)
+        }
+
+        let changeOutput = original.outputs[Int(originalChangeOutputIndex)]
+        let payments = original.outputs.enumerated().compactMap { index, output -> Payment? in
+            index == Int(originalChangeOutputIndex) ? nil
+                : Payment(amount: output.value, scriptPubKey: output.scriptPubKey)
+        }
+        let inputTotal = pending.selected.reduce(Int64(0)) { $0 + $1.amount }
+        let paymentTotal = payments.reduce(Int64(0)) { $0 + $1.amount }
+        let maximumFee = inputTotal - paymentTotal
+
+        func requiredFee(vsize: Int) -> Int64 {
+            let requested = Int64((Double(vsize) * feeRateSatPerVByte).rounded(.up))
+            let incremental = Int64((Double(vsize) * Self.incrementalRelayFeeSatPerVByte).rounded(.up))
+            return max(requested, pending.fee + incremental)
+        }
+
+        let withChangeOutputs = payments.map {
+            Transaction.Output(value: $0.amount, scriptPubKey: $0.scriptPubKey)
+        } + [changeOutput]
+        let withChangeVSize = TransactionBuilder.signedVSize(
+            inputCount: pending.selected.count, outputs: withChangeOutputs)
+        let feeWithChange = requiredFee(vsize: withChangeVSize)
+        let candidateChange = inputTotal - paymentTotal - feeWithChange
+
+        let transaction: Transaction
+        let fee: Int64
+        let change: Payment?
+        let replacementChangeOutputIndex: UInt32?
+        let dust = CoinSelection.dustThreshold(scriptPubKey: changeOutput.scriptPubKey)
+        if candidateChange >= dust {
+            change = Payment(amount: candidateChange, scriptPubKey: changeOutput.scriptPubKey)
+            fee = feeWithChange
+            transaction = try TransactionBuilder.build(
+                inputs: original.inputs.map(\.previousOutput), payments: payments, change: change,
+                changePosition: Int(originalChangeOutputIndex), sequence: TransactionBuilder.defaultSequence,
+                locktime: original.locktime)
+            replacementChangeOutputIndex = originalChangeOutputIndex
+        } else {
+            let noChangeOutputs = payments.map {
+                Transaction.Output(value: $0.amount, scriptPubKey: $0.scriptPubKey)
+            }
+            let noChangeVSize = TransactionBuilder.signedVSize(
+                inputCount: pending.selected.count, outputs: noChangeOutputs)
+            let minimum = requiredFee(vsize: noChangeVSize)
+            guard maximumFee >= minimum else {
+                throw FeeBumpError.insufficientChange(requiredFee: minimum, maximumFee: maximumFee)
+            }
+            change = nil
+            fee = maximumFee
+            transaction = try TransactionBuilder.build(
+                inputs: original.inputs.map(\.previousOutput), payments: payments,
+                sequence: TransactionBuilder.defaultSequence, locktime: original.locktime)
+            replacementChangeOutputIndex = nil
+        }
+
+        let replacementVSize = TransactionBuilder.signedVSize(
+            inputCount: pending.selected.count, outputs: transaction.outputs)
+        let actualRate = Double(fee) / Double(replacementVSize)
+        guard fee > pending.fee, actualRate > currentRate else {
+            throw FeeBumpError.insufficientChange(requiredFee: pending.fee + 1,
+                                                  maximumFee: maximumFee)
+        }
+        return FeeBumpCandidate(pending: pending, originalTxid: txid, transaction: transaction,
+                                fee: fee, change: change, changeIndex: changeIndex,
+                                originalChangeOutputIndex: originalChangeOutputIndex,
+                                changeOutputIndex: replacementChangeOutputIndex,
+                                currentFeeRate: currentRate, replacementFeeRate: actualRate)
+    }
+
+    /// Builds PSBTv2 input/output metadata, signs every P2TR key-path input,
+    /// finalizes, and extracts. Shared by first sends and replacements so the
+    /// signing path cannot drift.
+    private func sign(transaction: Transaction, selected: [WalletUTXO],
+                      changeIndex: UInt32?, changeOutputIndex: Int?) throws -> (PSBT, Transaction) {
+        let origin = try Self.origin(of: descriptor)
+        let inputInfo = try selected.map { utxo in
+            try PSBT.InputInfo(spentOutput: utxo.spentOutput,
+                               key: taprootKey(chain: utxo.chain, index: utxo.index,
+                                               fingerprint: origin.fingerprint, originPath: origin.path))
+        }
+        let outputInfo = try transaction.outputs.enumerated().map { index, _ -> PSBT.OutputInfo in
+            guard index == changeOutputIndex, let changeIndex else { return PSBT.OutputInfo(key: nil) }
+            return PSBT.OutputInfo(key: try taprootKey(chain: .change, index: changeIndex,
+                                                       fingerprint: origin.fingerprint,
+                                                       originPath: origin.path))
+        }
+        var psbt = try PSBT(unsignedTx: transaction, inputs: inputInfo, outputs: outputInfo)
+        for (index, utxo) in selected.enumerated() {
+            try psbt.signKeyPath(input: index,
+                                 tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index))
+        }
+        try psbt.finalize()
+        return (psbt, try psbt.extractedTransaction())
     }
 
     // MARK: - Keys
@@ -703,8 +1121,12 @@ public actor Wallet {
     // MARK: - Persistence
 
     func persist() throws {
+        try persist(state)
+    }
+
+    private func persist(_ candidate: WalletState) throws {
         guard let storageURL else { return }
-        let data = try JSONEncoder().encode(state)
+        let data = try JSONEncoder().encode(candidate)
         try data.write(to: storageURL, options: .atomic)
     }
 }

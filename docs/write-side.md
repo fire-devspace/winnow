@@ -23,7 +23,7 @@ Everyday spends are BIP86 P2TR key-path. The signed witness is one 64-byte Schno
 
 The phone *receives* only P2TR. It *pays* any standard address (bech32 / bech32m, base58 P2PKH / P2SH) and BIP352 silent-payment codes. Destination diversity is a payment-layer concern; the wallet's own outputs stay one type so coin selection, change, and watch-list code have a single script shape.
 
-Transactions are version 2, empty `scriptSig`s, and sequence `0xFFFFFFFD` (locktime-disabled, BIP125 opt-in RBF). Replace-by-fee is signaled even though the first-cut UI does not yet offer a bump — a stuck transaction must be replaceable later without a policy surprise.
+Transactions are version 2, empty `scriptSig`s, and sequence `0xFFFFFFFD` (locktime-disabled, BIP125 opt-in RBF). A pending send with change can be fee-bumped in the transaction history; signaling replacement from the first broadcast avoids a policy surprise when it is needed.
 
 ---
 
@@ -52,6 +52,14 @@ Resolution, strongest first (`FeePolicy`):
 The result is clamped from below by the strictest BIP133 `feefilter` among connected peers (the minimum that will relay at all). If every remaining peer's floor later rises above a pending transaction's feerate, the broadcaster emits `feeFloorExceeded` once; the caller decides whether to bump. There is no live histogram and no "arrives in 10 minutes" claim.
 
 This is cruder than any mempool-aware estimator. It is also the only estimator that does not reintroduce a server or a persistent relay subscription. Owned, and said in the send UI as a rate, not as a promise.
+
+### 4.1 Replacing a stuck send
+
+Winnow persists the exact inputs and raw transaction for each locally-created pending send. A replacement spends those same inputs, preserves every recipient output and its ordering, and pays the increase by shrinking the existing change output. If the remainder falls below the change script's dust threshold, change is removed and the whole remainder becomes fee. A changeless transaction cannot be bumped without adding an input, so the same-input flow refuses it rather than altering a recipient amount.
+
+The builder enforces both fee dimensions of BIP125 policy: the replacement's absolute fee and feerate are strictly higher, and the increase pays the default incremental relay fee for the replacement's own virtual size. It uses the same PSBTv2 key-path signer as the original send. Building is mutation-free; the app broadcasts the replacement, commits the wallet-state swap, then cancels relay of the original. If the wallet commit fails, the replacement broadcaster entry is cancelled and the original keeps relaying.
+
+History retains the old txid as **replaced** and adds the new pending entry. If the original wins the confirmation race before the replacement propagates, scanning discards the replacement descendant and its locally-counted change before applying the confirmed original. Conversely, if broadcasting succeeds but the replacement's state commit fails, its exact input set still identifies it as the winner when scanned and removes the original pending change. Neither race can double-count balance.
 
 ---
 

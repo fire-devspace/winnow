@@ -198,6 +198,196 @@ struct WalletTests {
         #expect(await wallet.history.contains { $0.txid == prepared.built.transaction.txid })
     }
 
+    @Test("fee bump keeps inputs/payments, satisfies BIP125 fees, signs, and persists")
+    func feeBump() async throws {
+        let url = tempFileURL("wallet.json")
+        let keyStore = InMemoryKeyStore()
+        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+
+        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        try await wallet.commit(original)
+        let originalTx = original.built.transaction
+        let originalBalance = await wallet.balance
+        let currentRate = try await wallet.pendingFeeRate(txid: originalTx.txid)
+
+        do {
+            _ = try await wallet.previewFeeBump(txid: originalTx.txid,
+                                                feeRateSatPerVByte: currentRate)
+            Issue.record("an equal feerate must not build a replacement")
+        } catch let error as FeeBumpError {
+            guard case .feeRateNotHigher = error else {
+                Issue.record("unexpected fee-bump error: \(error)")
+                return
+            }
+        }
+
+        // A tiny requested increase is intentionally below BIP125 rule 4;
+        // the builder must raise the actual fee by one replacement vbyte.
+        let preview = try await wallet.previewFeeBump(
+            txid: originalTx.txid, feeRateSatPerVByte: currentRate + 0.000_1)
+        let replacement = try await wallet.buildFeeBump(
+            txid: originalTx.txid, feeRateSatPerVByte: currentRate + 0.000_1)
+        let replacementTx = replacement.built.transaction
+        let replacementVSize = TransactionBuilder.vsize(of: replacementTx)
+        #expect(replacement.built.fee >= original.built.fee + Int64(replacementVSize))
+        #expect(preview.fee == replacement.built.fee)
+        #expect(preview.feeRateSatPerVByte > currentRate)
+        #expect(replacementTx.inputs.map(\.previousOutput) == originalTx.inputs.map(\.previousOutput))
+        #expect(replacementTx.outputs.contains { $0.value == 100_000 && $0.scriptPubKey == destination })
+        #expect(replacement.built.changeAmount! < original.built.changeAmount!)
+
+        // PSBT signing uses the exact original prevout metadata.
+        let sighash = try SighashBIP341.sighash(
+            tx: replacementTx, inputIndex: 0,
+            spentOutputs: [SighashBIP341.SpentOutput(amount: 150_000, scriptPubKey: fundingScript)])
+        let outputKey = P256K.Schnorr.XonlyKey(dataRepresentation: fundingScript.suffix(32))
+        let signature = try P256K.Schnorr.SchnorrSignature(
+            dataRepresentation: replacementTx.inputs[0].witness[0])
+        var message = [UInt8](sighash)
+        #expect(outputKey.isValid(signature, for: &message))
+
+        // Build is rollback-safe; commit swaps pending change and history.
+        #expect(await wallet.history.first { $0.txid == originalTx.txid }?.replacedBy == nil)
+        try await wallet.commitFeeBump(replacement)
+        #expect(await wallet.history.first { $0.txid == originalTx.txid }?.replacedBy == replacementTx.txid)
+        #expect(await wallet.history.first { $0.txid == replacementTx.txid }?.height == 0)
+        #expect(await wallet.balance == originalBalance - (replacement.built.fee - original.built.fee))
+        #expect(await wallet.nextChangeIndex == 1)
+
+        // Exact prevouts/raw tx survive relaunch, so a second bump can be built.
+        let reopened = try Wallet.open(storageURL: url, keyStore: keyStore)
+        #expect(await reopened.feeBumpableTxids == [replacementTx.txid])
+        let reopenedRate = try await reopened.pendingFeeRate(txid: replacementTx.txid)
+        _ = try await reopened.buildFeeBump(txid: replacementTx.txid,
+                                            feeRateSatPerVByte: reopenedRate + 1)
+    }
+
+    @Test("same-input bump refuses a changeless send")
+    func feeBumpNeedsChange() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 100_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x88, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 99_778, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        #expect(original.built.changeAmount == nil)
+        try await wallet.commit(original)
+        #expect(await wallet.feeBumpableTxids.isEmpty)
+        do {
+            _ = try await wallet.buildFeeBump(txid: original.built.transaction.txid,
+                                              feeRateSatPerVByte: 5)
+            Issue.record("a changeless same-input spend cannot be bumped")
+        } catch let error as FeeBumpError {
+            #expect(error == .noChangeOutput)
+        }
+    }
+
+    @Test("fee bump removes change when the higher-fee remainder becomes dust")
+    func feeBumpDropsDustChange() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 101_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)],
+            feeRateSatPerVByte: 2)
+        let originalChange = try #require(original.built.changeAmount)
+        let changeScript = try await wallet.scriptPubKey(chain: .change, index: 0)
+        #expect(originalChange >= CoinSelection.dustThreshold(scriptPubKey: changeScript))
+        try await wallet.commit(original)
+
+        let replacement = try await wallet.buildFeeBump(
+            txid: original.built.transaction.txid, feeRateSatPerVByte: 7)
+        #expect(replacement.built.changeAmount == nil)
+        #expect(replacement.built.transaction.outputs.count == 1)
+        #expect(replacement.built.transaction.outputs[0].value == 100_000)
+        #expect(replacement.built.fee == 1_000)
+        try await wallet.commitFeeBump(replacement)
+        #expect(await wallet.balance == 0)
+        #expect(await wallet.feeBumpableTxids.isEmpty)
+    }
+
+    @Test("confirmation chooses one replacement-chain member without double-counting change")
+    func feeBumpConfirmationRace() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        try await wallet.commit(original)
+        let replacement = try await wallet.buildFeeBump(
+            txid: original.built.transaction.txid, feeRateSatPerVByte: 5)
+        try await wallet.commitFeeBump(replacement)
+
+        // The original can still win before the replacement propagates. Its
+        // confirmation discards the descendant row/change and restores only
+        // the original change as confirmed.
+        let effect = try await wallet.apply(match: fakeMatch(
+            height: 150, transactions: [original.built.transaction]))
+        #expect(effect.discardedReplacements == [replacement.built.transaction.txid])
+        let history = await wallet.history
+        #expect(history.first { $0.txid == original.built.transaction.txid }?.height == 150)
+        #expect(history.first { $0.txid == original.built.transaction.txid }?.replacedBy == nil)
+        #expect(history.first { $0.txid == replacement.built.transaction.txid } == nil)
+        #expect(await wallet.utxos.contains {
+            $0.txid == original.built.transaction.txid && $0.height == 150
+        })
+        #expect(!(await wallet.utxos).contains { $0.txid == replacement.built.transaction.txid })
+    }
+
+    @Test("an already-relayed replacement confirms safely if its state commit failed")
+    func uncommittedFeeBumpConfirmation() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x44, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)],
+            feeRateSatPerVByte: 2)
+        try await wallet.commit(original)
+        let replacement = try await wallet.buildFeeBump(
+            txid: original.built.transaction.txid, feeRateSatPerVByte: 5)
+
+        // Model the broadcast-success / persistence-failure boundary by
+        // confirming the built replacement without committing its state swap.
+        let effect = try await wallet.apply(match: fakeMatch(
+            height: 150, transactions: [replacement.built.transaction]))
+        #expect(effect.discardedReplacements == [original.built.transaction.txid])
+        #expect(await wallet.history.first {
+            $0.txid == original.built.transaction.txid
+        }?.replacedBy == replacement.built.transaction.txid)
+        let replacementEntry = try await #require(wallet.history.first {
+            $0.txid == replacement.built.transaction.txid
+        })
+        #expect(replacementEntry.height == 150)
+        #expect(replacementEntry.spent == 150_000)
+        #expect(replacementEntry.fee == replacement.built.fee)
+        let replacementChange = try #require(replacement.built.changeAmount)
+        #expect(await wallet.balance == replacementChange)
+        #expect(await wallet.feeBumpableTxids.isEmpty)
+        #expect(!(await wallet.utxos).contains { $0.txid == original.built.transaction.txid })
+    }
+
     @Test("persistence: state round-trips through Wallet.open")
     func persistence() async throws {
         let url = tempFileURL("wallet.json")
@@ -219,5 +409,24 @@ struct WalletTests {
         let reopenedDescriptor = await reopened.descriptor
         let originalDescriptor = await wallet.descriptor
         #expect(reopenedDescriptor == originalDescriptor)
+    }
+
+    @Test("wallet state from before fee-bump metadata remains readable")
+    func legacyPersistence() async throws {
+        let url = tempFileURL("legacy-wallet.json")
+        let keyStore = InMemoryKeyStore()
+        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        _ = try await wallet.freshReceiveAddress()
+
+        let data = try Data(contentsOf: url)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "pendingSends")
+        json.removeValue(forKey: "observedFeeRates")
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+
+        let reopened = try Wallet.open(storageURL: url, keyStore: keyStore)
+        #expect(await reopened.nextReceiveIndex == 1)
+        #expect(await reopened.feeBumpableTxids.isEmpty)
+        #expect(await reopened.observedFeeRates.isEmpty)
     }
 }
