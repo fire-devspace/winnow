@@ -66,10 +66,39 @@ enum SignetMiner {
         return level[0]
     }
 
-    /// Mines one block paying the subsidy (+fees) to `payoutScript`.
-    /// Returns the accepted block hash (display hex).
+    /// `submitblock` answers for a block the node accepted but did not connect
+    /// as the tip — valid, just not on the most-work chain. That is a lost race
+    /// against the node's background miner, not a broken block.
+    private static let offChainAnswers: Set<String> = ["inconclusive", "duplicate-inconclusive"]
+
+    /// Mines one block paying the subsidy (+fees) to `payoutScript`. Returns
+    /// the accepted block hash (display hex) whether or not it became the tip;
+    /// callers that need the tip use `mineOntoTip`.
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
+        try await submitMinedBlock(payingTo: payoutScript).hash
+    }
+
+    /// Mines until one of our blocks is the tip. The dev node's background
+    /// miner produces a block every ~10 minutes, so losing a race is expected:
+    /// re-mine on the winner rather than failing the test.
+    @discardableResult
+    static func mineOntoTip(payingTo payoutScript: Data,
+                            maxAttempts: Int = 5) async throws -> String {
+        var lastAnswer = "our block connected but the tip moved on"
+        for _ in 0 ..< maxAttempts {
+            let submission = try await submitMinedBlock(payingTo: payoutScript)
+            if try BitcoinCLI.bestBlockHash() == submission.hash { return submission.hash }
+            if let answer = submission.answer { lastAnswer = answer }
+        }
+        throw MinerError.rejected("lost \(maxAttempts) block races (last: \(lastAnswer))")
+    }
+
+    /// The mining cycle itself: the block hash plus the node's `submitblock`
+    /// answer, which is nil when the block connected as the new tip.
+    private static func submitMinedBlock(payingTo payoutScript: Data) async throws
+        -> (hash: String, answer: String?)
+    {
         let template = try BitcoinCLI.runObject(["getblocktemplate", #"{"rules":["segwit","signet"]}"#])
         let height = try BitcoinCLI.int(template, "height")
         let bitsText = try BitcoinCLI.string(template, "bits")
@@ -190,8 +219,11 @@ enum SignetMiner {
         for tx in txs { block.append(tx.serialized(includeWitness: true)) }
 
         let result = try BitcoinCLI.runJSON(["submitblock", block.hex])
-        if let rejection = result as? String { throw MinerError.rejected(rejection) }
-        return ground.hash.displayHex
+        if let answer = result as? String {
+            guard offChainAnswers.contains(answer) else { throw MinerError.rejected(answer) }
+            return (ground.hash.displayHex, answer)
+        }
+        return (ground.hash.displayHex, nil)
     }
 }
 
