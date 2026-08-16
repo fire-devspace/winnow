@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var peerError: String?
     @State private var connectedPeers: [PeerInfo] = []
     @State private var showEsploraWarning = false
+    @State private var showSilentPaymentsWarning = false
     @State private var showReadSide = false
     @State private var showPapers = false
     @State private var showExport = false
@@ -105,6 +106,38 @@ struct SettingsView: View {
                     Text("Off by default. When on, the app queries a server for fee estimates and broadcasts through it too — the default P2P filter sync needs and contacts no server.")
                 }
 
+                Section {
+                    Toggle("Silent payments (receive)", isOn: Binding(
+                        get: { model.spReceiveEnabled },
+                        set: { enabled in
+                            if enabled {
+                                showSilentPaymentsWarning = true
+                            } else {
+                                model.setSilentPaymentsEnabled(false)
+                            }
+                        }
+                    ))
+                    .accessibilityIdentifier("spReceiveToggle")
+                    if model.spReceiveEnabled {
+                        TextField("Tweak-index server URL (required)", text: Binding(
+                            get: { model.spIndexURLString },
+                            set: { model.setSilentPaymentIndexURL($0) }
+                        ))
+                        .font(.system(.footnote, design: .monospaced))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        if model.spIndexBaseURL == nil {
+                            Text("Sync pauses until a server URL is set.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                } header: {
+                    Text("Silent payments (opt-in)")
+                } footer: {
+                    Text("Off by default. When on, the app fetches per-block silent-payment data from an index server and matches it on this device — the server learns an IP follows silent-payment data, never which outputs are yours. The wallet's sp address appears on the Receive screen while this is on.")
+                }
+
                 Section("Connected peers") {
                     ForEach(connectedPeers) { peer in
                         VStack(alignment: .leading, spacing: 2) {
@@ -134,6 +167,14 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .task { await refreshPeers() }
+            .alert("Enable silent-payment receive?", isPresented: $showSilentPaymentsWarning) {
+                Button("Enable — I understand the trade") {
+                    model.setSilentPaymentsEnabled(true)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Receiving on the wallet's sp1 address needs per-block data from a tweak-index server you choose. That server sees your IP and that it follows silent-payment data — not your addresses or balances; matching stays on this device. Scanning is forward-only: payments received while this is OFF are never detected, so enable it before sharing the address and leave it on. If the server is unreachable, sync pauses instead of silently skipping blocks.")
+            }
             .alert("Enable the esplora fast path?", isPresented: $showEsploraWarning) {
                 Button("Enable — I understand the trade") {
                     model.setEsploraEnabled(true)

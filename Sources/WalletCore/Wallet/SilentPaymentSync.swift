@@ -1,5 +1,6 @@
 import BitcoinCore
 import BitcoinP2P
+import BlockchainBackend
 import Foundation
 
 /// Per-block BIP352 tweak-data source (BIP352 Appendix A: an index server
@@ -13,6 +14,8 @@ public protocol TweakIndexClient: Sendable {
     /// transaction (order irrelevant). Empty when the block has none.
     func tweaks(forBlockAt height: UInt32) async throws -> [Data]
 }
+
+extension TweakIndexHTTPClient: TweakIndexClient {}
 
 /// One filter-stage candidate: a tweak's k=0 output. Any silent payment to us
 /// in that transaction produces exactly this script at k = 0, so it is the
