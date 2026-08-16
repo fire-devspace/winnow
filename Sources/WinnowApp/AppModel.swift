@@ -47,6 +47,7 @@ final class AppModel {
         var balance: Int64 = 0
         var utxoCount = 0
         var history: [HistoryEntry] = []
+        var feeBumpableTxids: [Data] = []
         var observedFeeRates: [Double] = []
         var peerCount = 0
         var tipHeight: UInt32 = 0
@@ -319,7 +320,10 @@ final class AppModel {
             let network = network
             let vaultStore = vaultStore
             try await filters.sync(watchScripts: scripts) { match in
-                _ = try await wallet.apply(match: match)
+                let walletEffect = try await wallet.apply(match: match)
+                for discarded in walletEffect.discardedReplacements {
+                    await broadcaster.cancel(discarded)
+                }
                 try await vaultStore.apply(match: match, network: network)
                 let pending = await broadcaster.pendingTxids
                 for tx in match.block.transactions where pending.contains(tx.txid) {
@@ -346,10 +350,15 @@ final class AppModel {
         if let wallet {
             snapshot.balance = await wallet.balance
             snapshot.utxoCount = await wallet.utxos.count
-            // Pending (height 0) entries first, then newest block first.
+            // Active pending entries first, then newest blocks, with replaced
+            // height-0 originals last instead of pinning them as pending.
             snapshot.history = await wallet.history.sorted {
-                ($0.height == 0 ? UInt32.max : $0.height) > ($1.height == 0 ? UInt32.max : $1.height)
+                let lhsPending = $0.height == 0 && $0.replacedBy == nil
+                let rhsPending = $1.height == 0 && $1.replacedBy == nil
+                if lhsPending != rhsPending { return lhsPending }
+                return $0.height > $1.height
             }
+            snapshot.feeBumpableTxids = await wallet.feeBumpableTxids
             snapshot.observedFeeRates = await wallet.observedFeeRates
             snapshot.nextScanHeight = await wallet.nextScanHeight
         }
@@ -558,6 +567,41 @@ final class AppModel {
         try await wallet.commit(prepared)
         await refresh()
         return txid
+    }
+
+    func pendingFeeRate(txid: Data) async throws -> Double {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.pendingFeeRate(txid: txid)
+    }
+
+    func previewFeeBump(txid: Data, feeRateSatPerVByte: Double) async throws -> FeeBumpPreview {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.previewFeeBump(txid: txid,
+                                               feeRateSatPerVByte: feeRateSatPerVByte)
+    }
+
+    /// Broadcasts a replacement first, commits its wallet-state swap second,
+    /// and cancels the original relay only after both succeed. If commit fails,
+    /// the new broadcaster entry is removed and the old transaction keeps
+    /// relaying, preserving the same rollback boundary as a first send.
+    func bumpFee(txid: Data, feeRateSatPerVByte: Double) async throws -> Data {
+        guard let wallet else { throw AppError.noWallet }
+        guard let broadcaster = stack?.broadcaster else { throw AppError.noStack }
+        let prepared = try await wallet.buildFeeBump(txid: txid,
+                                                     feeRateSatPerVByte: feeRateSatPerVByte)
+        let replacementVSize = TransactionBuilder.vsize(of: prepared.built.transaction)
+        let replacementRate = Double(prepared.built.fee) / Double(replacementVSize)
+        let replacementTxid = try await broadcast(
+            prepared.built.transaction, feeRateSatPerVByte: replacementRate)
+        do {
+            try await wallet.commitFeeBump(prepared)
+        } catch {
+            await broadcaster.cancel(replacementTxid)
+            throw error
+        }
+        await broadcaster.cancel(txid)
+        await refresh()
+        return replacementTxid
     }
 
     /// Broadcasts a fully-signed transaction via P2P relay — and additionally
