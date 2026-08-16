@@ -74,7 +74,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .navigationTitle("btc-swift")
+            .navigationTitle("Winnow")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Receive") { showReceive = true }

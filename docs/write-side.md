@@ -1,6 +1,6 @@
 # The Write Side: How a Phone Pays Without Asking Anyone
 
-*Design paper for btc-swift. Companion to [the read side](read-side.md) — that paper ends when the UTXOs are local. This one starts there. Framing: [a phone wallet](mobile.md).*
+*Design paper for Winnow. Companion to [the read side](read-side.md) — that paper ends when the UTXOs are local. This one starts there. Framing: [a phone wallet](mobile.md).*
 
 ---
 

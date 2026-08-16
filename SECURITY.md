@@ -2,12 +2,12 @@
 
 ## Reporting a vulnerability
 
-If you believe you've found a security issue in btc-swift — especially anything
+If you believe you've found a security issue in Winnow — especially anything
 touching key handling, transaction signing, or the P2P trust model — please
 report it privately:
 
 - **Email:** a@wuli.nu
-- **GitHub:** use [private vulnerability reporting](https://github.com/posix4e/btc-swift/security/advisories/new)
+- **GitHub:** use [private vulnerability reporting](https://github.com/posix4e/winnow/security/advisories/new)
 
 Do **not** open a public issue for undisclosed vulnerabilities. We aim to
 acknowledge reports within 72 hours.

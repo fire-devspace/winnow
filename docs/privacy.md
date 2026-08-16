@@ -1,6 +1,6 @@
-# btc-swift Privacy Policy
+# Winnow Privacy Policy
 
-**btc-swift collects nothing.** No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.
+**Winnow collects nothing.** No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.
 
 ## What the app does with your data
 
@@ -13,4 +13,4 @@
 
 ## Contact
 
-a@wuli.nu · Source code: https://github.com/posix4e/btc-swift
+a@wuli.nu · Source code: https://github.com/posix4e/winnow

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct BTCSwiftApp: App {
+struct WinnowApp: App {
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 

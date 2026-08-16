@@ -90,7 +90,7 @@ func makeFakeSegwitTx() -> Transaction {
 /// Temporary file URL that is removed on test teardown best-effort.
 func tempFileURL(_ name: String) -> URL {
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("btc-swift-tests-\(UUID().uuidString)")
+        .appendingPathComponent("winnow-tests-\(UUID().uuidString)")
         .appendingPathComponent(name)
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                              withIntermediateDirectories: true)

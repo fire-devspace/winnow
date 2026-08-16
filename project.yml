@@ -1,4 +1,4 @@
-name: BTCSwiftApp
+name: WinnowApp
 options:
   bundleIdPrefix: com.btcswift
   deploymentTarget:
@@ -16,12 +16,12 @@ packages:
     exactVersion: 0.23.2
 
 targets:
-  BTCSwiftApp:
+  WinnowApp:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Sources/BTCSwiftApp
+      - path: Sources/WinnowApp
       # Design papers, bundled so Settings can render them offline (the
       # esplora opt-in warning links the read-side paper).
       - path: docs/mobile.md
@@ -47,7 +47,7 @@ targets:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.btcswift.app
-        PRODUCT_NAME: BTCSwiftApp
+        PRODUCT_NAME: WinnowApp
         TARGETED_DEVICE_FAMILY: "1" # iPhone only
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -70,14 +70,14 @@ targets:
   # docs/screenshots/. Node access (bitcoin-cli mining/funding) happens from
   # the macOS test-runner process; UITests/ carries copies of the CLI runner
   # and the BIP325 signet miner from Tests/DifferentialTests.
-  BTCSwiftAppUITests:
+  WinnowAppUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
     sources:
       - path: UITests
     dependencies:
-      - target: BTCSwiftApp
+      - target: WinnowApp
       - package: btc-swift
         product: BitcoinCore
       - package: btc-swift
@@ -89,7 +89,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.btcswift.app.uitests
-        TEST_TARGET_NAME: BTCSwiftApp
+        TEST_TARGET_NAME: WinnowApp
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         GENERATE_INFOPLIST_FILE: YES
@@ -97,14 +97,14 @@ targets:
         DEVELOPMENT_TEAM: "2858MX5336" # ttt246 llc
 
 schemes:
-  BTCSwiftApp:
+  WinnowApp:
     build:
       targets:
-        BTCSwiftApp: all
-        BTCSwiftAppUITests: [test]
+        WinnowApp: all
+        WinnowAppUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - BTCSwiftAppUITests
+        - WinnowAppUITests

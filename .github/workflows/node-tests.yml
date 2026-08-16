@@ -5,14 +5,14 @@ name: Node e2e
 #
 # Node location is configurable via repository VARIABLES (not secrets) —
 # unset variables fall back to the local-dev defaults:
-#   BTC_SWIFT_NODE_HOST (default 127.0.0.1)
-#   BTC_SWIFT_P2P_PORT  (default 38401)
-#   BTC_SWIFT_RPC_PORT  (default 38400)
-#   BTC_SWIFT_DATADIR   (default ~/.bitcoin-mysignet, i.e. the runner's home)
+#   WINNOW_NODE_HOST (default 127.0.0.1)
+#   WINNOW_P2P_PORT  (default 38401)
+#   WINNOW_RPC_PORT  (default 38400)
+#   WINNOW_DATADIR   (default ~/.bitcoin-mysignet, i.e. the runner's home)
 # The "Node reachability probe" step reports which of these the runners can
 # actually reach. Note: `xcodebuild test` does not forward its environment
 # into the iOS-simulator test runner, so the UI suite gets these values via
-# ~/.btc-swift-node.env (written by the "simulator test config" step).
+# ~/.winnow-node.env (written by the "simulator test config" step).
 
 on:
   workflow_dispatch:
@@ -34,10 +34,10 @@ jobs:
     runs-on: [self-hosted, macOS, btc-swift]
     timeout-minutes: 90
     env:
-      BTC_SWIFT_NODE_HOST: ${{ vars.BTC_SWIFT_NODE_HOST || '127.0.0.1' }}
-      BTC_SWIFT_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
-      BTC_SWIFT_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
-      BTC_SWIFT_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
+      WINNOW_NODE_HOST: ${{ vars.BTC_SWIFT_NODE_HOST || '127.0.0.1' }}
+      WINNOW_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
+      WINNOW_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
+      WINNOW_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,15 +57,15 @@ jobs:
             || ls /usr/local/bin/bitcoin-cli /opt/homebrew/bin/bitcoin-cli 2>/dev/null \
             || echo "no bitcoin-cli"
           echo "== datadir =="
-          ls -d "${BTC_SWIFT_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no node datadir in the runner home"
+          ls -d "${WINNOW_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no node datadir in the runner home"
           echo "== home =="; echo "$HOME"
 
       - name: Node reachability probe
         run: |
-          echo "P2P $BTC_SWIFT_NODE_HOST:$BTC_SWIFT_P2P_PORT"
-          nc -z -G 5 "$BTC_SWIFT_NODE_HOST" "$BTC_SWIFT_P2P_PORT" && echo "P2P REACHABLE" || echo "P2P UNREACHABLE"
-          echo "RPC $BTC_SWIFT_NODE_HOST:$BTC_SWIFT_RPC_PORT"
-          nc -z -G 5 "$BTC_SWIFT_NODE_HOST" "$BTC_SWIFT_RPC_PORT" && echo "RPC REACHABLE" || echo "RPC UNREACHABLE"
+          echo "P2P $WINNOW_NODE_HOST:$WINNOW_P2P_PORT"
+          nc -z -G 5 "$WINNOW_NODE_HOST" "$WINNOW_P2P_PORT" && echo "P2P REACHABLE" || echo "P2P UNREACHABLE"
+          echo "RPC $WINNOW_NODE_HOST:$WINNOW_RPC_PORT"
+          nc -z -G 5 "$WINNOW_NODE_HOST" "$WINNOW_RPC_PORT" && echo "RPC REACHABLE" || echo "RPC UNREACHABLE"
 
       - name: Install xcodegen if absent
         run: which xcodegen || brew install xcodegen
@@ -78,16 +78,16 @@ jobs:
         # as a repo secret; regenerate with `gh secret set BTC_SWIFT_RPC_COOKIE
         # < ~/.bitcoin-mysignet/signet/.cookie` after any node restart.
         env:
-          BTC_SWIFT_RPC_COOKIE: ${{ secrets.BTC_SWIFT_RPC_COOKIE }}
+          WINNOW_RPC_COOKIE: ${{ secrets.BTC_SWIFT_RPC_COOKIE }}
         run: |
-          DD="${BTC_SWIFT_DATADIR:-$HOME/.bitcoin-mysignet}"
+          DD="${WINNOW_DATADIR:-$HOME/.bitcoin-mysignet}"
           mkdir -p "$DD/signet"
           # bitcoin-cli derives the chain from the conf file; without it the
           # CLI assumes mainnet and looks for $DD/.cookie instead of
           # $DD/signet/.cookie — write both plus a minimal conf.
           printf 'signet=1\nserver=1\n' > "$DD/bitcoin.conf"
-          printf '%s' "$BTC_SWIFT_RPC_COOKIE" > "$DD/.cookie"
-          printf '%s' "$BTC_SWIFT_RPC_COOKIE" > "$DD/signet/.cookie"
+          printf '%s' "$WINNOW_RPC_COOKIE" > "$DD/.cookie"
+          printf '%s' "$WINNOW_RPC_COOKIE" > "$DD/signet/.cookie"
           chmod 600 "$DD/.cookie" "$DD/signet/.cookie"
 
       - name: Locate developer tools
@@ -107,10 +107,10 @@ jobs:
           DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
         run: swift test
 
-      - name: Differential suite (BTC_SWIFT_DIFF=1, node-backed)
+      - name: Differential suite (WINNOW_DIFF=1, node-backed)
         env:
           DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
-          BTC_SWIFT_DIFF: "1"
+          WINNOW_DIFF: "1"
         run: swift test --filter DifferentialTests
 
       - name: Generate Xcode project
@@ -146,14 +146,14 @@ jobs:
           # xcodebuild does not forward its environment into the iOS-simulator
           # test runner; UITests/BitcoinCLI.swift reads this file instead.
           {
-            echo "BTC_SWIFT_NODE_HOST=$BTC_SWIFT_NODE_HOST"
-            echo "BTC_SWIFT_P2P_PORT=$BTC_SWIFT_P2P_PORT"
-            echo "BTC_SWIFT_RPC_PORT=$BTC_SWIFT_RPC_PORT"
-            [ -n "$BTC_SWIFT_DATADIR" ] && echo "BTC_SWIFT_DATADIR=$BTC_SWIFT_DATADIR"
-          } > "$HOME/.btc-swift-node.env"
+            echo "WINNOW_NODE_HOST=$WINNOW_NODE_HOST"
+            echo "WINNOW_P2P_PORT=$WINNOW_P2P_PORT"
+            echo "WINNOW_RPC_PORT=$WINNOW_RPC_PORT"
+            [ -n "$WINNOW_DATADIR" ] && echo "WINNOW_DATADIR=$WINNOW_DATADIR"
+          } > "$HOME/.winnow-node.env"
           # The suite's default screenshot dir is $HOME/src/btc-swift/docs/
           # screenshots — symlink it into the checkout so the artifact
-          # upload below finds the PNGs (BTCSWIFT_SCREENSHOT_DIR does not
+          # upload below finds the PNGs (WINNOW_SCREENSHOT_DIR does not
           # reach the sim runner either).
           mkdir -p "$HOME/src/btc-swift/docs"
           ln -sfn "$GITHUB_WORKSPACE/docs/screenshots" "$HOME/src/btc-swift/docs/screenshots"
@@ -163,7 +163,7 @@ jobs:
         env:
           DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
         run: >-
-          xcodebuild test -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
+          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp
           -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.sim-name }}'
           -skipPackagePluginValidation -skipMacroValidation
 

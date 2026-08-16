@@ -4,7 +4,7 @@ import Foundation
 import Security
 
 /// Launch-environment hooks for the XCUITest end-to-end suite (UITests/).
-/// Entirely inert unless the app is launched with BTCSWIFT_E2E=1: a normal
+/// Entirely inert unless the app is launched with WINNOW_E2E=1: a normal
 /// launch never reads any of this and behaves exactly as before.
 ///
 /// Test mode:
@@ -36,21 +36,21 @@ struct E2EMode {
 
     static var current: E2EMode? {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["BTCSWIFT_E2E"] == "1" else { return nil }
+        guard environment["WINNOW_E2E"] == "1" else { return nil }
         let entropy: Data?
-        if let hex = environment["BTCSWIFT_E2E_ENTROPY"] {
+        if let hex = environment["WINNOW_E2E_ENTROPY"] {
             entropy = Data(hex: hex)
-        } else if let mnemonic = environment["BTCSWIFT_E2E_MNEMONIC"] {
+        } else if let mnemonic = environment["WINNOW_E2E_MNEMONIC"] {
             entropy = try? entropyFrom(mnemonic: mnemonic)
         } else {
             entropy = nil
         }
-        return E2EMode(runID: environment["BTCSWIFT_E2E_RUN"] ?? "main",
-                       peer: environment["BTCSWIFT_E2E_PEER"],
-                       challenge: environment["BTCSWIFT_E2E_CHALLENGE"].flatMap { Data(hex: $0) },
+        return E2EMode(runID: environment["WINNOW_E2E_RUN"] ?? "main",
+                       peer: environment["WINNOW_E2E_PEER"],
+                       challenge: environment["WINNOW_E2E_CHALLENGE"].flatMap { Data(hex: $0) },
                        entropy: entropy,
-                       reset: environment["BTCSWIFT_E2E_RESET"] == "1",
-                       clipboard: environment["BTCSWIFT_E2E_CLIPBOARD"])
+                       reset: environment["WINNOW_E2E_RESET"] == "1",
+                       clipboard: environment["WINNOW_E2E_CLIPBOARD"])
     }
 
     /// The Application Support subdirectory used instead of "BTCSwift".
@@ -62,7 +62,7 @@ struct E2EMode {
         challenge.map { .customSignet(challenge: $0, defaultPort: 38_401) }
     }
 
-    /// `BTCSWIFT_E2E_RESET=1`: drop this run's storage directory and every
+    /// `WINNOW_E2E_RESET=1`: drop this run's storage directory and every
     /// Keychain entry in the test namespace.
     func wipeIfRequested() {
         guard reset else { return }

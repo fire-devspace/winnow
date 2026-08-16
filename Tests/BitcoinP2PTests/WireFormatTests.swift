@@ -28,9 +28,9 @@ struct WireFormatTests {
     @Test("varstring round-trips")
     func varString() throws {
         var data = Data()
-        data.appendVarString("/btc-swift:0.1/")
+        data.appendVarString("/winnow:0.1/")
         var reader = ByteReader(data)
-        #expect(try reader.readVarString() == "/btc-swift:0.1/")
+        #expect(try reader.readVarString() == "/winnow:0.1/")
         try reader.requireEnd()
     }
 

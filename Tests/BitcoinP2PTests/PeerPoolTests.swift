@@ -159,7 +159,7 @@ private actor SilentNode {
         let listener = try NWListener(using: .tcp, on: .any)
         self.listener = listener
         listener.newConnectionHandler = { connection in
-            connection.start(queue: DispatchQueue(label: "org.btc-swift.tests.silent.conn"))
+            connection.start(queue: DispatchQueue(label: "org.winnow.tests.silent.conn"))
             Task { await self.hold(connection) }
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -176,7 +176,7 @@ private actor SilentNode {
                     break
                 }
             }
-            listener.start(queue: DispatchQueue(label: "org.btc-swift.tests.silent"))
+            listener.start(queue: DispatchQueue(label: "org.winnow.tests.silent"))
         }
     }
 

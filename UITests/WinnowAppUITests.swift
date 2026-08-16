@@ -19,9 +19,9 @@ final class HostProcessProbeTests: XCTestCase {
 
 /// End-to-end UI tests against the local custom-signet node (default datadir
 /// ~/.bitcoin-mysignet, P2P 127.0.0.1:38401 — overridable via the
-/// BTC_SWIFT_NODE_HOST/BTC_SWIFT_P2P_PORT/BTC_SWIFT_RPC_PORT/BTC_SWIFT_DATADIR
+/// WINNOW_NODE_HOST/WINNOW_P2P_PORT/WINNOW_RPC_PORT/WINNOW_DATADIR
 /// environment variables, see UITests/BitcoinCLI.swift). The app is launched with
-/// BTCSWIFT_E2E=1 (see Sources/BTCSwiftApp/E2EMode.swift): throwaway storage
+/// WINNOW_E2E=1 (see Sources/WinnowApp/E2EMode.swift): throwaway storage
 /// and Keychain namespace, custom-signet params, the node as manual peer, and
 /// a fixed wallet entropy for reproducible screenshots.
 ///
@@ -29,7 +29,7 @@ final class HostProcessProbeTests: XCTestCase {
 /// methods alphabetically): 01 creates the wallet, 02 funds it, 03 spends,
 /// 06 imports a bundle built from the funding data.
 @MainActor
-final class BTCSwiftAppUITests: XCTestCase {
+final class WinnowAppUITests: XCTestCase {
     /// Fixed 16-byte entropy → the same mnemonic/addresses every run.
     static let entropyHex = "000102030405060708090a0b0c0d0e0f"
     static let mnemonic = try! BIP39.mnemonic(entropy: Data(hex: entropyHex)!)
@@ -47,7 +47,7 @@ final class BTCSwiftAppUITests: XCTestCase {
     nonisolated(unsafe) static var funding: FundingInfo?
 
     static var fundingFile: URL {
-        FileManager.default.temporaryDirectory.appending(path: "btcswift-e2e-funding.json")
+        FileManager.default.temporaryDirectory.appending(path: "winnow-e2e-funding.json")
     }
 
     static func saveFunding(_ info: FundingInfo) {
@@ -76,14 +76,14 @@ final class BTCSwiftAppUITests: XCTestCase {
                    expectOnboarding: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = [
-            "BTCSWIFT_E2E": "1",
-            "BTCSWIFT_E2E_RUN": run,
-            "BTCSWIFT_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
-            "BTCSWIFT_E2E_CHALLENGE": BitcoinCLI.challengeHex,
-            "BTCSWIFT_E2E_ENTROPY": Self.entropyHex,
+            "WINNOW_E2E": "1",
+            "WINNOW_E2E_RUN": run,
+            "WINNOW_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
+            "WINNOW_E2E_CHALLENGE": BitcoinCLI.challengeHex,
+            "WINNOW_E2E_ENTROPY": Self.entropyHex,
         ]
-        if reset { app.launchEnvironment["BTCSWIFT_E2E_RESET"] = "1" }
-        if let clipboard { app.launchEnvironment["BTCSWIFT_E2E_CLIPBOARD"] = clipboard }
+        if reset { app.launchEnvironment["WINNOW_E2E_RESET"] = "1" }
+        if let clipboard { app.launchEnvironment["WINNOW_E2E_CLIPBOARD"] = clipboard }
         app.launch()
         if expectOnboarding {
             XCTAssertTrue(app.buttons["createWalletButton"].waitForExistence(timeout: 120),

@@ -1,7 +1,7 @@
 .build/
 build/
 DerivedData/
-BTCSwiftApp.xcodeproj/
+WinnowApp.xcodeproj/
 Package.resolved
 *.xcuserstate
 .DS_Store

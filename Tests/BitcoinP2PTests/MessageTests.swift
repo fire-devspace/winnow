@@ -13,7 +13,7 @@ struct MessageTests {
             timestamp: 1_700_000_000,
             receiver: PeerAddress(services: 0, ipv4: (127, 0, 0, 1), port: 38333),
             sender: PeerAddress(services: 0, ipv4: (10, 0, 0, 2), port: 8333),
-            nonce: 0xDEAD_BEEF, userAgent: "/btc-swift:0.1/", startHeight: 123, relay: false)
+            nonce: 0xDEAD_BEEF, userAgent: "/winnow:0.1/", startHeight: 123, relay: false)
         let inv = InventoryPayload([
             InventoryVector(type: .witnessTx, hash: hash),
             InventoryVector(type: .witnessBlock, hash: Data(repeating: 0xCD, count: 32)),

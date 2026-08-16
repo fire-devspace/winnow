@@ -1,6 +1,6 @@
 #!/bin/bash
-# btc-swift → TestFlight pipeline (App Store Connect API).
-# Prereqs: archive IPA at build/BTCSwiftApp.ipa (see archive step below),
+# Winnow → TestFlight pipeline (App Store Connect API).
+# Prereqs: archive IPA at build/WinnowApp.ipa (see archive step below),
 # API key at ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8.
 #
 #   export ASC_KEY_ID=5QT8WW3Q8H
@@ -16,7 +16,7 @@ KEY_ID="${ASC_KEY_ID:?set ASC_KEY_ID}"
 ISSUER="${ASC_ISSUER_ID:?set ASC_ISSUER_ID}"
 KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8}"
 BUNDLE_ID="com.btcswift.app"
-APP_NAME="btc-swift"
+APP_NAME="Winnow"
 API="https://api.appstoreconnect.apple.com/v1"
 
 jwt() { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift Scripts/asc-jwt.swift "$KEY_PATH" "$KEY_ID" "$ISSUER"; }
@@ -30,7 +30,7 @@ asc() { # asc <METHOD> <path> [json-body]
 step_register_bundle_id() {
   asc GET "/bundleIds?filter[identifier]=$BUNDLE_ID" | tee /tmp/asc-bundleids.json
   if ! grep -q "$BUNDLE_ID" /tmp/asc-bundleids.json; then
-    asc POST /bundleIds '{"data":{"type":"bundleIds","attributes":{"identifier":"'$BUNDLE_ID'","name":"btc-swift","platform":"IOS"}}}'
+    asc POST /bundleIds '{"data":{"type":"bundleIds","attributes":{"identifier":"'$BUNDLE_ID'","name":"Winnow","platform":"IOS"}}}'
   fi
 }
 
@@ -45,7 +45,7 @@ step_create_app() {
 
 step_upload() {
   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun altool --upload-app \
-    -f build/BTCSwiftApp.ipa -t ios --apiKey "$KEY_ID" --apiIssuer "$ISSUER"
+    -f build/WinnowApp.ipa -t ios --apiKey "$KEY_ID" --apiIssuer "$ISSUER"
 }
 
 app_id() { asc GET "/apps?filter[bundleId]=$BUNDLE_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])'; }

@@ -36,11 +36,11 @@ jobs:
 
       - name: Archive
         run: >-
-          brew install xcodegen && xcodegen && xcodebuild -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
+          brew install xcodegen && xcodegen && xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -configuration Release -destination 'generic/platform=iOS'
-          -archivePath build/BTCSwiftApp.xcarchive
+          -archivePath build/WinnowApp.xcarchive
           -allowProvisioningUpdates
-          -authenticationKeyPath "${RUNNER_TEMP}/btc-swift-signing/AuthKey.p8"
+          -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8"
           -authenticationKeyID "$ASC_KEY_ID"
           -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           -skipPackagePluginValidation -skipMacroValidation archive
@@ -66,17 +66,17 @@ jobs:
           </dict>
           </plist>
           EOF
-          xcodebuild -exportArchive -archivePath build/BTCSwiftApp.xcarchive \
+          xcodebuild -exportArchive -archivePath build/WinnowApp.xcarchive \
             -exportOptionsPlist build/ExportOptions.plist \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "${RUNNER_TEMP}/btc-swift-signing/AuthKey.p8" \
+            -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             -skipPackagePluginValidation -skipMacroValidation
 
       - name: TestFlight groups (internal + external)
         env:
-          ASC_KEY_PATH: ${{ runner.temp }}/btc-swift-signing/AuthKey.p8
+          ASC_KEY_PATH: ${{ runner.temp }}/winnow-signing/AuthKey.p8
         run: |
           chmod +x Scripts/testflight.sh
           Scripts/testflight.sh wait-processing

@@ -7,10 +7,10 @@ import Foundation
 /// Node location is env-configurable (CI runners reach the node over
 /// LAN/Tailscale, not loopback); the defaults reproduce the local dev setup
 /// exactly:
-/// - BTC_SWIFT_NODE_HOST — RPC/P2P host (default 127.0.0.1)
-/// - BTC_SWIFT_P2P_PORT  — P2P port (default 38401)
-/// - BTC_SWIFT_RPC_PORT  — RPC port (default 38400)
-/// - BTC_SWIFT_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
+/// - WINNOW_NODE_HOST — RPC/P2P host (default 127.0.0.1)
+/// - WINNOW_P2P_PORT  — P2P port (default 38401)
+/// - WINNOW_RPC_PORT  — RPC port (default 38400)
+/// - WINNOW_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
 ///
 /// Everything here is read-only against the node EXCEPT `generatetoaddress`
 /// mining on the disposable custom signet, which is expected and safe.
@@ -27,10 +27,10 @@ enum BitcoinCLI {
         return value
     }
 
-    static let nodeHost = env("BTC_SWIFT_NODE_HOST") ?? "127.0.0.1"
-    static let p2pPort: UInt16 = env("BTC_SWIFT_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
-    static let rpcPort = env("BTC_SWIFT_RPC_PORT").flatMap { Int($0) } ?? 38_400
-    static let datadir = env("BTC_SWIFT_DATADIR") ?? "\(NSHomeDirectory())/.bitcoin-mysignet"
+    static let nodeHost = env("WINNOW_NODE_HOST") ?? "127.0.0.1"
+    static let p2pPort: UInt16 = env("WINNOW_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
+    static let rpcPort = env("WINNOW_RPC_PORT").flatMap { Int($0) } ?? 38_400
+    static let datadir = env("WINNOW_DATADIR") ?? "\(NSHomeDirectory())/.bitcoin-mysignet"
 
     struct CLIError: Error, CustomStringConvertible, Equatable {
         let arguments: [String]

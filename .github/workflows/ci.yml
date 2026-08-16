@@ -13,7 +13,7 @@ jobs:
       - name: Swift package tests (176+ BIP vector + unit + loopback)
         run: swift test
         # Env-gated suites (DifferentialTests, signet integration) skip
-        # cleanly without BTC_SWIFT_DIFF/BTC_SWIFT_SIGNET and no local node.
+        # cleanly without WINNOW_DIFF/WINNOW_SIGNET and no local node.
 
   app-build:
     # GitHub-hosted: the self-hosted VMs are CLT-only for now (no Xcode.app).
@@ -25,6 +25,6 @@ jobs:
         run: brew install xcodegen && xcodegen
       - name: Build app (iOS Simulator)
         run: >-
-          xcodebuild -project BTCSwiftApp.xcodeproj -scheme BTCSwiftApp
+          xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -destination 'generic/platform=iOS Simulator'
           -skipPackagePluginValidation -skipMacroValidation build

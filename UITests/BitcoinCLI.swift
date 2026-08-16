@@ -10,13 +10,13 @@ import Foundation
 /// Node location is env-configurable (CI runners reach the node over
 /// LAN/Tailscale, not loopback); the defaults reproduce the local dev setup
 /// exactly:
-/// - BTC_SWIFT_NODE_HOST — RPC/P2P host (default 127.0.0.1)
-/// - BTC_SWIFT_P2P_PORT  — P2P port (default 38401)
-/// - BTC_SWIFT_RPC_PORT  — RPC port (default 38400)
-/// - BTC_SWIFT_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
+/// - WINNOW_NODE_HOST — RPC/P2P host (default 127.0.0.1)
+/// - WINNOW_P2P_PORT  — P2P port (default 38401)
+/// - WINNOW_RPC_PORT  — RPC port (default 38400)
+/// - WINNOW_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
 ///
 /// Inside the simulator the process environment is NOT inherited from
-/// xcodebuild; the same keys are then read from ~/.btc-swift-node.env on the
+/// xcodebuild; the same keys are then read from ~/.winnow-node.env on the
 /// host (see env(_:) below).
 ///
 /// Everything here is read-only against the node EXCEPT `generatetoaddress`
@@ -38,14 +38,14 @@ enum BitcoinCLI {
     /// An environment override; empty values count as unset. `xcodebuild
     /// test` does NOT forward its process environment into the iOS-simulator
     /// test runner, so the harness also reads KEY=VALUE lines from
-    /// ~/.btc-swift-node.env on the host (CI writes it before the UI run).
+    /// ~/.winnow-node.env on the host (CI writes it before the UI run).
     private static func env(_ key: String) -> String? {
         if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty { return value }
         return fileOverrides[key]
     }
 
     private static let fileOverrides: [String: String] = {
-        let url = URL(fileURLWithPath: hostHome).appending(path: ".btc-swift-node.env")
+        let url = URL(fileURLWithPath: hostHome).appending(path: ".winnow-node.env")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
         var result: [String: String] = [:]
         for line in text.split(separator: "\n") {
@@ -57,10 +57,10 @@ enum BitcoinCLI {
         return result
     }()
 
-    static let nodeHost = env("BTC_SWIFT_NODE_HOST") ?? "127.0.0.1"
-    static let p2pPort: UInt16 = env("BTC_SWIFT_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
-    static let rpcPort = env("BTC_SWIFT_RPC_PORT").flatMap { Int($0) } ?? 38_400
-    static let datadir = env("BTC_SWIFT_DATADIR") ?? "\(hostHome)/.bitcoin-mysignet"
+    static let nodeHost = env("WINNOW_NODE_HOST") ?? "127.0.0.1"
+    static let p2pPort: UInt16 = env("WINNOW_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
+    static let rpcPort = env("WINNOW_RPC_PORT").flatMap { Int($0) } ?? 38_400
+    static let datadir = env("WINNOW_DATADIR") ?? "\(hostHome)/.bitcoin-mysignet"
 
     struct CLIError: Error, CustomStringConvertible, Equatable {
         let arguments: [String]

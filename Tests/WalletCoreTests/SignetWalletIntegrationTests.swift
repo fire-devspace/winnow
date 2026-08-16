@@ -6,11 +6,11 @@ import Testing
 
 /// Wallet integration against the local signet node (127.0.0.1:38333).
 ///
-/// OPT-IN ONLY: runs only when BTC_SWIFT_SIGNET=1 is set in the environment.
+/// OPT-IN ONLY: runs only when WINNOW_SIGNET=1 is set in the environment.
 /// The node must run with -blockfilterindex=1 -peerblockfilters=1; without
 /// them it will not signal NODE_COMPACT_FILTERS and every test here skips
 /// cleanly instead of failing.
-private let signetEnabled = ProcessInfo.processInfo.environment["BTC_SWIFT_SIGNET"] == "1"
+private let signetEnabled = ProcessInfo.processInfo.environment["WINNOW_SIGNET"] == "1"
 
 @Suite("Signet wallet integration", .enabled(if: signetEnabled))
 struct SignetWalletIntegrationTests {
@@ -31,7 +31,7 @@ struct SignetWalletIntegrationTests {
     func scanFromTip() async throws {
         guard let probe = await connectToNode() else { return }
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("btc-swift-wallet-int-\(UUID().uuidString)")
+            .appendingPathComponent("winnow-wallet-int-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let chain = try HeaderChain(params: .signet,
                                     storageURL: dir.appendingPathComponent("headers.bin"))

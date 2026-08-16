@@ -86,7 +86,7 @@ struct LoopbackTests {
                     default: break
                     }
                 }
-                client.start(queue: DispatchQueue(label: "org.btc-swift.tests.rst-client"))
+                client.start(queue: DispatchQueue(label: "org.winnow.tests.rst-client"))
             }
             // Dropping the connection without reading the node's version
             // resets the socket, so the node-side connection fails with

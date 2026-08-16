@@ -1,4 +1,4 @@
-/// BitcoinP2P — pure-P2P networking for btc-swift (Phase 3).
+/// BitcoinP2P — pure-P2P networking for Winnow (Phase 3).
 ///
 /// - ``Protocol``: wire format (framing, varint, network addresses, inv,
 ///   tx/block, all message payloads incl. BIP157/158) and network params.

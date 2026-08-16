@@ -34,7 +34,7 @@ public enum PeerEvent: Sendable {
 /// scope for this phase).
 ///
 /// Lifecycle: `connect()` performs the version/verack handshake (protocol
-/// 70016, services 0, UA "/btc-swift:0.1/") and rejects peers that do not
+/// 70016, services 0, UA "/winnow:0.1/") and rejects peers that do not
 /// signal NODE_COMPACT_FILTERS. The BIP37 relay flag defaults to false (no
 /// unsolicited tx relay); a client that wants full relay for a bounded
 /// mempool window (docs/read-side.md §2.8) passes `relayPreference: true` at
@@ -42,7 +42,7 @@ public enum PeerEvent: Sendable {
 /// else goes to a waiting request or to the multicast `events()` stream.
 public actor PeerConnection {
     public static let protocolVersion: Int32 = 70_016
-    public static let userAgent = "/btc-swift:0.1/"
+    public static let userAgent = "/winnow:0.1/"
     /// BIP157/158 service bit 6.
     public static let nodeCompactFilters: UInt64 = 1 << 6
 
@@ -115,7 +115,7 @@ public actor PeerConnection {
         connection.stateUpdateHandler = { state in
             Task { await self.handleStateUpdate(state) }
         }
-        connection.start(queue: DispatchQueue(label: "org.btc-swift.peer.\(endpoint.description)"))
+        connection.start(queue: DispatchQueue(label: "org.winnow.peer.\(endpoint.description)"))
         do {
             try await waitForReady(timeout: timeout)
         } catch {

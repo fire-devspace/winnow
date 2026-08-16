@@ -1,6 +1,6 @@
 # Design papers
 
-btc-swift is a private Bitcoin wallet **for a phone**. The papers are separate
+Winnow is a private Bitcoin wallet **for a phone**. The papers are separate
 on purpose: each one owns a constraint the device cannot drop.
 
 | Paper | Question |

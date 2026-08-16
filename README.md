@@ -1,4 +1,4 @@
-# btc-swift
+# Winnow
 
 A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one dependency.
 
@@ -13,13 +13,13 @@ A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one depend
 
 ## Layout
 
-Architecture invariant: **all logic lives in the SPM package, where it is tested; the app target is a thin shell.** No wallet, protocol, or crypto logic may move into `BTCSwiftApp` — if the UI needs something, expose it from a library.
+Architecture invariant: **all logic lives in the SPM package, where it is tested; the app target is a thin shell.** No wallet, protocol, or crypto logic may move into `WinnowApp` — if the UI needs something, expose it from a library.
 
 - `Sources/BitcoinCore` — crypto, keys (BIP39/32/86), Taproot (BIP341), descriptors (BIP380/387/389/390), MuSig2 (BIP327), silent payments (BIP352)
 - `Sources/BitcoinP2P` — wire protocol, peers, header chain, BIP157 filter sync, tx broadcast
 - `Sources/BlockchainBackend` — opt-in esplora client (never contacted unless enabled)
 - `Sources/WalletCore` — wallet/vault actors, sighash + signing, PSBTv2, coin selection, fee policy, import bundles
-- `Sources/BTCSwiftApp` — the iOS app (SwiftUI, iOS 17+)
+- `Sources/WinnowApp` — the iOS app (SwiftUI, iOS 17+)
 - `docs/` — [design papers](docs/README.md) (phone, read, write, vaults, import) + webpage
 - `Scripts/` — icon generation, App Store Connect API tooling, TestFlight pipeline
 
@@ -28,7 +28,7 @@ Architecture invariant: **all logic lives in the SPM package, where it is tested
 ```sh
 swift build
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test   # 203 tests, official BIP vectors
-/opt/homebrew/bin/xcodegen && open BTCSwiftApp.xcodeproj              # iOS app
+/opt/homebrew/bin/xcodegen && open WinnowApp.xcodeproj                # iOS app
 ```
 
 Default network for development is signet. Point the app at your own

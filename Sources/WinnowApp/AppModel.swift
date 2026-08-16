@@ -120,7 +120,7 @@ final class AppModel {
     let keyStore: any KeyStore
     let vaultStore = VaultStore()
 
-    /// Non-nil only when launched with BTCSWIFT_E2E=1 (XCUITest runs).
+    /// Non-nil only when launched with WINNOW_E2E=1 (XCUITest runs).
     let e2e: E2EMode?
 
     // Settings (UserDefaults-persisted; see the mutating methods below).

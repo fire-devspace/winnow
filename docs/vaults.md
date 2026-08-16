@@ -1,6 +1,6 @@
 # Vaults: Shared Custody That Still Fits on a Phone
 
-*Design paper for btc-swift. A vault is another descriptor on the same [read](read-side.md) / [write](write-side.md) path — not a second wallet architecture. Framing: [a phone wallet](mobile.md).*
+*Design paper for Winnow. A vault is another descriptor on the same [read](read-side.md) / [write](write-side.md) path — not a second wallet architecture. Framing: [a phone wallet](mobile.md).*
 
 ---
 

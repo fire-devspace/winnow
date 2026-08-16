@@ -4,9 +4,9 @@
 # Needs env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY (PEM contents).
 set -euo pipefail
 
-KEYCHAIN="btc-swift-ci.keychain-db"
+KEYCHAIN="winnow-ci.keychain-db"
 KEYCHAIN_PASSWORD="ci-$(date +%s)"
-WORK="${RUNNER_TEMP:-/tmp}/btc-swift-signing"
+WORK="${RUNNER_TEMP:-/tmp}/winnow-signing"
 mkdir -p "$WORK"
 
 echo "$ASC_PRIVATE_KEY" > "$WORK/AuthKey.p8"
@@ -19,7 +19,7 @@ security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user
 
 # CSR -> ASC API -> certificate
 openssl req -new -newkey rsa:2048 -nodes -keyout "$WORK/dist.key" \
-  -out "$WORK/dist.csr" -subj "/CN=btc-swift-ci" 2>/dev/null
+  -out "$WORK/dist.csr" -subj "/CN=winnow-ci" 2>/dev/null
 JWT=$(swift "$(dirname "$0")/asc-jwt.swift" "$WORK/AuthKey.p8" "$ASC_KEY_ID" "$ASC_ISSUER_ID")
 echo "JWT minted (length ${#JWT})"
 export WORK
@@ -52,7 +52,7 @@ with open(os.path.join(os.environ["WORK"], "dist.cer"), "w") as f:
 PYEOF
 openssl x509 -inform PEM -in "$WORK/dist.cer" -outform PEM -out "$WORK/dist.pem"
 openssl pkcs12 -export -legacy -inkey "$WORK/dist.key" -in "$WORK/dist.pem" \
-  -out "$WORK/dist.p12" -passout pass:"$KEYCHAIN_PASSWORD" -name "btc-swift-ci"
+  -out "$WORK/dist.p12" -passout pass:"$KEYCHAIN_PASSWORD" -name "winnow-ci"
 security import "$WORK/dist.p12" -k "$KEYCHAIN" -P "$KEYCHAIN_PASSWORD" \
   -T /usr/bin/codesign -T /usr/bin/xcodebuild
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null

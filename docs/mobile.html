@@ -37,7 +37,7 @@
 <nav class="home"><a href="/">← Winnow</a></nav>
 <h1 id="a-private-bitcoin-wallet-on-a-phone">A Private Bitcoin Wallet on
 a Phone</h1>
-<p><em>Framing paper for btc-swift. The other papers — <a
+<p><em>Framing paper for Winnow. The other papers — <a
 href="read-side.md">read</a>, <a href="write-side.md">write</a>, <a
 href="vaults.md">vaults</a>, <a href="import.md">import</a> — each own
 one job. This one owns the device.</em></p>
@@ -69,8 +69,12 @@ compact filters; that is <a href="read-side.md">the read side</a>.</p>
 over <code>Network.framework</code>. No inbound ports, no hidden
 services, no background socket the OS will kill. Peers are a small
 outbound pool (default 3): manual endpoints first, then a persisted
-good-peers list, then DNS seeds. No addr gossip, no scoring buckets — a
-misbehaving peer is dropped and replaced.</li>
+good-peers list, then a few hardcoded fallback peers (IP literals
+verified filter-serving; see <code>NetworkParams</code>) racing the
+DNS-seed results — dialed a batch at a time with a short per-attempt
+timeout, so a fresh launch fills the pool in seconds and reports
+exhaustion instead of spinning forever. No addr gossip, no scoring
+buckets — a misbehaving peer is dropped and replaced.</li>
 <li><strong>Foreground only.</strong> There is no
 <code>UIBackgroundModes</code> entry. Sync-while-active is the design,
 not a v1 omission. A payment you are not looking at waits for the next
@@ -227,7 +231,7 @@ client downloads.</li>
 <p>What the user is <em>not</em> asked to trust: an indexer operator’s
 retention policy, a push-notification vendor, iCloud Keychain, or the
 app target. Wallet, protocol, and crypto logic are forbidden from moving
-into <code>BTCSwiftApp</code>.</p>
+into <code>WinnowApp</code>.</p>
 <hr />
 <h2 id="deliberate-absences">6. Deliberate absences</h2>
 <p>These are product decisions, not missing tickets:</p>

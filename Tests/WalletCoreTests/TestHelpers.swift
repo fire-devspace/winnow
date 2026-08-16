@@ -49,7 +49,7 @@ func fakeMatch(height: UInt32, transactions: [Transaction]) -> BlockMatch {
 /// Temporary file URL that is removed on test teardown best-effort.
 func tempFileURL(_ name: String) -> URL {
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("btc-swift-walletcore-tests-\(UUID().uuidString)")
+        .appendingPathComponent("winnow-walletcore-tests-\(UUID().uuidString)")
         .appendingPathComponent(name)
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                              withIntermediateDirectories: true)

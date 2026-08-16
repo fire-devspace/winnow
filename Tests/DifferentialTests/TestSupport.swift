@@ -3,9 +3,9 @@ import BitcoinP2P
 import Foundation
 
 /// Master switch: the differential suite talks to the dev custom-signet node
-/// ONLY when BTC_SWIFT_DIFF=1 is set. Default `swift test` runs skip cleanly
+/// ONLY when WINNOW_DIFF=1 is set. Default `swift test` runs skip cleanly
 /// and never touch the network or the node.
-let diffEnabled = ProcessInfo.processInfo.environment["BTC_SWIFT_DIFF"] == "1"
+let diffEnabled = ProcessInfo.processInfo.environment["WINNOW_DIFF"] == "1"
 
 /// The well-known BIP39 all-"abandon" mnemonic — the harness never holds
 /// real funds; this is a disposable signet.
@@ -36,7 +36,7 @@ final class MatchCollector: @unchecked Sendable {
 /// Temporary file URL under a per-run directory.
 func tempFileURL(_ name: String) -> URL {
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("btc-swift-diff-tests-\(UUID().uuidString)")
+        .appendingPathComponent("winnow-diff-tests-\(UUID().uuidString)")
         .appendingPathComponent(name)
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                              withIntermediateDirectories: true)

@@ -1,6 +1,6 @@
 # The Read Side: How a Private Mobile Bitcoin Wallet Learns What's Its Own
 
-*One paper in the btc-swift set. The phone itself is [A phone wallet](mobile.md); paying is [the write side](write-side.md); shared custody is [vaults](vaults.md); moving a wallet in is [import](import.md). This paper owns one question: how the phone learns which coins are its own.*
+*One paper in the Winnow set. The phone itself is [A phone wallet](mobile.md); paying is [the write side](write-side.md); shared custody is [vaults](vaults.md); moving a wallet in is [import](import.md). This paper owns one question: how the phone learns which coins are its own.*
 *All numbers marked "approx." are order-of-magnitude estimates for orientation, not measurements; they are labeled as such wherever they appear. Exact protocol constants are exact. Signet UI timings are measured and live in `screenshots/timings.json`.*
 
 ---
@@ -23,7 +23,7 @@ Every realistic answer falls into one of two families:
 
 This paper walks through every realistic mechanism in both families, with honest cost/privacy/trust accounting, then walks the actual use cases of this product and concludes which mechanism serves each one — and why the answer, for this product, is client-side scanning by default, with a server only ever as an explicit, warned, user-initiated opt-in.
 
-**Scope note:** btc-swift is a *fresh-wallet* product. Wallets are created new in the app; a new wallet has no history, so scanning runs *forward* from the moment of creation. Existing wallets may be imported **only with their history included** — the user supplies an export bundle (descriptor/keys + known transactions and UTXOs + a last-known height) from their previous wallet software, and the app verifies and updates that history by scanning filters forward from the bundle's height. There is no historical back-scan machinery at all: catch-up cost is proportional to how stale the bundle is, and a bundle exported at the tip costs nothing. This constraint — chosen deliberately — is what makes the pure-P2P answer not merely acceptable but cheap. The bundle format, the verification algorithm, and what a lying file can still do are specified in [import](import.md), not here.
+**Scope note:** Winnow is a *fresh-wallet* product. Wallets are created new in the app; a new wallet has no history, so scanning runs *forward* from the moment of creation. Existing wallets may be imported **only with their history included** — the user supplies an export bundle (descriptor/keys + known transactions and UTXOs + a last-known height) from their previous wallet software, and the app verifies and updates that history by scanning filters forward from the bundle's height. There is no historical back-scan machinery at all: catch-up cost is proportional to how stale the bundle is, and a bundle exported at the tip costs nothing. This constraint — chosen deliberately — is what makes the pure-P2P answer not merely acceptable but cheap. The bundle format, the verification algorithm, and what a lying file can still do are specified in [import](import.md), not here.
 
 ---
 

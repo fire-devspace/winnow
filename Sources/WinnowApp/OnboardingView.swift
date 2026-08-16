@@ -49,7 +49,7 @@ struct OnboardingView: View {
                     }
                 }
             }
-            .navigationTitle("btc-swift")
+            .navigationTitle("Winnow")
             .sheet(isPresented: $showImport) {
                 ImportBundleView()
             }

@@ -85,7 +85,7 @@ actor LoopbackNode {
                     break
                 }
             }
-            listener.start(queue: DispatchQueue(label: "org.btc-swift.tests.loopback"))
+            listener.start(queue: DispatchQueue(label: "org.winnow.tests.loopback"))
         }
         computeFilters()
     }
@@ -166,7 +166,7 @@ actor LoopbackNode {
                     default: break
                     }
                 }
-                connection.start(queue: DispatchQueue(label: "org.btc-swift.tests.loopback.conn"))
+                connection.start(queue: DispatchQueue(label: "org.winnow.tests.loopback.conn"))
             }
             // A real node sends its version immediately on connect.
             try await send(.version(nodeVersion()))

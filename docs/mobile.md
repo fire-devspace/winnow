@@ -1,6 +1,6 @@
 # A Private Bitcoin Wallet on a Phone
 
-*Framing paper for btc-swift. The other papers — [read](read-side.md), [write](write-side.md), [vaults](vaults.md), [import](import.md) — each own one job. This one owns the device.*
+*Framing paper for Winnow. The other papers — [read](read-side.md), [write](write-side.md), [vaults](vaults.md), [import](import.md) — each own one job. This one owns the device.*
 
 ---
 
@@ -79,7 +79,7 @@ What the user is asked to trust, stated as mechanisms rather than intentions:
 - **The peers you can reach.** Compact filters are not consensus-committed. Multi-peer `cfcheckpt` / `cfheaders` comparison detects disagreement; it cannot prove which peer lied, and a fully eclipsed phone can be shown a consistent lie. Manual peers exist so a user who *has* a node they trust can skip DNS seeds. The residual risk is [read-side](read-side.md) §2.7.1 and §2.9.
 - **No one, on the read path, by default.** No server is handed an address, an xpub, or a scripthash. A network observer sees a compact-filter client syncing from a height — the same bytes every such client downloads.
 
-What the user is *not* asked to trust: an indexer operator's retention policy, a push-notification vendor, iCloud Keychain, or the app target. Wallet, protocol, and crypto logic are forbidden from moving into `BTCSwiftApp`.
+What the user is *not* asked to trust: an indexer operator's retention policy, a push-notification vendor, iCloud Keychain, or the app target. Wallet, protocol, and crypto logic are forbidden from moving into `WinnowApp`.
 
 ---
 

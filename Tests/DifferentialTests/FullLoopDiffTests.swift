@@ -5,7 +5,7 @@ import Testing
 import WalletCore
 
 /// The whole pipeline against the dev node over real P2P with custom-signet
-/// params: mine a funding block to a btc-swift address → bury it under 100
+/// params: mine a funding block to a Winnow address → bury it under 100
 /// blocks (coinbase maturity) → discover it via FilterSync (BIP157) →
 /// build+sign a spend with WalletCore → testmempoolaccept → relay via
 /// TxBroadcaster → mine a confirmation → see it confirmed through our own

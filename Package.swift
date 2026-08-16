@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "btc-swift",
+    name: "winnow",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "BitcoinCore", targets: ["BitcoinCore"]),

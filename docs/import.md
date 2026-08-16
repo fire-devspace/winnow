@@ -1,6 +1,6 @@
 # Import: The Bundle Is the History
 
-*Design paper for btc-swift. The no-back-scan rule is stated in [the read side](read-side.md) §2.7.5 and [the phone paper](mobile.md) §4.1. This is the format, the verification algorithm, and what a lying bundle can still do.*
+*Design paper for Winnow. The no-back-scan rule is stated in [the read side](read-side.md) §2.7.5 and [the phone paper](mobile.md) §4.1. This is the format, the verification algorithm, and what a lying bundle can still do.*
 
 ---
 
