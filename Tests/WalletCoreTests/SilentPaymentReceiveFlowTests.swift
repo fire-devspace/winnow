@@ -30,6 +30,35 @@ struct SilentPaymentReceiveFlowTests {
                 try SilentPaymentReceiving.spendKey(from: master, coinType: 1))
     }
 
+    /// A receiver wallet holding one fabricated silent-payment UTXO: the tweak
+    /// is chosen first, so the output key IS (b_spend + tweak)·G by
+    /// construction and the test knows the only secret that can sign it.
+    private func walletHoldingSilentPaymentUTXO(
+        amount: Int64, storagePrefix: String
+    ) async throws -> (wallet: Wallet, script: Data, outputSecret: Data, cleanup: URL) {
+        let keys = try receiverKeys()
+        let tweak = try SilentPaymentReceiving.labelTweak(scanPrivateKey: keys.scan.privateKey!,
+                                                          label: 7) // any valid scalar
+        let outputSecret = try SilentPaymentReceiving.spendSecret(
+            spendPrivateKey: keys.spend.privateKey!, tweak: tweak)
+        let outputKey = Data(try P256K.Schnorr.PrivateKey(dataRepresentation: outputSecret).xonly.bytes)
+        let script = Data([0x51, 0x20]) + outputKey
+
+        let store = InMemoryKeyStore()
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(storagePrefix)-\(UUID().uuidString).json")
+        _ = try await Wallet.create(network: .signet, keyStore: store, storageURL: storageURL,
+                                    entropy: testEntropy, creationHeight: 100)
+        var state = try JSONDecoder().decode(WalletState.self, from: Data(contentsOf: storageURL))
+        state.utxos.append(WalletUTXO(txid: Data(repeating: 0xD2, count: 32), vout: 0,
+                                      amount: amount, scriptPubKey: script,
+                                      chain: .receive, index: 0, height: 101,
+                                      silentPaymentTweak: tweak))
+        try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+        return (try Wallet.open(storageURL: storageURL, keyStore: store),
+                script, outputSecret, storageURL)
+    }
+
     @Test("the wallet derives its own static silent payment address")
     func walletAddress() async throws {
         let wallet = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
@@ -186,5 +215,47 @@ struct SilentPaymentReceiveFlowTests {
         #expect(built.transaction.outputs.contains {
             $0.value == 100_000 && $0.scriptPubKey == expected[0]
         })
+    }
+
+    /// #20's fee bump and the first send share one `sign()` helper, so a
+    /// replacement re-signs the original inputs — including silent-payment
+    /// ones, whose output key carries no TapTweak. Keying that input with
+    /// BIP86 coordinates yields a well-formed, verifying-against-nothing
+    /// signature: the tx builds, the suite passes, and the replacement is
+    /// simply unspendable. This pins the key the replacement actually uses.
+    @Test("a fee bump re-signs a silent-payment input with b_spend + tweak")
+    func feeBumpKeysSilentPaymentInput() async throws {
+        let (wallet, script, outputSecret, storageURL) =
+            try await walletHoldingSilentPaymentUTXO(amount: 150_000, storagePrefix: "sp-bump")
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 60_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        try await wallet.commit(original)
+        let originalTxid = original.built.transaction.txid
+
+        let currentRate = try await wallet.pendingFeeRate(txid: originalTxid)
+        let replacement = try await wallet.buildFeeBump(txid: originalTxid,
+                                                        feeRateSatPerVByte: currentRate + 1)
+        let replacementTx = replacement.built.transaction
+        #expect(replacementTx.inputs.count == 1)
+        #expect(replacement.built.fee > original.built.fee)
+
+        // The replacement's witness must verify against the silent-payment
+        // output key — i.e. it was signed with b_spend + tweak.
+        let sighash = try SighashBIP341.sighash(
+            tx: replacementTx, inputIndex: 0,
+            spentOutputs: [SighashBIP341.SpentOutput(amount: 150_000, scriptPubKey: script)],
+            hashType: .default)
+        var message = [UInt8](sighash)
+        let signature = try P256K.Schnorr.SchnorrSignature(
+            dataRepresentation: replacementTx.inputs[0].witness[0])
+        let outputKey = Data(try P256K.Schnorr.PrivateKey(dataRepresentation: outputSecret).xonly.bytes)
+        #expect(P256K.Schnorr.XonlyKey(dataRepresentation: outputKey).isValid(signature, for: &message))
+
+        // And the PSBT advertises no BIP86 origin for that input: a signer
+        // handed this PSBT must not be told to derive m/86'/…/0/0.
+        #expect(replacement.built.psbt.inputs[0].tapBIP32Derivation.isEmpty)
     }
 }
