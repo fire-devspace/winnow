@@ -292,6 +292,40 @@ struct WalletTests {
         }
     }
 
+    @Test("a parent whose pending change was spent by a child refuses a bump")
+    func feeBumpRefusesSpentChange() async throws {
+        let wallet = try await makeWallet()
+        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let destination = Data([0x51, 0x20] + repeatElement(0x55, count: 32))
+        let parent = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        try await wallet.commit(parent)
+
+        // The only spendable UTXO is now the parent's height-0 change, so the
+        // child spend is forced onto it.
+        let child = try await wallet.buildSend(
+            payments: [Payment(amount: 20_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        #expect(child.built.transaction.inputs.contains {
+            $0.previousOutput.txid == parent.built.transaction.txid
+        })
+        try await wallet.commit(child)
+
+        // The parent's change has left the UTXO set; a same-input replacement
+        // of the parent would orphan the committed child.
+        #expect(!(await wallet.feeBumpableTxids).contains(parent.built.transaction.txid))
+        do {
+            _ = try await wallet.buildFeeBump(txid: parent.built.transaction.txid,
+                                              feeRateSatPerVByte: 5)
+            Issue.record("bumping the parent would orphan the committed child spend")
+        } catch let error as FeeBumpError {
+            #expect(error == .changeAlreadySpent)
+        }
+    }
+
     @Test("fee bump removes change when the higher-fee remainder becomes dust")
     func feeBumpDropsDustChange() async throws {
         let wallet = try await makeWallet()

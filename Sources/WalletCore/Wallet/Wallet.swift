@@ -41,6 +41,7 @@ public enum WalletError: Error, Equatable, LocalizedError {
 public enum FeeBumpError: Error, Equatable, LocalizedError {
     case transactionNotPending
     case noChangeOutput
+    case changeAlreadySpent
     case invalidFeeRate(Double)
     case feeRateNotHigher(current: Double, requested: Double)
     case insufficientChange(requiredFee: Int64, maximumFee: Int64)
@@ -51,10 +52,12 @@ public enum FeeBumpError: Error, Equatable, LocalizedError {
             "This transaction is no longer pending or was created before fee-bump metadata was available."
         case .noChangeOutput:
             "This transaction has no change output to reduce for a same-input fee bump."
+        case .changeAlreadySpent:
+            "This transaction's change has already been spent by another pending transaction."
         case let .invalidFeeRate(rate):
             "Invalid replacement fee rate: \(rate) sat/vB."
         case let .feeRateNotHigher(current, requested):
-            "Choose a fee rate above \(current.formatted(.number.precision(.fractionLength(2)))) sat/vB (requested \(requested.formatted(.number.precision(.fractionLength(2))))) sat/vB."
+            "Choose a fee rate above \(current.formatted(.number.precision(.fractionLength(2)))) sat/vB (requested \(requested.formatted(.number.precision(.fractionLength(2)))) sat/vB)."
         case let .insufficientChange(requiredFee, maximumFee):
             "The available change can pay at most \(maximumFee) sats in fees; this bump needs \(requiredFee) sats."
         }
@@ -487,9 +490,16 @@ public actor Wallet {
     public var utxos: [WalletUTXO] { state.utxos }
     public var history: [HistoryEntry] { state.history }
     public var observedFeeRates: [Double] { state.observedFeeRates }
-    /// Locally-created pending sends with enough persisted metadata to bump.
+    /// Locally-created pending sends with persisted metadata and unspent
+    /// change available for a same-input fee bump.
     public var feeBumpableTxids: [Data] {
-        state.pendingSends.compactMap { $0.changeIndex == nil ? nil : $0.txid }
+        state.pendingSends.compactMap { pending in
+            guard pending.changeIndex != nil, let txid = pending.txid,
+                  let vout = pending.changeOutputIndex,
+                  state.utxos.contains(where: { $0.txid == txid && $0.vout == vout })
+            else { return nil }
+            return txid
+        }
     }
 
     /// scriptPubKey at (chain, index), derived from the multipath descriptor.
@@ -934,6 +944,9 @@ public actor Wallet {
             }
             throw FeeBumpError.transactionNotPending
         }
+        guard state.utxos.contains(where: {
+            $0.txid == txid && $0.vout == originalChangeOutputIndex
+        }) else { throw FeeBumpError.changeAlreadySpent }
         let oldVSize = TransactionBuilder.vsize(of: original)
         guard oldVSize > 0 else { throw FeeBumpError.transactionNotPending }
         let currentRate = Double(pending.fee) / Double(oldVSize)
