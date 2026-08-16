@@ -19,7 +19,8 @@ public enum SilentPaymentAddressError: Error, Equatable {
 /// or "tsp" (all test networks), version 0, data part = ser_P(B_scan) ‖
 /// ser_P(B_m) — the receiver's 33-byte compressed scan key and spend key
 /// (label-tweaked when the receiver handed out a labeled address; senders
-/// treat it as opaque). This wallet only *sends to* silent payment addresses.
+/// treat it as opaque). Sending.swift consumes these; Receiving.swift
+/// derives the wallet's own.
 public struct SilentPaymentAddress: Equatable, Sendable {
     /// The only version BIP352 defines.
     public static let version = 0
