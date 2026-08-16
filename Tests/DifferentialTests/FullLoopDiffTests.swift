@@ -21,17 +21,6 @@ import WalletCore
 struct FullLoopDiffTests {
     private let endpoint = PeerEndpoint(host: BitcoinCLI.nodeHost, port: BitcoinCLI.p2pPort)
 
-    /// Mines one block paying `script`, retrying while a racing block wins
-    /// the tip instead of ours.
-    private func mineOntoTip(payingTo script: Data) async throws -> String {
-        while true {
-            let hash = try await SignetMiner.mineBlock(payingTo: script)
-            if try BitcoinCLI.bestBlockHash() == hash { return hash }
-            // Lost a race against the background miner: our block sits on a
-            // shorter fork; mine again on the winner.
-        }
-    }
-
     @Test("mine → mature → filter-discover → sign → relay → confirm")
     func fullLoop() async throws {
         func trace(_ step: String) { FileHandle.standardError.write(Data("fullloop: \(step)\n".utf8)) }
@@ -50,12 +39,15 @@ struct FullLoopDiffTests {
         //    maturity is 100): our coinbase becomes spendable at tip+101.
         let burnScript = try BIP86.scriptPubKey(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/1")))
-        let fundingHash = try await mineOntoTip(payingTo: fundingScript)
+        let fundingHash = try await SignetMiner.mineOntoTip(payingTo: fundingScript)
         trace("funding block \(fundingHash.prefix(16))…")
         for _ in 0 ..< 100 {
-            _ = try await mineOntoTip(payingTo: burnScript)
+            _ = try await SignetMiner.mineOntoTip(payingTo: burnScript)
         }
         let fundingBlock = try BitcoinCLI.runObject(["getblock", fundingHash])
+        // Not startTip + 1: a lost race is re-mined, which lands us one or
+        // more blocks higher than the tip we measured before mining.
+        let fundingHeight = try UInt32(BitcoinCLI.int(fundingBlock, "height"))
         #expect(try BitcoinCLI.int(fundingBlock, "confirmations") >= 100, "funding matured")
         trace("maturity done, tip \(try BitcoinCLI.blockCount())")
 
@@ -80,7 +72,7 @@ struct FullLoopDiffTests {
         trace("first scan done")
         let fundingUTXO = try await #require(wallet.utxos.first, "filter match found no funding UTXO")
         #expect(fundingUTXO.amount == 5_000_000_000, "signet subsidy") // 50 BTC
-        #expect(fundingUTXO.height == startTip + 1, "funded in the first mined block")
+        #expect(fundingUTXO.height == fundingHeight, "funded in the block we mined")
         let fundingTx = try BitcoinCLI.runObject(["getrawtransaction",
                                                   fundingUTXO.txid.displayHex, "true"])
         #expect(try BitcoinCLI.string(fundingTx, "blockhash") == fundingHash,

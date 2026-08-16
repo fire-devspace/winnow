@@ -193,16 +193,19 @@ final class WinnowAppUITests: XCTestCase {
         // Fund it from the host: 101 blocks paying the receive address, so the
         // first coinbase is spendable by the time the send test runs.
         let script = try AddressDecoder.scriptPubKey(for: address, network: .signet)
-        let startHeight = try BitcoinCLI.blockCount()
         let mineStart = Date()
-        let firstHash = try await SignetMiner.mineBlock(payingTo: script)
+        let firstHash = try await SignetMiner.mineOntoTip(payingTo: script)
         let fundingTxid = try BitcoinCLI.coinbaseTxid(blockHash: firstHash)
         let output = try BitcoinCLI.outputZero(txid: fundingTxid)
+        // Read the height back rather than assuming tip+1: a block race lost
+        // to the node's background miner is re-mined one or more blocks higher,
+        // and test06 rebuilds its import bundle from this height.
         Self.saveFunding(FundingInfo(txid: fundingTxid, amount: output.amount,
-                                     scriptPubKey: output.scriptPubKey, height: startHeight + 1,
+                                     scriptPubKey: output.scriptPubKey,
+                                     height: try BitcoinCLI.blockHeight(of: firstHash),
                                      index: fundingIndex))
         for _ in 0 ..< 100 {
-            try await SignetMiner.mineBlock(payingTo: script)
+            try await SignetMiner.mineOntoTip(payingTo: script)
         }
         Timings.record("funding", step: "mine-101-blocks", from: mineStart)
 
@@ -276,7 +279,7 @@ final class WinnowAppUITests: XCTestCase {
         Timings.record("send", step: "broadcast→echo/relay", from: relayStart)
         let payout = try AddressDecoder.scriptPubKey(for: Self.fixtureAddress(0xD4), network: .signet)
         let confirmStart = Date()
-        try await SignetMiner.mineBlock(payingTo: payout)
+        try await SignetMiner.mineOntoTip(payingTo: payout)
 
         // The "Seen in block N" label is a lazily-materialized row below the
         // fold — nudge syncs from the Wallet tab, then scroll to it.

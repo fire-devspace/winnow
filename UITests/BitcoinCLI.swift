@@ -211,6 +211,11 @@ enum BitcoinCLI {
         return txid
     }
 
+    /// The height a block was accepted at.
+    static func blockHeight(of blockHash: String) throws -> Int {
+        try int(runObject(["getblock", blockHash]), "height")
+    }
+
     /// Current mempool txids (display hex).
     static func mempoolTxids() throws -> [String] {
         (try runJSON(["getrawmempool"]) as? [String]) ?? []
