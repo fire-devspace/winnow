@@ -393,13 +393,15 @@ final class AppModel {
         let wallet = try Wallet.create(network: network, keyStore: keyStore,
                                        storageURL: walletURL, entropy: e2e?.entropy,
                                        creationHeight: tip)
+        // Flag BEFORE adopt(): the wallet is already in the Keychain, so a
+        // throw below must not leave it unflagged — the next boot would land
+        // on .ready with the backup silently skipped, the exact bug class #5
+        // kills. A stuck-true flag merely re-presents the sheet: fail-safe.
+        UserDefaults.standard.set(true, forKey: DefaultsKey.backupPending(await wallet.id))
         try await adopt(wallet: wallet)
         guard let walletID, case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw AppError.mnemonicUnavailable
         }
-        // From here until the backup sheet's confirmed Done, a relaunch must
-        // land back on the backup — not on the wallet home (#5).
-        UserDefaults.standard.set(true, forKey: DefaultsKey.backupPending(walletID))
         return words
     }
 

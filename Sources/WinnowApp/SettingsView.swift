@@ -1,4 +1,5 @@
 import BitcoinP2P
+import LocalAuthentication
 import SwiftUI
 import WalletCore
 
@@ -186,6 +187,8 @@ struct SettingsView: View {
         Task {
             do {
                 revealedMnemonic = try await model.revealMnemonic()
+            } catch let error as LAError where error.code == .userCancel {
+                // Cancelling the auth prompt is a decision, not a failure.
             } catch {
                 revealError = error.localizedDescription
             }
