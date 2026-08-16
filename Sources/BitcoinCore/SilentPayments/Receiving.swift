@@ -17,6 +17,8 @@ public enum SilentPaymentReceivingError: Error, Equatable {
     case invalidLabel
     /// The tweak data is not a valid compressed secp256k1 public key.
     case invalidTweakData
+    /// b_spend + tweak is not a valid signing key (zero sum or bad operand).
+    case invalidSpendSecret
 }
 
 /// BIP352 silent payments, receive side: scan/spend key derivation, address
@@ -134,6 +136,21 @@ public enum SilentPaymentReceiving {
             throw SilentPaymentReceivingError.invalidTweakData
         }
         return shared.dataRepresentation
+    }
+
+    // MARK: - Spending (BIP352 §Spending)
+
+    /// d = (b_spend + tweak) mod n — the key-path secret of a matched output.
+    /// BIP352 outputs carry no BIP341 TapTweak: d signs directly (BIP340
+    /// negates internally when d·G has odd Y).
+    public static func spendSecret(spendPrivateKey: Data, tweak: Data) throws -> Data {
+        guard SilentPaymentSending.isValidScalar(spendPrivateKey),
+              SilentPaymentSending.isValidScalar(tweak),
+              let secret = try? SilentPaymentSending.scalarAdd(spendPrivateKey, tweak),
+              SilentPaymentSending.isValidScalar(secret) else {
+            throw SilentPaymentReceivingError.invalidSpendSecret
+        }
+        return secret
     }
 
     // MARK: - Scanning (BIP352 §Scanning)

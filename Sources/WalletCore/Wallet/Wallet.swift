@@ -53,9 +53,16 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
     public var index: UInt32
     /// Block height that confirmed it.
     public var height: UInt32
+    /// BIP352: the scalar added to the wallet's silent-payment spend key to
+    /// sign for this output (t_k, with any label folded in). It exists only in
+    /// scan results, so losing it means a rescan before the output can be
+    /// spent. nil for descriptor outputs; when set, `chain`/`index` carry no
+    /// meaning.
+    public var silentPaymentTweak: Data?
 
     public init(txid: Data, vout: UInt32, amount: Int64, scriptPubKey: Data,
-                chain: AddressChain, index: UInt32, height: UInt32) {
+                chain: AddressChain, index: UInt32, height: UInt32,
+                silentPaymentTweak: Data? = nil) {
         self.txid = txid
         self.vout = vout
         self.amount = amount
@@ -63,6 +70,7 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
         self.chain = chain
         self.index = index
         self.height = height
+        self.silentPaymentTweak = silentPaymentTweak
     }
 
     public var outpoint: Transaction.Outpoint {
@@ -75,7 +83,7 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
 
     // JSON: txid display hex, scriptPubKey hex (human-inspectable state file).
     private enum CodingKeys: String, CodingKey {
-        case txid, vout, amount, scriptPubKey, chain, index, height
+        case txid, vout, amount, scriptPubKey, chain, index, height, silentPaymentTweak
     }
 
     public init(from decoder: any Decoder) throws {
@@ -88,13 +96,22 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
             throw DecodingError.dataCorruptedError(forKey: .scriptPubKey, in: container,
                                                    debugDescription: "bad scriptPubKey hex")
         }
+        var tweak: Data?
+        if let tweakHex = try container.decodeIfPresent(String.self, forKey: .silentPaymentTweak) {
+            guard let decoded = Data(hex: tweakHex) else {
+                throw DecodingError.dataCorruptedError(forKey: .silentPaymentTweak, in: container,
+                                                       debugDescription: "bad silentPaymentTweak hex")
+            }
+            tweak = decoded
+        }
         self.init(txid: Data(txid.reversed()),
                   vout: try container.decode(UInt32.self, forKey: .vout),
                   amount: try container.decode(Int64.self, forKey: .amount),
                   scriptPubKey: scriptPubKey,
                   chain: try container.decode(AddressChain.self, forKey: .chain),
                   index: try container.decode(UInt32.self, forKey: .index),
-                  height: try container.decode(UInt32.self, forKey: .height))
+                  height: try container.decode(UInt32.self, forKey: .height),
+                  silentPaymentTweak: tweak)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -106,6 +123,8 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
         try container.encode(chain, forKey: .chain)
         try container.encode(index, forKey: .index)
         try container.encode(height, forKey: .height)
+        // Absent for descriptor outputs, so pre-SP state files stay identical.
+        try container.encodeIfPresent(silentPaymentTweak?.hex, forKey: .silentPaymentTweak)
     }
 }
 
@@ -536,8 +555,7 @@ public actor Wallet {
             let inputs = try selection.selected.map { utxo in
                 try SilentPaymentSending.Input(txid: utxo.txid, vout: utxo.vout,
                                                prevoutScriptPubKey: utxo.scriptPubKey,
-                                               privateKey: tweakedPrivateKey(chain: utxo.chain,
-                                                                             index: utxo.index))
+                                               privateKey: keyPathSecret(for: utxo))
             }
             let scripts = try SilentPaymentSending.outputScripts(
                 inputs: inputs, recipients: silentPayments.map(\.address))
@@ -550,10 +568,16 @@ public actor Wallet {
                                               payments: resolvedPayments, change: change)
 
         let origin = try Self.origin(of: descriptor)
-        let inputInfo = try selection.selected.map { utxo in
-            try PSBT.InputInfo(spentOutput: utxo.spentOutput,
-                               key: taprootKey(chain: utxo.chain, index: utxo.index,
-                                               fingerprint: origin.fingerprint, originPath: origin.path))
+        let inputInfo = try selection.selected.map { utxo -> PSBT.InputInfo in
+            // Silent-payment inputs have no BIP86 derivation coordinates to
+            // advertise; their key-path secret is b_spend + tweak.
+            guard utxo.silentPaymentTweak == nil else {
+                return PSBT.InputInfo(spentOutput: utxo.spentOutput, key: nil)
+            }
+            return try PSBT.InputInfo(spentOutput: utxo.spentOutput,
+                                      key: taprootKey(chain: utxo.chain, index: utxo.index,
+                                                      fingerprint: origin.fingerprint,
+                                                      originPath: origin.path))
         }
         let outputInfo = tx.outputs.map { output -> PSBT.OutputInfo in
             guard let change, output.scriptPubKey == change.scriptPubKey,
@@ -565,8 +589,7 @@ public actor Wallet {
 
         var psbt = try PSBT(unsignedTx: tx, inputs: inputInfo, outputs: outputInfo)
         for (index, utxo) in selection.selected.enumerated() {
-            try psbt.signKeyPath(input: index,
-                                 tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index))
+            try psbt.signKeyPath(input: index, tweakedPrivateKey: keyPathSecret(for: utxo))
         }
         try psbt.finalize()
         let signed = try psbt.extractedTransaction()
@@ -636,24 +659,70 @@ public actor Wallet {
         return origin
     }
 
+    /// The master key from the KeyStore — loaded just for the duration of a
+    /// derivation or signing call, never held in wallet state.
+    private func masterKey() throws -> HDKey {
+        switch try keyStore.load(walletID: id) {
+        case let .mnemonic(words):
+            try HDKey(seed: BIP39.seed(mnemonic: words))
+        case let .masterKey(xprv):
+            try HDKey.deserialize(xprv)
+        }
+    }
+
     /// BIP86 tweaked private key for one of our addresses (key-path spend).
     /// The secret is loaded from the KeyStore just for this call.
     private func tweakedPrivateKey(chain: AddressChain, index: UInt32) throws -> Data {
-        let master: HDKey
-        switch try keyStore.load(walletID: id) {
-        case let .mnemonic(words):
-            master = try HDKey(seed: BIP39.seed(mnemonic: words))
-        case let .masterKey(xprv):
-            master = try HDKey.deserialize(xprv)
-        }
         let originPath = Self.originUnchecked(of: descriptor).path
-        var key = master
+        var key = try masterKey()
         for step in originPath { key = try key.child(at: step) }
         key = try key.child(at: UInt32(chain.rawValue)).child(at: index)
         guard let secret = key.privateKey else {
             throw WalletError.invalidDescriptor("neutered key in signing path")
         }
         return try BIP86.tweakedPrivateKey(secret)
+    }
+
+    /// The key-path secret that signs for a UTXO: the BIP86 tweaked key for
+    /// descriptor outputs, b_spend + tweak for silent-payment outputs (BIP352
+    /// outputs carry no TapTweak). Also the correct BIP352 *input* key when
+    /// the UTXO funds a silent-payment send — both cases are "the private key
+    /// of the taproot output key".
+    private func keyPathSecret(for utxo: WalletUTXO) throws -> Data {
+        guard let tweak = utxo.silentPaymentTweak else {
+            return try tweakedPrivateKey(chain: utxo.chain, index: utxo.index)
+        }
+        let spend = try SilentPaymentReceiving.spendKey(from: masterKey(),
+                                                        coinType: Self.coinType(for: network),
+                                                        account: accountIndex)
+        guard let secret = spend.privateKey else {
+            throw WalletError.invalidDescriptor("neutered key in signing path")
+        }
+        return try SilentPaymentReceiving.spendSecret(spendPrivateKey: secret, tweak: tweak)
+    }
+
+    // MARK: - Silent payments (receive)
+
+    /// The account index from the descriptor origin (m/86'/coin'/account') —
+    /// silent payment keys live at the same account under purpose 352'.
+    private var accountIndex: UInt32 {
+        let path = Self.originUnchecked(of: descriptor).path
+        guard path.count == 3 else { return 0 }
+        return path[2] - HDKey.hardenedOffset
+    }
+
+    /// The wallet's BIP352 silent payment address ("sp1…"/"tsp1…"): B_scan and
+    /// B_spend at m/352'/coin'/account'/{1',0'}/0 from the same master seed.
+    /// Unlike BIP86 addresses it is static — one address, unlinkable payments.
+    public func silentPaymentAddress() throws -> String {
+        let master = try masterKey()
+        let coinType = Self.coinType(for: network)
+        let scan = try SilentPaymentReceiving.scanKey(from: master, coinType: coinType,
+                                                      account: accountIndex)
+        let spend = try SilentPaymentReceiving.spendKey(from: master, coinType: coinType,
+                                                        account: accountIndex)
+        return try SilentPaymentAddress(scanKey: scan.publicKey, spendKey: spend.publicKey,
+                                        hrp: SilentPayment.hrp(for: network)).encoded
     }
 
     // MARK: - Export
