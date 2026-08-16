@@ -90,10 +90,10 @@ struct FullLoopDiffTests {
         let throwaway = try BIP86.address(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/0")),
             hrp: "tb")
-        let built = try await wallet.send(
+        let original = try await wallet.send(
             payments: [Payment(amount: 100_000, address: throwaway, network: .signet)],
             feeRateSatPerVByte: 1)
-        let rawHex = built.transaction.serialized(includeWitness: true).hex
+        let rawHex = original.transaction.serialized(includeWitness: true).hex
         trace("spend signed")
 
         // 5. Core's mempool policy check agrees the tx is valid.
@@ -101,16 +101,16 @@ struct FullLoopDiffTests {
         let verdict = try #require(accepted?.first)
         #expect(verdict["allowed"] as? Bool == true,
                 "testmempoolaccept rejected: \(verdict["reject-reason"] ?? "?")")
-        #expect(verdict["txid"] as? String == built.transaction.txid.displayHex)
-        #expect((verdict["vsize"] as? NSNumber)?.intValue == TransactionBuilder.vsize(of: built.transaction),
+        #expect(verdict["txid"] as? String == original.transaction.txid.displayHex)
+        #expect((verdict["vsize"] as? NSNumber)?.intValue == TransactionBuilder.vsize(of: original.transaction),
                 "vsize agreement")
 
         // 6. Relay via our TxBroadcaster (inv → node's getdata → tx).
         let broadcaster = TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(5))
-        let txid = try await broadcaster.broadcast(Data(hex: rawHex)!)
+        let originalTxid = try await broadcaster.broadcast(Data(hex: rawHex)!)
         var inMempool = false
         for _ in 0 ..< 15 {
-            if (try? BitcoinCLI.runObject(["getmempoolentry", txid.displayHex])) != nil {
+            if (try? BitcoinCLI.runObject(["getmempoolentry", originalTxid.displayHex])) != nil {
                 inMempool = true
                 break
             }
@@ -119,29 +119,66 @@ struct FullLoopDiffTests {
         #expect(inMempool, "node never requested/accepted our relayed tx")
         trace("in mempool")
 
-        // 7. Mine blocks until the spend confirms; then see the confirmation
-        //    through our own filter match (whoever won the block race — the
+        // 7. Build a same-input replacement and ask Core to enforce its
+        // mempool policy against the live original before we relay it.
+        let replacement = try await wallet.buildFeeBump(
+            txid: originalTxid, feeRateSatPerVByte: 2)
+        let replacementHex = replacement.built.transaction.serialized(includeWitness: true).hex
+        let replacementResult = try BitcoinCLI.runJSON(
+            ["testmempoolaccept", "[\"\(replacementHex)\"]"]) as? [[String: Any]]
+        let replacementVerdict = try #require(replacementResult?.first)
+        #expect(replacementVerdict["allowed"] as? Bool == true,
+                "Core rejected RBF: \(replacementVerdict["reject-reason"] ?? "?")")
+        #expect(replacement.built.transaction.inputs.map(\.previousOutput)
+                == original.transaction.inputs.map(\.previousOutput))
+        #expect(replacement.built.fee > original.fee)
+
+        let replacementTxid = try await broadcaster.broadcast(
+            Data(hex: replacementHex)!,
+            feeRateSatPerVByte: Double(replacement.built.fee)
+                / Double(TransactionBuilder.vsize(of: replacement.built.transaction)))
+        try await wallet.commitFeeBump(replacement)
+        await broadcaster.cancel(originalTxid)
+        var replacementInMempool = false
+        for _ in 0 ..< 15 {
+            if (try? BitcoinCLI.runObject(["getmempoolentry", replacementTxid.displayHex])) != nil {
+                replacementInMempool = true
+                break
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        #expect(replacementInMempool, "node never accepted our relayed replacement")
+        #expect((try? BitcoinCLI.runObject(["getmempoolentry", originalTxid.displayHex])) == nil,
+                "original remained in mempool after replacement")
+        trace("replacement in mempool")
+
+        // 8. Mine blocks until the replacement confirms; then see it through
+        //    our own filter match (whoever won the block race — the
         //    background miner also picks up mempool transactions).
         var confirmed = false
         for _ in 0 ..< 6 {
             _ = try await SignetMiner.mineBlock(payingTo: burnScript)
             try await wallet.scan(using: sync)
-            if await wallet.history.first(where: { $0.txid == txid && $0.height > 0 }) != nil {
+            if await wallet.history.first(where: {
+                $0.txid == replacementTxid && $0.height > 0
+            }) != nil {
                 confirmed = true
                 break
             }
         }
-        #expect(confirmed, "spend never confirmed")
-        await broadcaster.markConfirmed(txid)
+        #expect(confirmed, "replacement never confirmed")
+        await broadcaster.markConfirmed(replacementTxid)
 
         let history = await wallet.history
-        let sendEntry = try #require(history.first { $0.txid == txid }, "spend missing from history")
+        #expect(history.first { $0.txid == originalTxid }?.replacedBy == replacementTxid)
+        let sendEntry = try #require(
+            history.first { $0.txid == replacementTxid }, "replacement missing from history")
         #expect(sendEntry.height > startTip + 101, "spend confirmed after maturity")
-        #expect(sendEntry.fee == built.fee, "wallet fee accounting")
+        #expect(sendEntry.fee == replacement.built.fee, "wallet replacement fee accounting")
         let remaining = await wallet.utxos
         #expect(remaining.count == 1, "only the change output remains")
         #expect(remaining[0].height == sendEntry.height, "change confirmed via filter match")
-        #expect(remaining[0].amount == built.changeAmount)
+        #expect(remaining[0].amount == replacement.built.changeAmount)
         #expect(await broadcaster.pendingTxids.isEmpty, "broadcaster settled")
         trace("done")
     }
