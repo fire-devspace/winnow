@@ -217,7 +217,13 @@ private struct ExportBundleView: View {
                 }
                 if let json {
                     Section("Bundle") {
-                        CopyableTextBlock(text: json)
+                        CopyableTextBlock(text: includeMnemonic
+                                          ? ImportBundle.redactedPreview(json) : json)
+                        if includeMnemonic {
+                            Text("The recovery phrase is in the shared file, not shown here.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                         if let fileURL {
                             ShareLink("Share \(fileURL.lastPathComponent)", item: fileURL)
                                 .accessibilityIdentifier("exportShareLink")

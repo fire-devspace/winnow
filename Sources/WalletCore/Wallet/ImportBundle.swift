@@ -37,8 +37,15 @@ private final class EffectCollector: @unchecked Sendable {
 ///       "utxos": [{ "txid": "<display hex>", "vout": 0, "amount": 50000,
 ///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000 }],
 ///       "transactions": [{ "txid": "<display hex>", "height": 149000,
-///                          "received": 50000, "spent": 0 }]
+///                          "received": 50000, "spent": 0, "fee": 250 }]
 ///     }
+///
+/// `fee` on a history entry is optional. It is present only when every
+/// input of that transaction was ours (the only case a filter client can
+/// compute it). Older v1 files omit the field; readers treat absence as
+/// unknown. Observed feerate *samples* used by FeePolicy stay on-device
+/// and are not in this schema — a restored wallet falls back to presets
+/// until it observes new sends.
 ///
 /// With both descriptor and mnemonic present they must agree; with only a
 /// descriptor the import is watch-only (signing needs the secret). Scanning
@@ -72,12 +79,30 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         public var height: UInt32
         public var received: Int64
         public var spent: Int64
+        /// Present only when every input was ours. Omitted from JSON when nil
+        /// so older v1 files (no `fee` key) remain valid.
+        public var fee: Int64?
 
-        public init(txid: String, height: UInt32, received: Int64, spent: Int64) {
+        public init(txid: String, height: UInt32, received: Int64, spent: Int64,
+                    fee: Int64? = nil) {
             self.txid = txid
             self.height = height
             self.received = received
             self.spent = spent
+            self.fee = fee
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case txid, height, received, spent, fee
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(txid, forKey: .txid)
+            try container.encode(height, forKey: .height)
+            try container.encode(received, forKey: .received)
+            try container.encode(spent, forKey: .spent)
+            try container.encodeIfPresent(fee, forKey: .fee)
         }
     }
 
@@ -118,7 +143,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             },
             transactions: history.map { entry in
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
-                                 received: entry.received, spent: entry.spent)
+                                 received: entry.received, spent: entry.spent, fee: entry.fee)
             }
         )
     }
@@ -133,6 +158,18 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             throw WalletError.invalidBundle("export is not UTF-8")
         }
         return text
+    }
+
+    /// Same JSON as `serialized()`, but a present mnemonic is replaced with
+    /// `"<redacted>"` so an on-screen preview cannot screenshot or copy the
+    /// seed. The shared file stays the real bundle.
+    public static func redactedPreview(_ json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              var bundle = try? JSONDecoder().decode(ImportBundle.self, from: data),
+              bundle.mnemonic != nil
+        else { return json }
+        bundle.mnemonic = "<redacted>"
+        return (try? bundle.serialized()) ?? json
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -304,7 +341,7 @@ extension Wallet {
                 throw WalletError.invalidBundle("bad txid \(known.txid)")
             }
             return HistoryEntry(txid: Data(txid.reversed()), height: known.height,
-                                received: known.received, spent: known.spent)
+                                received: known.received, spent: known.spent, fee: known.fee)
         }
 
         let state = WalletState(

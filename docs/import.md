@@ -41,7 +41,8 @@ JSON, one object:
       "txid": "<display hex>",
       "height": 149000,
       "received": 50000,
-      "spent": 0
+      "spent": 0,
+      "fee": 250
     }
   ]
 }
@@ -59,6 +60,7 @@ Rules the importer enforces before any network call:
 - `txid` values are display (big-endian) hex on the wire and in the file; internally they are reversed to Bitcoin's byte order, same as the rest of the stack.
 - `chain` is `0` receive / `1` change (BIP44 external/internal, matching the multipath descriptor).
 - Scanning resumes at `lastKnownHeight + 1`. `creationHeight` of the new wallet state *is* `lastKnownHeight`.
+- `fee` on a history entry is optional. The writer includes it only when every input of that transaction was ours (the only case a filter client can compute the fee exactly). Older v1 files omit the key; readers treat absence as unknown. This is display state — omitting it does not create or destroy money. The on-device `observedFeeRates` samples FeePolicy uses are **not** in the bundle; a restored wallet falls back to the static presets until it observes new sends.
 
 The format is versioned so a future `proof` field (Utreexo, [read-side](read-side.md) §5.3) can be added without breaking v1 readers.
 
@@ -109,7 +111,7 @@ This is the import analogue of [read-side](read-side.md) §2.7.1 (filters can li
 
 ## 5. Export (the writer)
 
-Winnow produces the same v1 JSON it consumes. Settings → **Export wallet bundle** writes descriptor + known UTXOs + history + `lastKnownHeight` = the live FilterSync frontier (`nextScanHeight − 1`). The app persists that frontier back into `WalletState` after each sync pass — `apply(match:)` alone does not move it — so an export after ordinary app use resumes where the phone actually stopped, not at the creation/import height. The mnemonic is **excluded by default**; including it is a hot backup and takes an explicit toggle plus a confirm. The share-sheet file is a unique, backup-excluded temp that is deleted when the sheet closes, the seed toggle flips, or the write fails.
+Winnow produces the same v1 JSON it consumes. Settings → **Export wallet bundle** writes descriptor + known UTXOs + history (including `fee` when known) + `lastKnownHeight` = the live FilterSync frontier (`nextScanHeight − 1`). The app persists that frontier back into `WalletState` after each sync pass — `apply(match:)` alone does not move it — so an export after ordinary app use resumes where the phone actually stopped, not at the creation/import height. The mnemonic is **excluded by default**; including it is a hot backup and takes an explicit toggle plus a confirm. The on-screen preview redacts the mnemonic line; the shared file is the real JSON. The share-sheet file is a unique, backup-excluded temp that is deleted when the sheet closes, the seed toggle flips, or the write fails. A missing keystore entry or an xprv-only wallet throws `mnemonicUnavailable` rather than a raw keystore error.
 
 A Winnow-native wallet that is never exported cannot be recovered here from the 12 words alone — that is the no-back-scan rule, not a missing feature of import. Export is the other half.
 

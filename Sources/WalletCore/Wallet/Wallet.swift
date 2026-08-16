@@ -671,7 +671,17 @@ public actor Wallet {
         let lastKnownHeight = state.nextScanHeight == 0 ? 0 : state.nextScanHeight - 1
         let mnemonic: String?
         if includeMnemonic {
-            switch try keyStore.load(walletID: id) {
+            let secret: WalletSecret
+            do {
+                secret = try keyStore.load(walletID: id)
+            } catch let error as KeyStoreError {
+                // Missing entry is the same user-facing outcome as an xprv:
+                // there is no recovery phrase to put in the file. Don't leak
+                // the raw KeyStoreError through the export boundary.
+                if case .notFound = error { throw WalletError.mnemonicUnavailable }
+                throw error
+            }
+            switch secret {
             case let .mnemonic(words):
                 mnemonic = words
             case .masterKey:
