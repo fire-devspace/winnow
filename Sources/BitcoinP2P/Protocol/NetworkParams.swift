@@ -47,6 +47,16 @@ public struct NetworkParams: Sendable, Equatable {
         self.fallbackPeers = fallbackPeers
     }
 
+    /// Custom BIP325 signets (magic ≠ public signet) may keep RFC1918 /
+    /// loopback seed answers — that is how a laptop-hosted signet is reached.
+    /// Public networks drop them so a poisoned resolver cannot park the
+    /// whole pool on attacker-controlled LAN addresses.
+    public var isCustomSignet: Bool {
+        network == .signet && magic != Self.signet.magic
+    }
+
+    public var allowsPrivateSeedAddresses: Bool { isCustomSignet }
+
     public static func params(for network: BitcoinNetwork) -> NetworkParams {
         switch network {
         case .mainnet: return .mainnet

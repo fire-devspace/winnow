@@ -62,6 +62,9 @@ targets:
         # Standard/exempt crypto only (CryptoKit, libsecp256k1) — no export
         # compliance prompt per build.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        # Settings → Backup → Show recovery phrase authenticates the device
+        # owner; Face ID is one of the ways that prompt can be satisfied.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: "Face ID confirms it's you before the recovery phrase is shown."
         # Sync-while-active by design: no UIBackgroundModes.
         CODE_SIGN_STYLE: Automatic
 

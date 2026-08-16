@@ -21,17 +21,6 @@ import WalletCore
 struct FullLoopDiffTests {
     private let endpoint = PeerEndpoint(host: BitcoinCLI.nodeHost, port: BitcoinCLI.p2pPort)
 
-    /// Mines one block paying `script`, retrying while a racing block wins
-    /// the tip instead of ours.
-    private func mineOntoTip(payingTo script: Data) async throws -> String {
-        while true {
-            let hash = try await SignetMiner.mineBlock(payingTo: script)
-            if try BitcoinCLI.bestBlockHash() == hash { return hash }
-            // Lost a race against the background miner: our block sits on a
-            // shorter fork; mine again on the winner.
-        }
-    }
-
     @Test("mine → mature → filter-discover → sign → relay → confirm")
     func fullLoop() async throws {
         func trace(_ step: String) { FileHandle.standardError.write(Data("fullloop: \(step)\n".utf8)) }
@@ -50,12 +39,15 @@ struct FullLoopDiffTests {
         //    maturity is 100): our coinbase becomes spendable at tip+101.
         let burnScript = try BIP86.scriptPubKey(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/1")))
-        let fundingHash = try await mineOntoTip(payingTo: fundingScript)
+        let fundingHash = try await SignetMiner.mineOntoTip(payingTo: fundingScript)
         trace("funding block \(fundingHash.prefix(16))…")
         for _ in 0 ..< 100 {
-            _ = try await mineOntoTip(payingTo: burnScript)
+            _ = try await SignetMiner.mineOntoTip(payingTo: burnScript)
         }
         let fundingBlock = try BitcoinCLI.runObject(["getblock", fundingHash])
+        // Not startTip + 1: a lost race is re-mined, which lands us one or
+        // more blocks higher than the tip we measured before mining.
+        let fundingHeight = try UInt32(BitcoinCLI.int(fundingBlock, "height"))
         #expect(try BitcoinCLI.int(fundingBlock, "confirmations") >= 100, "funding matured")
         trace("maturity done, tip \(try BitcoinCLI.blockCount())")
 
@@ -80,7 +72,7 @@ struct FullLoopDiffTests {
         trace("first scan done")
         let fundingUTXO = try await #require(wallet.utxos.first, "filter match found no funding UTXO")
         #expect(fundingUTXO.amount == 5_000_000_000, "signet subsidy") // 50 BTC
-        #expect(fundingUTXO.height == startTip + 1, "funded in the first mined block")
+        #expect(fundingUTXO.height == fundingHeight, "funded in the block we mined")
         let fundingTx = try BitcoinCLI.runObject(["getrawtransaction",
                                                   fundingUTXO.txid.displayHex, "true"])
         #expect(try BitcoinCLI.string(fundingTx, "blockhash") == fundingHash,
@@ -90,10 +82,10 @@ struct FullLoopDiffTests {
         let throwaway = try BIP86.address(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/0")),
             hrp: "tb")
-        let built = try await wallet.send(
+        let original = try await wallet.send(
             payments: [Payment(amount: 100_000, address: throwaway, network: .signet)],
             feeRateSatPerVByte: 1)
-        let rawHex = built.transaction.serialized(includeWitness: true).hex
+        let rawHex = original.transaction.serialized(includeWitness: true).hex
         trace("spend signed")
 
         // 5. Core's mempool policy check agrees the tx is valid.
@@ -101,16 +93,16 @@ struct FullLoopDiffTests {
         let verdict = try #require(accepted?.first)
         #expect(verdict["allowed"] as? Bool == true,
                 "testmempoolaccept rejected: \(verdict["reject-reason"] ?? "?")")
-        #expect(verdict["txid"] as? String == built.transaction.txid.displayHex)
-        #expect((verdict["vsize"] as? NSNumber)?.intValue == TransactionBuilder.vsize(of: built.transaction),
+        #expect(verdict["txid"] as? String == original.transaction.txid.displayHex)
+        #expect((verdict["vsize"] as? NSNumber)?.intValue == TransactionBuilder.vsize(of: original.transaction),
                 "vsize agreement")
 
         // 6. Relay via our TxBroadcaster (inv → node's getdata → tx).
         let broadcaster = TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(5))
-        let txid = try await broadcaster.broadcast(Data(hex: rawHex)!)
+        let originalTxid = try await broadcaster.broadcast(Data(hex: rawHex)!)
         var inMempool = false
         for _ in 0 ..< 15 {
-            if (try? BitcoinCLI.runObject(["getmempoolentry", txid.displayHex])) != nil {
+            if (try? BitcoinCLI.runObject(["getmempoolentry", originalTxid.displayHex])) != nil {
                 inMempool = true
                 break
             }
@@ -119,29 +111,66 @@ struct FullLoopDiffTests {
         #expect(inMempool, "node never requested/accepted our relayed tx")
         trace("in mempool")
 
-        // 7. Mine blocks until the spend confirms; then see the confirmation
-        //    through our own filter match (whoever won the block race — the
+        // 7. Build a same-input replacement and ask Core to enforce its
+        // mempool policy against the live original before we relay it.
+        let replacement = try await wallet.buildFeeBump(
+            txid: originalTxid, feeRateSatPerVByte: 2)
+        let replacementHex = replacement.built.transaction.serialized(includeWitness: true).hex
+        let replacementResult = try BitcoinCLI.runJSON(
+            ["testmempoolaccept", "[\"\(replacementHex)\"]"]) as? [[String: Any]]
+        let replacementVerdict = try #require(replacementResult?.first)
+        #expect(replacementVerdict["allowed"] as? Bool == true,
+                "Core rejected RBF: \(replacementVerdict["reject-reason"] ?? "?")")
+        #expect(replacement.built.transaction.inputs.map(\.previousOutput)
+                == original.transaction.inputs.map(\.previousOutput))
+        #expect(replacement.built.fee > original.fee)
+
+        let replacementTxid = try await broadcaster.broadcast(
+            Data(hex: replacementHex)!,
+            feeRateSatPerVByte: Double(replacement.built.fee)
+                / Double(TransactionBuilder.vsize(of: replacement.built.transaction)))
+        try await wallet.commitFeeBump(replacement)
+        await broadcaster.cancel(originalTxid)
+        var replacementInMempool = false
+        for _ in 0 ..< 15 {
+            if (try? BitcoinCLI.runObject(["getmempoolentry", replacementTxid.displayHex])) != nil {
+                replacementInMempool = true
+                break
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        #expect(replacementInMempool, "node never accepted our relayed replacement")
+        #expect((try? BitcoinCLI.runObject(["getmempoolentry", originalTxid.displayHex])) == nil,
+                "original remained in mempool after replacement")
+        trace("replacement in mempool")
+
+        // 8. Mine blocks until the replacement confirms; then see it through
+        //    our own filter match (whoever won the block race — the
         //    background miner also picks up mempool transactions).
         var confirmed = false
         for _ in 0 ..< 6 {
             _ = try await SignetMiner.mineBlock(payingTo: burnScript)
             try await wallet.scan(using: sync)
-            if await wallet.history.first(where: { $0.txid == txid && $0.height > 0 }) != nil {
+            if await wallet.history.first(where: {
+                $0.txid == replacementTxid && $0.height > 0
+            }) != nil {
                 confirmed = true
                 break
             }
         }
-        #expect(confirmed, "spend never confirmed")
-        await broadcaster.markConfirmed(txid)
+        #expect(confirmed, "replacement never confirmed")
+        await broadcaster.markConfirmed(replacementTxid)
 
         let history = await wallet.history
-        let sendEntry = try #require(history.first { $0.txid == txid }, "spend missing from history")
+        #expect(history.first { $0.txid == originalTxid }?.replacedBy == replacementTxid)
+        let sendEntry = try #require(
+            history.first { $0.txid == replacementTxid }, "replacement missing from history")
         #expect(sendEntry.height > startTip + 101, "spend confirmed after maturity")
-        #expect(sendEntry.fee == built.fee, "wallet fee accounting")
+        #expect(sendEntry.fee == replacement.built.fee, "wallet replacement fee accounting")
         let remaining = await wallet.utxos
         #expect(remaining.count == 1, "only the change output remains")
         #expect(remaining[0].height == sendEntry.height, "change confirmed via filter match")
-        #expect(remaining[0].amount == built.changeAmount)
+        #expect(remaining[0].amount == replacement.built.changeAmount)
         #expect(await broadcaster.pendingTxids.isEmpty, "broadcaster settled")
         trace("done")
     }

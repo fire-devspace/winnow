@@ -2,13 +2,13 @@ import Foundation
 
 /// A small pool of outbound peers (default 3). Candidates come from manually
 /// supplied endpoints, a persisted good-peers JSON file, the network's
-/// hardcoded fallback peers, and DNS seeds resolved with getaddrinfo. Dials
-/// race a batch of candidates at once (short per-attempt timeout) so a fresh
-/// launch fills the pool in seconds; a round that runs out of candidates
-/// below target is reported as `exhausted` in `connectionStatus`. A monitor
-/// task prunes dead connections and connects replacements. Deliberately
-/// simple: no scoring buckets, no addr gossip — misbehaving peers are dropped
-/// and replaced.
+/// hardcoded fallback peers, and DNS seeds resolved over DoH (dns-json)
+/// with getaddrinfo as fallback. Dials race a batch of candidates at once
+/// (short per-attempt timeout) so a fresh launch fills the pool in seconds;
+/// a round that runs out of candidates below target is reported as
+/// `exhausted` in `connectionStatus`. A monitor task prunes dead connections
+/// and connects replacements. Deliberately simple: no scoring buckets, no
+/// addr gossip — misbehaving peers are dropped and replaced.
 public actor PeerPool {
     public let params: NetworkParams
     public let peerCount: Int
@@ -26,6 +26,8 @@ public actor PeerPool {
     public let maxDialAttempts: Int
     /// JSON file where known-good peers are persisted.
     private let peersFileURL: URL?
+    /// DNS-seed resolver (DoH, then getaddrinfo). Injectable for tests.
+    private let seedResolver: SeedResolver
 
     private var peers: [PeerConnection] = []
     private var knownGood: Set<PeerEndpoint> = []
@@ -60,7 +62,8 @@ public actor PeerPool {
                 manualPeers: [PeerEndpoint] = [], peersFileURL: URL? = nil,
                 relayPreference: Bool = false,
                 dialTimeout: Duration = .seconds(5),
-                maxParallelDials: Int = 5, maxDialAttempts: Int = 50) {
+                maxParallelDials: Int = 5, maxDialAttempts: Int = 50,
+                seedResolver: SeedResolver = .live()) {
         self.params = params
         self.peerCount = peerCount
         self.manualPeers = manualPeers
@@ -69,6 +72,7 @@ public actor PeerPool {
         self.dialTimeout = dialTimeout
         self.maxParallelDials = maxParallelDials
         self.maxDialAttempts = maxDialAttempts
+        self.seedResolver = seedResolver
         if let peersFileURL,
            let data = try? Data(contentsOf: peersFileURL),
            let stored = try? JSONDecoder().decode([PeerEndpoint].self, from: data) {
@@ -143,13 +147,24 @@ public actor PeerPool {
         exhausted = false
         defer { replenishing = false }
 
-        let queue = Array(candidates(excluding: Set(peers.map(\.endpoint))).prefix(maxDialAttempts))
+        // Dial manual / persisted / fallback first. Resolve DNS seeds only
+        // if those sources cannot fill the pool — a working manual peer
+        // must not wait on DoH.
+        var queue = localCandidates(excluding: Set(peers.map(\.endpoint)))
+        var resolvedSeeds = false
         var needed = peerCount - peers.count
         var next = 0
         await withTaskGroup(of: (PeerEndpoint, PeerConnection?).self) { group in
             var running = 0
             while needed > 0, started {
-                while next < queue.count, running < maxParallelDials {
+                if next >= queue.count && !resolvedSeeds {
+                    resolvedSeeds = true
+                    var seen = Set(peers.map(\.endpoint))
+                    seen.formUnion(queue)
+                    queue.append(contentsOf: await seedCandidates(excluding: seen))
+                }
+                while next < queue.count, running < maxParallelDials,
+                      attemptsThisRound < maxDialAttempts {
                     let endpoint = queue[next]
                     next += 1
                     running += 1
@@ -180,15 +195,22 @@ public actor PeerPool {
         exhausted = peers.count < peerCount
     }
 
-    /// Manual peers first, then persisted good peers, then the hardcoded
-    /// fallback peers racing the DNS-seed results.
-    private func candidates(excluding connected: Set<PeerEndpoint>) -> [PeerEndpoint] {
-        var ordered = manualPeers + Array(knownGood.subtracting(manualPeers)) + params.fallbackPeers
-        for seed in params.dnsSeeds.shuffled() {
-            ordered.append(contentsOf: Self.resolve(host: seed, port: params.defaultPort))
-        }
+    /// Manual peers, then persisted good peers, then hardcoded fallbacks.
+    private func localCandidates(excluding connected: Set<PeerEndpoint>) -> [PeerEndpoint] {
+        let ordered = manualPeers + Array(knownGood.subtracting(manualPeers)) + params.fallbackPeers
         var seen = connected
         return ordered.filter { seen.insert($0).inserted }
+    }
+
+    /// DNS-seed results (DoH, then getaddrinfo). Called only when local
+    /// candidates did not fill the pool.
+    private func seedCandidates(excluding connected: Set<PeerEndpoint>) async -> [PeerEndpoint] {
+        let seeds = await seedResolver.resolveSeeds(
+            params.dnsSeeds, port: params.defaultPort,
+            allowPrivate: params.allowsPrivateSeedAddresses
+        )
+        var seen = connected
+        return seeds.filter { seen.insert($0).inserted }
     }
 
     private func persistKnownGood() {
@@ -197,28 +219,5 @@ public actor PeerPool {
         if let data = try? JSONEncoder().encode(endpoints) {
             try? data.write(to: peersFileURL, options: .atomic)
         }
-    }
-
-    /// Resolves a DNS seed to concrete endpoints via getaddrinfo.
-    static func resolve(host: String, port: UInt16) -> [PeerEndpoint] {
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
-        var result: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else { return [] }
-        defer { freeaddrinfo(first) }
-        var endpoints: [PeerEndpoint] = []
-        var current: UnsafeMutablePointer<addrinfo>? = first
-        while let info = current {
-            defer { current = info.pointee.ai_next }
-            guard info.pointee.ai_family == AF_INET || info.pointee.ai_family == AF_INET6 else { continue }
-            var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            let status = getnameinfo(info.pointee.ai_addr, info.pointee.ai_addrlen,
-                                     &hostBuffer, socklen_t(hostBuffer.count), nil, 0, NI_NUMERICHOST)
-            guard status == 0 else { continue }
-            let bytes = hostBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-            endpoints.append(PeerEndpoint(host: String(decoding: bytes, as: UTF8.self), port: port))
-        }
-        return endpoints
     }
 }

@@ -193,16 +193,19 @@ final class WinnowAppUITests: XCTestCase {
         // Fund it from the host: 101 blocks paying the receive address, so the
         // first coinbase is spendable by the time the send test runs.
         let script = try AddressDecoder.scriptPubKey(for: address, network: .signet)
-        let startHeight = try BitcoinCLI.blockCount()
         let mineStart = Date()
-        let firstHash = try await SignetMiner.mineBlock(payingTo: script)
+        let firstHash = try await SignetMiner.mineOntoTip(payingTo: script)
         let fundingTxid = try BitcoinCLI.coinbaseTxid(blockHash: firstHash)
         let output = try BitcoinCLI.outputZero(txid: fundingTxid)
+        // Read the height back rather than assuming tip+1: a block race lost
+        // to the node's background miner is re-mined one or more blocks higher,
+        // and test06 rebuilds its import bundle from this height.
         Self.saveFunding(FundingInfo(txid: fundingTxid, amount: output.amount,
-                                     scriptPubKey: output.scriptPubKey, height: startHeight + 1,
+                                     scriptPubKey: output.scriptPubKey,
+                                     height: try BitcoinCLI.blockHeight(of: firstHash),
                                      index: fundingIndex))
         for _ in 0 ..< 100 {
-            try await SignetMiner.mineBlock(payingTo: script)
+            try await SignetMiner.mineOntoTip(payingTo: script)
         }
         Timings.record("funding", step: "mine-101-blocks", from: mineStart)
 
@@ -276,7 +279,7 @@ final class WinnowAppUITests: XCTestCase {
         Timings.record("send", step: "broadcast→echo/relay", from: relayStart)
         let payout = try AddressDecoder.scriptPubKey(for: Self.fixtureAddress(0xD4), network: .signet)
         let confirmStart = Date()
-        try await SignetMiner.mineBlock(payingTo: payout)
+        try await SignetMiner.mineOntoTip(payingTo: payout)
 
         // The "Seen in block N" label is a lazily-materialized row below the
         // fold — nudge syncs from the Wallet tab, then scroll to it.
@@ -529,5 +532,142 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Change (this vault)"].exists, "review lists no change output")
         Timings.record("vault", step: "cosign-review", from: reviewStart)
         Screenshots.capture(app, "15-vault-cosign", testCase: self)
+    }
+
+    // MARK: - 09 Backup resume + recovery-phrase reveal (#5)
+
+    /// Mine-free. Kills the app on the mnemonic backup sheet and asserts the
+    /// relaunch resumes it (the backup-pending flag survives restarts), then
+    /// completes the backup, proves a further relaunch stays on home, and
+    /// reveals the phrase from Settings -> Backup (device auth is bypassed in
+    /// E2E mode; simulators have no passcode). Numbered after PR #22's
+    /// test08.
+    func test09BackupResumeAndReveal() throws {
+        let backupEnvironment: [String: String] = [
+            "WINNOW_E2E": "1",
+            "WINNOW_E2E_RUN": "backup",
+            "WINNOW_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
+            "WINNOW_E2E_CHALLENGE": BitcoinCLI.challengeHex,
+            "WINNOW_E2E_ENTROPY": Self.entropyHex,
+        ]
+        let app = launchApp(run: "backup", reset: true, expectOnboarding: true)
+        app.buttons["createWalletButton"].tap()
+        XCTAssertTrue(app.switches["writtenDownToggle"].waitForExistence(timeout: 180),
+                      "backup sheet did not appear after create")
+        Screenshots.capture(app, "20-backup-sheet", testCase: self)
+
+        // Kill mid-backup, before Done.
+        app.terminate()
+        let resumed = XCUIApplication()
+        resumed.launchEnvironment = backupEnvironment // same run, NO reset
+        resumed.launch()
+        XCTAssertTrue(resumed.switches["writtenDownToggle"].waitForExistence(timeout: 60),
+                      "relaunch did not resume the backup sheet — backup skipped (#5)")
+        Screenshots.capture(resumed, "21-backup-resumed", testCase: self)
+
+        // Complete the backup: toggle + Done -> wallet home.
+        resumed.flipSwitch(resumed.switches["writtenDownToggle"])
+        resumed.buttons["backupDoneButton"].tap()
+        XCTAssertTrue(resumed.staticTexts["balanceText"].waitForExistence(timeout: 60),
+                      "home did not appear after backup Done")
+
+        // A confirmed backup must not re-prompt on the next launch.
+        resumed.terminate()
+        let settled = XCUIApplication()
+        settled.launchEnvironment = backupEnvironment
+        settled.launch()
+        XCTAssertTrue(settled.staticTexts["balanceText"].waitForExistence(timeout: 60),
+                      "confirmed backup re-prompted on relaunch")
+
+        // Reveal from Settings -> Backup: the fixed entropy's numbered first
+        // word renders in the grid.
+        settled.tabBars.buttons["Settings"].tap()
+        let revealButton = settled.buttons["revealPhraseButton"]
+        XCTAssertTrue(scrollUntilExists(settled, revealButton), "no reveal button in Backup")
+        revealButton.tap()
+        let firstWord = "1. " + (Self.mnemonic.split(separator: " ").first.map(String.init) ?? "")
+        XCTAssertTrue(settled.staticTexts[firstWord].waitForExistence(timeout: 30),
+                      "revealed phrase grid missing \(firstWord)")
+        Screenshots.capture(settled, "22-phrase-revealed", testCase: self)
+        settled.buttons["Close"].tap()
+    }
+
+    // MARK: - 08 Export bundle (Settings -> Backup, #18)
+
+    /// Walks the export flow on the funded "main" wallet: watch-only by
+    /// default (no mnemonic key and no seed words in the preview, which for
+    /// watch-only IS the real JSON), the staged share link and its system
+    /// share sheet, then the seed path behind the explicit confirm with the
+    /// on-screen preview redacted to "<redacted>". The shared file's real
+    /// content and deletion lifecycle are unit-tested (ExportStagingFile /
+    /// ImportBundle tests); test06 walks the import UI on an equivalent
+    /// bundle, closing the round trip.
+    func test08ExportBundle() throws {
+        let app = launchApp()
+        app.tabBars.buttons["Settings"].tap()
+        let exportButton = app.buttons["exportBundleButton"]
+        XCTAssertTrue(scrollUntilExists(app, exportButton), "no export button in Settings")
+        exportButton.tap()
+
+        // Watch-only is the default: no toggle flip, straight to export.
+        let confirm = app.buttons["exportConfirmButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 20), "no export confirm button")
+        XCTAssertEqual(confirm.label, "Export watch-only bundle",
+                       "seed export must not be the default")
+        confirm.tap()
+        let shareLink = app.buttons["exportShareLink"]
+        XCTAssertTrue(shareLink.waitForExistence(timeout: 60), "no staged share link after export")
+        let preview = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "\"version\"")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20), "no bundle preview")
+        var json = preview.label
+        XCTAssertTrue(json.contains("\"descriptor\""), "preview lacks the descriptor")
+        XCTAssertTrue(json.contains("\"lastKnownHeight\""), "preview lacks the scan frontier")
+        XCTAssertFalse(json.contains("mnemonic"), "watch-only preview has a mnemonic key")
+        XCTAssertFalse(json.contains(Self.mnemonic), "watch-only preview contains the seed")
+        Screenshots.capture(app, "16-export-watch-only", testCase: self)
+
+        // The share link stages a real file and opens the system share sheet.
+        shareLink.tap()
+        let sheetTitle = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "winnow-signet-")).firstMatch
+        let shareSheet = poll(timeout: 20, interval: 1, "share sheet") {
+            app.otherElements["ActivityListView"].exists || sheetTitle.exists
+        }
+        XCTAssertTrue(shareSheet, "share sheet did not appear")
+        Screenshots.capture(app, "17-export-share-sheet", testCase: self)
+        let closeShare = app.buttons["Close"].firstMatch
+        if closeShare.waitForExistence(timeout: 5), closeShare.isHittable {
+            closeShare.tap()
+        } else {
+            // Fallback: drag the sheet down to dismiss.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+                .press(forDuration: 0.05, thenDragTo:
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+        }
+        // Back on the export form (the next step's scroll asserts the toggle).
+
+        // Seed path: the toggle resets the export, the alert gates it, and
+        // the on-screen preview redacts the phrase.
+        let toggle = app.switches["exportIncludeMnemonicToggle"]
+        XCTAssertTrue(scrollUntilExists(app, toggle, up: true), "no seed toggle")
+        app.flipSwitch(toggle)
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "toggle did not reset the export")
+        confirm.tap()
+        let alert = app.alerts["Include the recovery phrase?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10), "no seed confirm alert")
+        Screenshots.capture(app, "18-export-seed-confirm", testCase: self)
+        alert.buttons["Export with phrase"].tap()
+        XCTAssertTrue(shareLink.waitForExistence(timeout: 60), "no share link after seed export")
+        XCTAssertTrue(preview.waitForExistence(timeout: 20), "no seed-export preview")
+        json = preview.label
+        XCTAssertTrue(json.contains("\"mnemonic\""), "seed preview lacks the mnemonic key")
+        XCTAssertTrue(json.contains("<redacted>"), "seed preview is not redacted")
+        XCTAssertFalse(json.contains(Self.mnemonic), "on-screen preview shows the real phrase")
+        XCTAssertTrue(app.staticTexts["The recovery phrase is in the shared file, not shown here."]
+            .exists, "no shared-file note")
+        Screenshots.capture(app, "19-export-seed-redacted", testCase: self)
+
+        app.buttons["Close"].tap()
     }
 }

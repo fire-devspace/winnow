@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import BlockchainBackend
 import Foundation
+import LocalAuthentication
 import SwiftUI
 import UIKit
 import WalletCore
@@ -27,6 +28,8 @@ final class AppModel {
         case invalidPeer(String)
         case wrongNetwork(String)
         case duplicateVault
+        case deviceAuthUnavailable
+        case deviceAuthFailed
 
         var errorDescription: String? {
             switch self {
@@ -37,6 +40,8 @@ final class AppModel {
             case let .invalidPeer(text): "Invalid peer “\(text)” — use host:port."
             case let .wrongNetwork(network): "This bundle is for \(network); switch the network in Settings first."
             case .duplicateVault: "A vault with this descriptor already exists."
+            case .deviceAuthUnavailable: "Set a device passcode first — the recovery phrase only shows after device authentication."
+            case .deviceAuthFailed: "Device authentication failed."
             }
         }
     }
@@ -47,6 +52,7 @@ final class AppModel {
         var balance: Int64 = 0
         var utxoCount = 0
         var history: [HistoryEntry] = []
+        var feeBumpableTxids: [Data] = []
         var observedFeeRates: [Double] = []
         var peerCount = 0
         var tipHeight: UInt32 = 0
@@ -143,6 +149,9 @@ final class AppModel {
         static let esploraURL = "esploraURL"
         static let spReceiveEnabled = "spReceiveEnabled"
         static let spIndexURL = "spIndexURL"
+        /// Set at wallet creation, cleared only by the backup sheet's
+        /// confirmed Done — a relaunch in between resumes the backup.
+        static func backupPending(_ walletID: String) -> String { "backupPending.\(walletID)" }
     }
 
     init() {
@@ -178,7 +187,9 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            stage = .ready
+            // A wallet whose backup was never confirmed re-enters onboarding:
+            // the backup sheet resumes from the Keychain (#5).
+            stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
         } else {
             stage = .onboarding
         }
@@ -340,7 +351,10 @@ final class AppModel {
             let network = network
             let vaultStore = vaultStore
             try await filters.sync(watchScripts: scripts, extraScripts: extraScripts) { match in
-                _ = try await wallet.apply(match: match)
+                let walletEffect = try await wallet.apply(match: match)
+                for discarded in walletEffect.discardedReplacements {
+                    await broadcaster.cancel(discarded)
+                }
                 try await vaultStore.apply(match: match, network: network)
                 let pending = await broadcaster.pendingTxids
                 for tx in match.block.transactions where pending.contains(tx.txid) {
@@ -367,10 +381,15 @@ final class AppModel {
         if let wallet {
             snapshot.balance = await wallet.balance
             snapshot.utxoCount = await wallet.utxos.count
-            // Pending (height 0) entries first, then newest block first.
+            // Active pending entries first, then newest blocks, with replaced
+            // height-0 originals last instead of pinning them as pending.
             snapshot.history = await wallet.history.sorted {
-                ($0.height == 0 ? UInt32.max : $0.height) > ($1.height == 0 ? UInt32.max : $1.height)
+                let lhsPending = $0.height == 0 && $0.replacedBy == nil
+                let rhsPending = $1.height == 0 && $1.replacedBy == nil
+                if lhsPending != rhsPending { return lhsPending }
+                return $0.height > $1.height
             }
+            snapshot.feeBumpableTxids = await wallet.feeBumpableTxids
             snapshot.observedFeeRates = await wallet.observedFeeRates
             snapshot.nextScanHeight = await wallet.nextScanHeight
         }
@@ -404,6 +423,11 @@ final class AppModel {
         let wallet = try Wallet.create(network: network, keyStore: keyStore,
                                        storageURL: walletURL, entropy: e2e?.entropy,
                                        creationHeight: tip)
+        // Flag BEFORE adopt(): the wallet is already in the Keychain, so a
+        // throw below must not leave it unflagged — the next boot would land
+        // on .ready with the backup silently skipped, the exact bug class #5
+        // kills. A stuck-true flag merely re-presents the sheet: fail-safe.
+        UserDefaults.standard.set(true, forKey: DefaultsKey.backupPending(await wallet.id))
         try await adopt(wallet: wallet)
         guard let walletID, case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw AppError.mnemonicUnavailable
@@ -481,7 +505,46 @@ final class AppModel {
 
     /// Leaves onboarding once the backup flow (or import report) is done.
     func finishOnboarding() {
+        if let walletID {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.backupPending(walletID))
+        }
         if wallet != nil { stage = .ready }
+    }
+
+    /// The mnemonic of a wallet created but never backup-confirmed — non-nil
+    /// only between `createWallet()` and the backup sheet's Done. Read from
+    /// the Keychain on demand so a relaunch mid-backup resumes the sheet with
+    /// the same words.
+    func pendingBackupMnemonic() -> String? {
+        guard let walletID,
+              UserDefaults.standard.bool(forKey: DefaultsKey.backupPending(walletID)),
+              case let .mnemonic(words) = try? keyStore.load(walletID: walletID)
+        else { return nil }
+        return words
+    }
+
+    /// Settings → Backup → Show recovery phrase: the words, behind
+    /// device-owner authentication (passcode or biometrics). Fail-closed —
+    /// no passcode set means no reveal, not a silent skip. E2E test mode
+    /// bypasses the prompt (simulators have no passcode); an xprv-only wallet
+    /// throws `WalletError.mnemonicUnavailable`.
+    func revealMnemonic() async throws -> String {
+        guard let walletID else { throw AppError.noWallet }
+        if e2e == nil {
+            let context = LAContext()
+            var unavailable: NSError?
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {
+                throw AppError.deviceAuthUnavailable
+            }
+            let passed = try await context.evaluatePolicy(
+                .deviceOwnerAuthentication,
+                localizedReason: "Reveal this wallet's recovery phrase")
+            guard passed else { throw AppError.deviceAuthFailed }
+        }
+        guard case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
+            throw WalletError.mnemonicUnavailable
+        }
+        return words
     }
 
     /// Polls the pool until a peer completes the handshake (or the timeout
@@ -589,6 +652,41 @@ final class AppModel {
         return txid
     }
 
+    func pendingFeeRate(txid: Data) async throws -> Double {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.pendingFeeRate(txid: txid)
+    }
+
+    func previewFeeBump(txid: Data, feeRateSatPerVByte: Double) async throws -> FeeBumpPreview {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.previewFeeBump(txid: txid,
+                                               feeRateSatPerVByte: feeRateSatPerVByte)
+    }
+
+    /// Broadcasts a replacement first, commits its wallet-state swap second,
+    /// and cancels the original relay only after both succeed. If commit fails,
+    /// the new broadcaster entry is removed and the old transaction keeps
+    /// relaying, preserving the same rollback boundary as a first send.
+    func bumpFee(txid: Data, feeRateSatPerVByte: Double) async throws -> Data {
+        guard let wallet else { throw AppError.noWallet }
+        guard let broadcaster = stack?.broadcaster else { throw AppError.noStack }
+        let prepared = try await wallet.buildFeeBump(txid: txid,
+                                                     feeRateSatPerVByte: feeRateSatPerVByte)
+        let replacementVSize = TransactionBuilder.vsize(of: prepared.built.transaction)
+        let replacementRate = Double(prepared.built.fee) / Double(replacementVSize)
+        let replacementTxid = try await broadcast(
+            prepared.built.transaction, feeRateSatPerVByte: replacementRate)
+        do {
+            try await wallet.commitFeeBump(prepared)
+        } catch {
+            await broadcaster.cancel(replacementTxid)
+            throw error
+        }
+        await broadcaster.cancel(txid)
+        await refresh()
+        return replacementTxid
+    }
+
     /// Broadcasts a fully-signed transaction via P2P relay — and additionally
     /// POSTs it to the esplora backend when the user opted in.
     /// `feeRateSatPerVByte` (known from the send preview) enables the
@@ -683,7 +781,9 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            stage = .ready
+            // A wallet whose backup was never confirmed re-enters onboarding:
+            // the backup sheet resumes from the Keychain (#5).
+            stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
         } else {
             stage = .onboarding
         }
