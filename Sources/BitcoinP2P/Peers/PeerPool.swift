@@ -183,7 +183,7 @@ public actor PeerPool {
     /// Manual peers first, then persisted good peers, then the hardcoded
     /// fallback peers racing the DNS-seed results.
     private func candidates(excluding connected: Set<PeerEndpoint>) -> [PeerEndpoint] {
-        var ordered = manualPeers + knownGood.subtracting(manualPeers) + params.fallbackPeers
+        var ordered = manualPeers + Array(knownGood.subtracting(manualPeers)) + params.fallbackPeers
         for seed in params.dnsSeeds.shuffled() {
             ordered.append(contentsOf: Self.resolve(host: seed, port: params.defaultPort))
         }
