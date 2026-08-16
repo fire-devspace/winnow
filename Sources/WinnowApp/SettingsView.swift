@@ -71,7 +71,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Manual peers")
                 } footer: {
-                    Text("Manual peers are tried before DNS seeds. The default port is 8333 (mainnet) / 38333 (signet). Peers must serve BIP157 compact filters.")
+                    Text("Manual peers are tried before DNS seeds. Seeds resolve over HTTPS (Cloudflare 1.1.1.1), then system DNS. The default port is 8333 (mainnet) / 38333 (signet). Peers must serve BIP157 compact filters.")
                 }
 
                 Section {
