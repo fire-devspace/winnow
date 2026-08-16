@@ -29,12 +29,26 @@ struct HomeView: View {
                 }
 
                 Section("Sync") {
+                    if let statusText = model.syncStatusText {
+                        if case .peerDiscoveryFailed = model.syncPhase {
+                            Text(statusText)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                            Button("Retry") {
+                                Task { await model.retryPeerDiscovery() }
+                            }
+                            .accessibilityIdentifier("retryPeersButton")
+                        } else {
+                            ProgressView(statusText)
+                                .accessibilityIdentifier("syncProgressText")
+                        }
+                    }
                     // nextScanHeight is the NEXT block to scan, so a fully
                     // scanned tip reads "tip+1 of tip" — clamp the display.
                     LabeledContent("Filter scan",
                                    value: "block \(min(model.status.nextScanHeight, model.status.tipHeight)) of \(model.status.tipHeight)")
                     LabeledContent("Peers", value: "\(model.status.peerCount)")
-                    if model.status.syncing {
+                    if model.status.syncing, model.syncStatusText == nil {
                         ProgressView("Scanning filters…")
                     }
                     if let error = model.status.lastSyncError {

@@ -67,6 +67,34 @@ final class AppModel {
         let broadcaster: TxBroadcaster
     }
 
+    /// Coarse-grained live sync phase for the UI (polled from the actors once
+    /// a second while active; drives the status line in Home/Onboarding).
+    enum SyncPhase: Equatable {
+        case idle
+        case connecting(connected: Int, target: Int)
+        case headers(synced: UInt32, tipEstimate: UInt32)
+        case filters(scanned: UInt32, tip: UInt32)
+        case synced
+        /// Peer discovery ran out of candidates with zero connections.
+        case peerDiscoveryFailed
+    }
+
+    /// One-line rendering of `syncPhase`; nil when there is nothing to show.
+    var syncStatusText: String? {
+        switch syncPhase {
+        case .idle, .synced:
+            nil
+        case let .connecting(connected, target):
+            "Connecting to peers (\(connected) of \(target))…"
+        case let .headers(synced, tipEstimate):
+            "Headers \(synced.formatted()) of ~\(tipEstimate.formatted())"
+        case let .filters(scanned, tip):
+            "Filters \(min(scanned, tip).formatted()) of \(tip.formatted())"
+        case .peerDiscoveryFailed:
+            "Couldn't find filter-serving peers — check your connection."
+        }
+    }
+
     /// Opens a bounded mempool window (docs/read-side.md §2.8) on the pool.
     /// The caller owns the lifecycle: `start()` when the screen appears,
     /// `stop()` when it disappears or the app backgrounds. nil without a stack.
@@ -77,6 +105,7 @@ final class AppModel {
 
     private(set) var stage: Stage = .loading
     private(set) var status = Status()
+    private(set) var syncPhase: SyncPhase = .idle
     private(set) var vaults: [VaultRecord] = []
     private(set) var wallet: Wallet?
     private(set) var stack: SyncStack?
@@ -101,6 +130,7 @@ final class AppModel {
     private(set) var esploraURLString: String
 
     private var syncTask: Task<Void, Never>?
+    private var phaseTask: Task<Void, Never>?
     private var esploraEstimates: [Int: Double]?
     private var isActive = false
 
@@ -159,6 +189,8 @@ final class AppModel {
             isActive = false
             syncTask?.cancel()
             syncTask = nil
+            phaseTask?.cancel()
+            phaseTask = nil
             Task { await stack?.pool.stop() }
         default:
             break // .inactive: still foreground — keep syncing
@@ -167,8 +199,66 @@ final class AppModel {
 
     private func activate() async {
         await buildStackIfNeeded()
+        startPhasePolling()
         await stack?.pool.start()
         startSyncLoop()
+    }
+
+    /// Retries peer discovery after the pool reported exhaustion (the UI's
+    /// Retry button). Rebuilds the stack when it never came up.
+    func retryPeerDiscovery() async {
+        if let stack {
+            await stack.pool.retry()
+        } else {
+            await activate()
+        }
+        await refresh()
+    }
+
+    /// Polls the sync actors once a second so the UI can show live
+    /// connecting/headers/filters progress instead of a bare spinner.
+    private func startPhasePolling() {
+        guard phaseTask == nil else { return }
+        phaseTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.updateSyncPhase()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private func updateSyncPhase() async {
+        guard let stack else {
+            if syncPhase != .idle { syncPhase = .idle }
+            return
+        }
+        let connection = await stack.pool.connectionStatus
+        if connection.connected == 0 {
+            // No peers at all: still dialing, or the round ran dry.
+            syncPhase = connection.exhausted
+                ? .peerDiscoveryFailed
+                : .connecting(connected: 0, target: connection.target)
+            return
+        }
+        if connection.connected < connection.target, connection.dialing {
+            syncPhase = .connecting(connected: connection.connected, target: connection.target)
+            return
+        }
+        // At least one peer: one is enough to sync — show the real progress.
+        let tip = await stack.chain.height
+        var estimate = tip
+        for peer in await stack.pool.connectedPeers() {
+            let advertised = await peer.peerStartHeight
+            if advertised > 0, UInt32(advertised) > estimate { estimate = UInt32(advertised) }
+        }
+        if estimate > tip + 1 {
+            syncPhase = .headers(synced: tip, tipEstimate: estimate)
+        } else if let filters = stack.filters {
+            let next = await filters.nextScanHeight
+            syncPhase = next > tip ? .synced : .filters(scanned: next, tip: tip)
+        } else {
+            syncPhase = .synced
+        }
     }
 
     private func buildStackIfNeeded() async {

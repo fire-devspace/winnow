@@ -25,6 +25,27 @@ public struct NetworkParams: Sendable, Equatable {
     /// Consensus powLimit (maximum valid target), 32-byte internal byte order.
     public let powLimit: Data
     public let dnsSeeds: [String]
+    /// Hardcoded last-resort peers (IP literals, verified filter-serving —
+    /// see the per-network value's comment). Dialed alongside the DNS-seed
+    /// results so a fresh launch works even when seed results are dead.
+    public let fallbackPeers: [PeerEndpoint]
+
+    public init(network: BitcoinNetwork, magic: Data, defaultPort: UInt16,
+                genesisTime: UInt32, genesisBits: UInt32, genesisNonce: UInt32,
+                genesisMerkleRoot: Data, genesisHash: Data, powLimit: Data,
+                dnsSeeds: [String], fallbackPeers: [PeerEndpoint] = []) {
+        self.network = network
+        self.magic = magic
+        self.defaultPort = defaultPort
+        self.genesisTime = genesisTime
+        self.genesisBits = genesisBits
+        self.genesisNonce = genesisNonce
+        self.genesisMerkleRoot = genesisMerkleRoot
+        self.genesisHash = genesisHash
+        self.powLimit = powLimit
+        self.dnsSeeds = dnsSeeds
+        self.fallbackPeers = fallbackPeers
+    }
 
     public static func params(for network: BitcoinNetwork) -> NetworkParams {
         switch network {
@@ -104,6 +125,20 @@ public struct NetworkParams: Sendable, Equatable {
             "dnsseed.emzy.de",
             "seed.bitcoin.wiz.biz",
             "seed.mainnet.achownodes.xyz",
+        ],
+        // Verified live 2026-08-15 from this repo's dev machine: each
+        // completed the full version/verack handshake on :8333 advertising
+        // NODE_COMPACT_FILTERS (services 0xc49 / 0x449) at mainnet tip
+        // 962645. IP literals only — no hostnames, nothing unverified.
+        fallbackPeers: [
+            PeerEndpoint(host: "47.206.253.100", port: 8_333),  // /Satoshi:31.1.0/
+            PeerEndpoint(host: "74.209.75.75", port: 8_333),    // /Satoshi:31.0.0/
+            PeerEndpoint(host: "69.136.219.246", port: 8_333),  // /Satoshi:31.0.0/
+            PeerEndpoint(host: "136.47.151.15", port: 8_333),   // /Satoshi:31.0.0/
+            PeerEndpoint(host: "199.189.205.15", port: 8_333),  // /Satoshi:30.2.0/
+            PeerEndpoint(host: "65.109.145.24", port: 8_333),   // /Satoshi:23.0.0/
+            PeerEndpoint(host: "46.126.48.170", port: 8_333),   // /Satoshi:29.2.0/
+            PeerEndpoint(host: "168.119.10.30", port: 8_333),   // /Satoshi:29.0.0/
         ]
     )
 

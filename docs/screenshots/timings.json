@@ -1,16 +1,16 @@
 {
   "device" : "iPhone 17",
-  "run" : "2026-08-15T01:12:49Z",
+  "run" : "2026-08-16T00:16:37Z",
   "scenarios" : [
     {
       "name" : "onboarding",
       "steps" : [
         {
-          "seconds" : 1.78,
+          "seconds" : 1.96,
           "step" : "wallet-create"
         },
         {
-          "seconds" : 1.54,
+          "seconds" : 1.6,
           "step" : "backup→home"
         }
       ]
@@ -19,7 +19,7 @@
       "name" : "receive",
       "steps" : [
         {
-          "seconds" : 2.17,
+          "seconds" : 2.13,
           "step" : "address-shown"
         }
       ]
@@ -28,11 +28,11 @@
       "name" : "funding",
       "steps" : [
         {
-          "seconds" : 31.74,
+          "seconds" : 213.98,
           "step" : "mine-101-blocks"
         },
         {
-          "seconds" : 0.75,
+          "seconds" : 1.03,
           "step" : "mined→detected-by-filters"
         }
       ]
@@ -41,15 +41,15 @@
       "name" : "send",
       "steps" : [
         {
-          "seconds" : 0.67,
+          "seconds" : 0.66,
           "step" : "form→broadcast"
         },
         {
-          "seconds" : 0,
+          "seconds" : 0.01,
           "step" : "broadcast→echo/relay"
         },
         {
-          "seconds" : 5.66,
+          "seconds" : 6.99,
           "step" : "mine→confirmed"
         }
       ]
@@ -58,7 +58,11 @@
       "name" : "vault",
       "steps" : [
         {
-          "seconds" : 14.95,
+          "seconds" : 36.03,
+          "step" : "create"
+        },
+        {
+          "seconds" : 15.8,
           "step" : "cosign-review"
         }
       ]
@@ -67,19 +71,19 @@
       "name" : "import",
       "steps" : [
         {
-          "seconds" : 15.82,
+          "seconds" : 18.84,
           "step" : "verify"
         }
       ]
     }
   ],
   "totals" : {
-    "all" : 75.08,
-    "funding" : 32.49,
-    "import" : 15.82,
-    "onboarding" : 3.32,
-    "receive" : 2.17,
-    "send" : 6.33,
-    "vault" : 14.95
+    "all" : 299.03,
+    "funding" : 215.01,
+    "import" : 18.84,
+    "onboarding" : 3.56,
+    "receive" : 2.13,
+    "send" : 7.66,
+    "vault" : 51.83
   }
 }

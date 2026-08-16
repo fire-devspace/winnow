@@ -39,7 +39,7 @@ struct OnboardingView: View {
                     Text("Network: \(model.network.rawValue) (change in Settings). Creation first finds the chain tip over P2P — scanning runs forward from there.")
                 }
                 if let busy {
-                    Section { ProgressView(busy) }
+                    Section { ProgressView(model.syncStatusText ?? busy) }
                 }
                 if let error {
                     Section {

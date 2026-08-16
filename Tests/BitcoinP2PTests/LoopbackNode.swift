@@ -43,20 +43,25 @@ actor LoopbackNode {
 
     init(params: NetworkParams, services: UInt64 = PeerConnection.nodeCompactFilters,
          chain: [Block] = [], corruptFilterAtHeight: Int? = nil,
-         autoRequestDelay: Duration? = nil, transactions: [Transaction] = []) {
+         autoRequestDelay: Duration? = nil, transactions: [Transaction] = [],
+         listenPort: UInt16? = nil) {
         self.params = params
         self.services = services
         self.chain = chain
         self.corruptFilterAtHeight = corruptFilterAtHeight
         self.autoRequestDelay = autoRequestDelay
         self.transactions = Dictionary(uniqueKeysWithValues: transactions.map { ($0.txid, $0) })
+        self.listenPort = listenPort
         framer = MessageFramer(magic: params.magic)
     }
+
+    private let listenPort: UInt16?
 
     var endpoint: PeerEndpoint { PeerEndpoint(host: "127.0.0.1", port: port) }
 
     func start() async throws {
-        let listener = try NWListener(using: .tcp, on: .any)
+        let listener = try NWListener(using: .tcp,
+                                      on: listenPort.flatMap { NWEndpoint.Port(rawValue: $0) } ?? .any)
         self.listener = listener
         listener.newConnectionHandler = { connection in
             Task { await self.handle(connection) }

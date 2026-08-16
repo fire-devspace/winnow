@@ -63,6 +63,17 @@ struct NetworkParamsTests {
         #expect(!params.dnsSeeds.isEmpty)
     }
 
+    @Test("mainnet fallback peers are IP literals on :8333; signet has none")
+    func fallbackPeersShape() {
+        #expect(NetworkParams.mainnet.fallbackPeers.count >= 4)
+        for peer in NetworkParams.mainnet.fallbackPeers {
+            #expect(peer.port == 8_333)
+            // Hardcoded entries must be IP literals, never hostnames.
+            #expect(peer.host.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" })
+        }
+        #expect(NetworkParams.signet.fallbackPeers.isEmpty)
+    }
+
     @Test("bits → target known values", arguments: [
         // (bits, big-endian target hex)
         (UInt32(0x1D00_FFFF), "00000000ffff0000000000000000000000000000000000000000000000000000"),
