@@ -14,6 +14,8 @@ import Foundation
 /// - WINNOW_P2P_PORT  — P2P port (default 38401)
 /// - WINNOW_RPC_PORT  — RPC port (default 38400)
 /// - WINNOW_DATADIR   — datadir for cookie auth (default ~/.bitcoin-mysignet)
+/// - WINNOW_BITCOIN_CLI — full path to bitcoin-cli (default: the first hit
+///   in `searchPaths`, which covers both Homebrew prefixes and MacPorts)
 ///
 /// Inside the simulator the process environment is NOT inherited from
 /// xcodebuild; the same keys are then read from ~/.winnow-node.env on the
@@ -81,16 +83,31 @@ enum BitcoinCLI {
         return nil
     }
 
-    /// bitcoin-cli binary: /opt/homebrew/bin first, then PATH.
+    /// Directories probed for the node binaries, in order: Homebrew on Apple
+    /// Silicon, Homebrew on Intel, MacPorts. Both Homebrew prefixes matter —
+    /// the CI runners are x86_64 (`/usr/local`) while every dev machine here
+    /// is arm64 (`/opt/homebrew`), and hardcoding the arm64 one is what made
+    /// the UI suite unable to find an installed bitcoin-cli on runner-1
+    /// (#31). Override with WINNOW_BITCOIN_CLI (a full path to the binary).
+    static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
+
+    /// bitcoin-cli binary: WINNOW_BITCOIN_CLI, else the first hit in
+    /// `searchPaths`.
+    ///
+    /// Deliberately no which(1) fallback, unlike the differential copy. That
+    /// copy spawns through Foundation `Process` and inherits the runner
+    /// shell's environment, so its `which` searches a real PATH. Here there
+    /// is no PATH to search: `xcodebuild test` does not forward its
+    /// environment into the iOS-simulator test runner (see env(_:) above),
+    /// so any PATH handed to a spawned `which` would be one this file
+    /// constructed — making the lookup equivalent to probing `searchPaths`
+    /// directly, but with a process spawn and a parse in the way.
     static var binaryPath: String? {
-        let homebrew = "/opt/homebrew/bin/bitcoin-cli"
-        if FileManager.default.isExecutableFile(atPath: homebrew) { return homebrew }
-        // which(1) lookup for non-standard installs.
-        guard let result = try? HostProcess.run("/usr/bin/which", ["bitcoin-cli"]),
-              result.status == 0
-        else { return nil }
-        let found = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return found.isEmpty ? nil : found
+        if let override = env("WINNOW_BITCOIN_CLI"),
+           FileManager.default.isExecutableFile(atPath: override) { return override }
+        return searchPaths
+            .map { $0 + "/bitcoin-cli" }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Runs `bitcoin-cli` with the node selection flags prepended; returns the
@@ -99,7 +116,9 @@ enum BitcoinCLI {
     static func run(_ arguments: [String], wallet: String? = nil) throws -> String {
         guard let binary = binaryPath else {
             throw CLIError(arguments: arguments, status: -1,
-                           output: "bitcoin-cli not found (/opt/homebrew/bin or PATH)")
+                           output: "bitcoin-cli not found in \(searchPaths.joined(separator: ", "))"
+                               + " (set WINNOW_BITCOIN_CLI to a full path, or add it to"
+                               + " \(hostHome)/.winnow-node.env, to override)")
         }
         var full = ["-datadir=\(datadir)", "-rpcport=\(rpcPort)", "-rpcconnect=\(nodeHost)"]
         if let wallet { full.append("-rpcwallet=\(wallet)") }

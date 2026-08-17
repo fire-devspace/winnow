@@ -44,6 +44,14 @@ enum HostProcess {
         defer { argv.forEach { free($0) } }
 
         var pid = pid_t()
+        // envp is deliberately null: every caller passes an absolute `path`,
+        // so no child here needs a PATH, and there is no correct environment
+        // to inherit. `xcodebuild test` does not forward its environment into
+        // the simulator test runner, and what the runner does carry is the
+        // simulator's own DYLD_* — handing that to a native host binary like
+        // bitcoin-cli would point dyld at the simulator runtime's dylibs.
+        // Node configuration reaches the child as explicit arguments (see
+        // BitcoinCLI.run), never as environment. Refs #31.
         let rc = posix_spawn(&pid, path, &actions, nil, &argv, nil)
         // Parent ends of the child's pipes.
         close(outPipe[1])
