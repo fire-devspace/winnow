@@ -1,7 +1,10 @@
-name: Node e2e
+name: Node e2e (manual)
 
-# Node-backed suites (differential + UI e2e) against the dev custom-signet
-# node, on the self-hosted x86_64 macOS runner VMs.
+# Optional node-backed suites (differential + UI e2e). These are deliberately
+# excluded from push and pull-request CI: Winnow itself is a direct-P2P client,
+# and ordinary development must not depend on a bitcoind running on an owner's
+# workstation. Enable this workflow only after provisioning a dedicated runner
+# with the `node-e2e` label and its own disposable custom-signet fixture.
 #
 # Node location is configurable via repository VARIABLES (not secrets) —
 # unset variables fall back to the local-dev defaults:
@@ -16,9 +19,12 @@ name: Node e2e
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
+    inputs:
+      confirm_dedicated_fixture:
+        description: Run against the dedicated, disposable node-e2e fixture
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,9 +35,10 @@ concurrency:
 
 jobs:
   node-tests:
-    # Self-hosted runners on a PUBLIC repo: never execute fork code.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, btc-swift]
+    if: inputs.confirm_dedicated_fixture
+    # The extra label prevents this workload from falling back to a developer
+    # workstation or either of the general-purpose btc-swift runners.
+    runs-on: [self-hosted, macOS, btc-swift, node-e2e]
     timeout-minutes: 90
     env:
       WINNOW_NODE_HOST: ${{ vars.BTC_SWIFT_NODE_HOST || '127.0.0.1' }}
