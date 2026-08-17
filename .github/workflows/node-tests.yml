@@ -70,24 +70,29 @@ jobs:
       - name: Install xcodegen if absent
         run: which xcodegen || brew install xcodegen
 
-      - name: Install bitcoin-cli if absent (cookie auth needs the local CLI + datadir)
+      - name: Install bitcoin-cli if absent (file-based RPC auth needs the local CLI + datadir)
         run: which bitcoin-cli || brew install bitcoin
 
-      - name: Materialize node RPC cookie
-        # The cookie authenticates RPC to the dev node over Tailscale. Stored
-        # as a repo secret; regenerate with `gh secret set BTC_SWIFT_RPC_COOKIE
-        # < ~/.bitcoin-mysignet/signet/.cookie` after any node restart.
+      - name: Materialize fixed node RPC credential
+        # BTC_SWIFT_RPC_COOKIE keeps its historical name, but its value is the
+        # dedicated winnow-ci username:password backed by rpcauth on the node.
+        # Writing it as a cookie file lets bitcoin-cli consume the credential
+        # without putting it on the command line. It survives node restarts.
         env:
-          WINNOW_RPC_COOKIE: ${{ secrets.BTC_SWIFT_RPC_COOKIE }}
+          WINNOW_RPC_AUTH: ${{ secrets.BTC_SWIFT_RPC_COOKIE }}
         run: |
+          case "$WINNOW_RPC_AUTH" in
+            winnow-ci:*) ;;
+            *) echo "::error::BTC_SWIFT_RPC_COOKIE must contain the fixed winnow-ci rpcauth credential"; exit 1 ;;
+          esac
           DD="${WINNOW_DATADIR:-$HOME/.bitcoin-mysignet}"
           mkdir -p "$DD/signet"
           # bitcoin-cli derives the chain from the conf file; without it the
           # CLI assumes mainnet and looks for $DD/.cookie instead of
           # $DD/signet/.cookie — write both plus a minimal conf.
           printf 'signet=1\nserver=1\n' > "$DD/bitcoin.conf"
-          printf '%s' "$WINNOW_RPC_COOKIE" > "$DD/.cookie"
-          printf '%s' "$WINNOW_RPC_COOKIE" > "$DD/signet/.cookie"
+          printf '%s' "$WINNOW_RPC_AUTH" > "$DD/.cookie"
+          printf '%s' "$WINNOW_RPC_AUTH" > "$DD/signet/.cookie"
           chmod 600 "$DD/.cookie" "$DD/signet/.cookie"
 
       - name: Locate developer tools
