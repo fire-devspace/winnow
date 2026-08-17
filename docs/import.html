@@ -56,11 +56,11 @@ answers against the chain, forward from that height, and continues.</p>
 <p>The bundle is not a convenience file. <strong>The bundle is the
 history.</strong> Without it there is no import.</p>
 <hr />
-<h2 id="format-version-1">2. Format (version 1)</h2>
+<h2 id="format-version-2">2. Format (version 2)</h2>
 <p>JSON, one object:</p>
 <div class="sourceCode" id="cb1"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;network&quot;</span><span class="fu">:</span> <span class="st">&quot;signet&quot;</span><span class="fu">,</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;descriptor&quot;</span><span class="fu">:</span> <span class="st">&quot;tr([fp/86&#39;/1&#39;/0&#39;]tpub…/&lt;0;1&gt;/*)#checksum&quot;</span><span class="fu">,</span></span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;mnemonic&quot;</span><span class="fu">:</span> <span class="st">&quot;word …&quot;</span><span class="fu">,</span></span>
@@ -73,22 +73,25 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;scriptPubKey&quot;</span><span class="fu">:</span> <span class="st">&quot;5120…&quot;</span><span class="fu">,</span></span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;chain&quot;</span><span class="fu">:</span> <span class="dv">0</span><span class="fu">,</span></span>
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;index&quot;</span><span class="fu">:</span> <span class="dv">3</span><span class="fu">,</span></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span></span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;transactions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span></span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;txid&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;display hex&gt;&quot;</span><span class="fu">,</span></span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span><span class="fu">,</span></span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;received&quot;</span><span class="fu">:</span> <span class="dv">50000</span><span class="fu">,</span></span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;spent&quot;</span><span class="fu">:</span> <span class="dv">0</span></span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span><span class="fu">,</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;silentPaymentTweak&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;32-byte scalar hex; silent-payment outputs only&gt;&quot;</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;transactions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;txid&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;display hex&gt;&quot;</span><span class="fu">,</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span><span class="fu">,</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;received&quot;</span><span class="fu">:</span> <span class="dv">50000</span><span class="fu">,</span></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;spent&quot;</span><span class="fu">:</span> <span class="dv">0</span><span class="fu">,</span></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;fee&quot;</span><span class="fu">:</span> <span class="dv">250</span></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Rules the importer enforces before any network call:</p>
 <ul>
-<li><code>version</code> must be <code>1</code>. Unknown versions fail
-closed.</li>
+<li><code>version</code> is <code>1</code> or <code>2</code>. Version 1
+remains readable for existing descriptor-only exports; writers emit
+version 2. Unknown versions fail closed.</li>
 <li><code>network</code> is <code>signet</code> or <code>mainnet</code>
 (the two networks the app opens).</li>
 <li>At least one of <code>descriptor</code> or <code>mnemonic</code> is
@@ -101,12 +104,19 @@ derived from the mnemonic equals the bundle descriptor, or import throws
 mnemonic in the keychain (spendable).</li>
 <li>Descriptor-only: watch-only. The descriptor must be that same
 single-sig shape. Signing is impossible until a secret is supplied by
-some later path (there is none in v1 — watch-only stays
+some later path (there is none today — watch-only stays
 watch-only).</li>
-<li>Every claimed UTXO’s <code>scriptPubKey</code> must be exactly what
-the descriptor derives at <code>(chain, index)</code>. A bundle cannot
-attach an arbitrary output to this wallet by lying about
-coordinates.</li>
+<li>For an ordinary UTXO, <code>silentPaymentTweak</code> is absent and
+<code>scriptPubKey</code> must be exactly what the descriptor derives at
+<code>(chain, index)</code>. A bundle cannot attach an arbitrary output
+to this wallet by lying about coordinates.</li>
+<li>For a BIP352 UTXO, version 2 carries
+<code>silentPaymentTweak</code>: the 32-byte scalar added to the
+wallet’s silent-payment spend key. The mnemonic is required because a
+BIP86 descriptor does not contain that key. The importer derives
+<code>b_spend + tweak</code>, checks the resulting output script, and
+persists the tweak for signing. Bad scalars, descriptor-only
+silent-payment claims, and script mismatches fail closed.</li>
 <li><code>txid</code> values are display (big-endian) hex on the wire
 and in the file; internally they are reversed to Bitcoin’s byte order,
 same as the rest of the stack.</li>
@@ -115,10 +125,20 @@ same as the rest of the stack.</li>
 <li>Scanning resumes at <code>lastKnownHeight + 1</code>.
 <code>creationHeight</code> of the new wallet state <em>is</em>
 <code>lastKnownHeight</code>.</li>
+<li><code>fee</code> on a history entry is optional. The writer includes
+it only when every input of that transaction was ours (the only case a
+filter client can compute the fee exactly). Older v1 files omit the key;
+readers treat absence as unknown. This is display state — omitting it
+does not create or destroy money. The on-device
+<code>observedFeeRates</code> samples FeePolicy uses are
+<strong>not</strong> in the bundle; a restored wallet falls back to the
+static presets until it observes new sends.</li>
 </ul>
-<p>The format is versioned so a future <code>proof</code> field
-(Utreexo, <a href="read-side.md">read-side</a> §5.3) can be added
-without breaking v1 readers.</p>
+<p>Version 2 is the first schema change: it adds the recovery metadata
+that BIP352 outputs require while preserving version 1 reads. The
+version boundary leaves room for a future <code>proof</code> field
+(Utreexo, <a href="read-side.md">read-side</a> §5.3) without silently
+changing old semantics.</p>
 <p>Vaults are not in this bundle. A vault is a separate descriptor the
 user adds in-app; its history follows the same forward-only rule (<a
 href="vaults.md">vaults</a> §5).</p>
@@ -225,7 +245,32 @@ omission or by a too-high height. The chain check catches spends inside
 the scanned window. It does not reconstruct a past the bundle refused to
 include.</p>
 <hr />
-<h2 id="what-this-is-not">5. What this is not</h2>
+<h2 id="export-the-writer">5. Export (the writer)</h2>
+<p>Winnow writes version 2 JSON and reads versions 1 and 2. Settings →
+<strong>Export wallet bundle</strong> writes descriptor + known UTXOs +
+history (including <code>fee</code> when known) +
+<code>lastKnownHeight</code> = the live FilterSync frontier
+(<code>nextScanHeight − 1</code>). The app persists that frontier back
+into <code>WalletState</code> after each sync pass —
+<code>apply(match:)</code> alone does not move it — so an export after
+ordinary app use resumes where the phone actually stopped, not at the
+creation/import height. The mnemonic is <strong>excluded by
+default</strong>; including it is a hot backup and takes an explicit
+toggle plus a confirm. If the wallet holds a silent-payment UTXO,
+watch-only export is refused: omitting the BIP352 spend key would create
+an incomplete recovery artifact. The on-screen preview redacts the
+mnemonic line; the shared file is the real JSON. The share-sheet file is
+a unique, backup-excluded temp that is deleted when the sheet closes,
+the seed toggle flips, or the write fails. A missing keystore entry or
+an xprv-only wallet throws <code>mnemonicUnavailable</code> rather than
+a raw keystore error.</p>
+<p>A Winnow-native wallet that is never exported cannot be recovered
+here from the 12 words alone — that is the no-back-scan rule, not a
+missing feature of import. Export is the other half.</p>
+<p>Pending (height 0) change outputs stay in the UTXO set: they are live
+spendable state.</p>
+<hr />
+<h2 id="what-this-is-not">6. What this is not</h2>
 <ul>
 <li><strong>Not a BIP39-only import.</strong> A 12-word phrase without
 history would force a back-scan. The onboarding UI does not offer “type
@@ -241,17 +286,17 @@ Broader descriptor import is a format-version bump, not a silent
 widening of <code>tr(KEY)</code>.</li>
 </ul>
 <hr />
-<h2 id="conclusion">6. Conclusion</h2>
+<h2 id="conclusion">7. Conclusion</h2>
 <p>Moving a wallet onto this phone is a data-portability problem, not a
 scanning problem. The previous wallet ships its answers; this wallet
 checks the answers it can check (spends after
 <code>lastKnownHeight</code>, script/descriptor agreement) and refuses
 to pretend the rest of history can be privately reconstructed on a
 radio.</p>
-<p><strong>v1 is therefore: a versioned JSON bundle (descriptor and/or
-mnemonic + UTXOs + history + height), seeded as claimed, verified by
-forward filter-scan, with omissions and too-high heights documented as
-residual risk rather than solved.</strong></p>
+<p><strong>The bundle is therefore: versioned JSON (descriptor and/or
+mnemonic + recoverable UTXOs + history + height), seeded as claimed,
+verified by forward filter-scan, with omissions and too-high heights
+documented as residual risk rather than solved.</strong></p>
 </main>
 </body>
 </html>

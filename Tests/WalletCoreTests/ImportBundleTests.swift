@@ -1,6 +1,7 @@
 import BitcoinCore
 import BitcoinP2P
 import Foundation
+import P256K
 import Testing
 @testable import WalletCore
 
@@ -66,6 +67,12 @@ struct ImportBundleTests {
         #expect(await wallet.nextReceiveIndex == 2) // past the highest claimed index
         // The secret enables spending.
         #expect(try keyStore.load(walletID: "73c5da0a") == .mnemonic(testMnemonic))
+
+        // V1 remains a supported read format for descriptor-derived funds.
+        var legacy = bundle
+        legacy.version = 1
+        let legacyWallet = try Wallet.importing(legacy, keyStore: InMemoryKeyStore())
+        #expect(await legacyWallet.balance == 150_000)
     }
 
     @Test("descriptor/mnemonic disagreement and bad claims are rejected")
@@ -165,6 +172,7 @@ struct ImportBundleTests {
     func exportRoundTrip() async throws {
         let original = try await fundedWallet()
         let bundle = try await original.exportBundle()
+        #expect(bundle.version == 2)
         #expect(bundle.mnemonic == nil)
         #expect(bundle.descriptor != nil)
         #expect(bundle.lastKnownHeight == 99) // nextScanHeight 100 − 1
@@ -215,6 +223,116 @@ struct ImportBundleTests {
         #expect(try keyStore.load(walletID: "73c5da0a") == .mnemonic(testMnemonic))
         #expect(try await restored.address(chain: .receive, index: 0)
                     == (try await original.address(chain: .receive, index: 0)))
+    }
+
+    /// A source wallet with one BIP352 UTXO whose script is exactly
+    /// (b_spend + tweak)·G. The state-file hop uses the same persisted shape
+    /// the live silent-payment scanner writes.
+    private func silentPaymentWallet() async throws
+        -> (wallet: Wallet, tweak: Data, script: Data, storageURL: URL)
+    {
+        let keyStore = InMemoryKeyStore()
+        let storageURL = tempFileURL("sp-export-wallet.json")
+        _ = try Wallet.create(network: .signet, keyStore: keyStore,
+                              storageURL: storageURL, entropy: testEntropy,
+                              creationHeight: 100)
+        let master = try testMaster()
+        let scan = try SilentPaymentReceiving.scanKey(from: master, coinType: 1)
+        let spend = try SilentPaymentReceiving.spendKey(from: master, coinType: 1)
+        let tweak = try SilentPaymentReceiving.labelTweak(
+            scanPrivateKey: try #require(scan.privateKey), label: 42)
+        let script = try SilentPaymentReceiving.outputScript(
+            spendPrivateKey: try #require(spend.privateKey), tweak: tweak)
+        var state = try JSONDecoder().decode(WalletState.self,
+                                             from: Data(contentsOf: storageURL))
+        state.utxos.append(WalletUTXO(
+            txid: Data(repeating: 0xC1, count: 32), vout: 0, amount: 150_000,
+            scriptPubKey: script, chain: .receive, index: 0, height: 101,
+            silentPaymentTweak: tweak))
+        try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+        return (try Wallet.open(storageURL: storageURL, keyStore: keyStore),
+                tweak, script, storageURL)
+    }
+
+    @Test("v2 restores and spends a silent-payment UTXO")
+    func silentPaymentExportRoundTrip() async throws {
+        let fixture = try await silentPaymentWallet()
+        defer { try? FileManager.default.removeItem(at: fixture.storageURL) }
+
+        // Descriptor-only export cannot carry the BIP352 spend key and must
+        // fail rather than write an incomplete recovery artifact.
+        do {
+            _ = try await fixture.wallet.exportBundle()
+            Issue.record("expected silentPaymentExportRequiresMnemonic")
+        } catch let error as WalletError {
+            #expect(error == .silentPaymentExportRequiresMnemonic)
+        }
+
+        let exported = try await fixture.wallet.exportBundle(includeMnemonic: true)
+        #expect(exported.version == 2)
+        #expect(exported.utxos[0].silentPaymentTweak == fixture.tweak.hex)
+        let parsed = try JSONDecoder().decode(
+            ImportBundle.self, from: Data(exported.serialized().utf8))
+        let restored = try Wallet.importing(parsed, keyStore: InMemoryKeyStore())
+        #expect(await restored.balance == 150_000)
+        #expect(await restored.utxos[0].silentPaymentTweak == fixture.tweak)
+
+        // Spend after restore, then verify the witness against the imported
+        // output script. A lost or misapplied tweak makes this fail.
+        let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
+        let prepared = try await restored.buildSend(
+            payments: [Payment(amount: 60_000, scriptPubKey: destination)],
+            feeRateSatPerVByte: 2)
+        let spend = prepared.built.transaction
+        let sighash = try SighashBIP341.sighash(
+            tx: spend, inputIndex: 0,
+            spentOutputs: [SighashBIP341.SpentOutput(amount: 150_000,
+                                                     scriptPubKey: fixture.script)],
+            hashType: .default)
+        var message = [UInt8](sighash)
+        let signature = try P256K.Schnorr.SchnorrSignature(
+            dataRepresentation: try #require(spend.inputs[0].witness.first))
+        let outputKey = Data(fixture.script.dropFirst(2))
+        #expect(P256K.Schnorr.XonlyKey(dataRepresentation: outputKey)
+            .isValid(signature, for: &message))
+    }
+
+    @Test("v2 rejects incomplete or malformed silent-payment claims")
+    func silentPaymentImportRejections() async throws {
+        let fixture = try await silentPaymentWallet()
+        defer { try? FileManager.default.removeItem(at: fixture.storageURL) }
+        let hot = try await fixture.wallet.exportBundle(includeMnemonic: true)
+
+        var watchOnly = hot
+        watchOnly.mnemonic = nil
+        #expect(throws: WalletError.invalidBundle("silent-payment UTXOs require a mnemonic")) {
+            _ = try Wallet.importing(watchOnly, keyStore: InMemoryKeyStore())
+        }
+
+        var malformed = hot
+        malformed.utxos[0].silentPaymentTweak = "01"
+        #expect(throws: WalletError.invalidBundle("bad silentPaymentTweak")) {
+            _ = try Wallet.importing(malformed, keyStore: InMemoryKeyStore())
+        }
+
+        var zero = hot
+        zero.utxos[0].silentPaymentTweak = String(repeating: "00", count: 32)
+        #expect(throws: WalletError.invalidBundle("bad silentPaymentTweak")) {
+            _ = try Wallet.importing(zero, keyStore: InMemoryKeyStore())
+        }
+
+        var mislabeledV1 = hot
+        mislabeledV1.version = 1
+        #expect(throws: WalletError.invalidBundle("silentPaymentTweak requires version 2")) {
+            _ = try Wallet.importing(mislabeledV1, keyStore: InMemoryKeyStore())
+        }
+
+        var wrongScript = hot
+        wrongScript.utxos[0].scriptPubKey = Data(
+            [0x51, 0x20] + repeatElement(0x99, count: 32)).hex
+        #expect(throws: WalletError.self) {
+            _ = try Wallet.importing(wrongScript, keyStore: InMemoryKeyStore())
+        }
     }
 
     @Test("export with the mnemonic refuses an xprv-only wallet")
