@@ -78,9 +78,25 @@ enum SignetMiner {
     /// success path as well as the failure one: a lost race that the retry
     /// then won used to leave no trace at all, so a quiet log said nothing
     /// about whether races were being lost — and a retry bound nobody can
-    /// measure is a bound nobody can justify (#28). Every draw prints now, so
-    /// `lost=0` means no race was lost and no `signet-miner:` output at all
-    /// means this code did not run.
+    /// measure is a bound nobody can justify (#28). `lost=0` means no race
+    /// was lost.
+    ///
+    /// **Every exit traces: `won`, `exhausted`, `threw`.** The third was
+    /// missing until CI run 31987164939, where `submitMinedBlock` threw at its
+    /// first `getblocktemplate` and `mineOntoTip` returned through an
+    /// untraced path — the call ran, entered the loop, and printed nothing.
+    /// The comment here previously claimed no output meant the code had not
+    /// run, and that run is the counterexample. Silence is only meaningful
+    /// once all exits are covered, which is what `result=threw` restores.
+    ///
+    /// The remaining caveat is delivery, not coverage: this writes to the
+    /// process's fd 2, and this copy runs inside the iOS-simulator test
+    /// runner, whose fd 2 relay to the step log is **unverified**. Simulator
+    /// fd 1 does arrive — run 31987164939's `UI tests` step carries the
+    /// `E2E send error:` line that `WinnowAppUITests.swift` `print`s — but
+    /// fd 2 has never been observed either way. So absent output from the UI
+    /// leg is a delivery question first and a coverage question second, and
+    /// switching this to `print` is the fix if fd 2 turns out not to relay.
     private static func trace(_ fields: String) {
         FileHandle.standardError.write(Data("signet-miner: \(fields)\n".utf8))
     }
