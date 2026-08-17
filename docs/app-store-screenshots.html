@@ -40,8 +40,8 @@ candidates</h1>
 <p>The canonical UI suite was last captured on 2026-08-17 using an
 iPhone 17 Pro Max simulator. Every PNG in <code>screenshots/</code> is
 1320 × 2868 pixels, the 6.9-inch portrait size.</p>
-<p>Use these six files, in this order, as the current upload
-candidates:</p>
+<p>Use these six files, in this order, as the composition candidates for
+the final recapture:</p>
 <ol type="1">
 <li><code>01-onboarding.png</code> — product and privacy model</li>
 <li><code>03-receive.png</code> — native Taproot receive flow</li>
@@ -52,9 +52,12 @@ signing</li>
 <li><code>11-vault-list.png</code> — 2-of-3 vault support</li>
 <li><code>15-vault-cosign.png</code> — output-by-output PSBT review</li>
 </ol>
-<p>These are deterministic signet fixtures, not real funds. Recheck the
-set after the mainnet-default change because the onboarding copy
-currently names signet.</p>
+<p>These are deterministic signet fixtures, not real funds. All six were
+visually inspected on 2026-08-17; none contains a mnemonic or
+development endpoint. They are not yet upload-ready: onboarding
+explicitly names signet and the payment screens use testnet addresses.
+Recapture and recheck the set after the mainnet-default change in
+#9.</p>
 <p>Do not upload <code>02</code>, <code>14</code>, <code>20</code>,
 <code>21</code>, or <code>22</code>: they display the deterministic test
 mnemonic. Do not upload <code>07</code>, <code>08</code>,

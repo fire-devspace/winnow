@@ -2,7 +2,7 @@
 
 The canonical UI suite was last captured on 2026-08-17 using an iPhone 17 Pro Max simulator. Every PNG in `screenshots/` is 1320 × 2868 pixels, the 6.9-inch portrait size.
 
-Use these six files, in this order, as the current upload candidates:
+Use these six files, in this order, as the composition candidates for the final recapture:
 
 1. `01-onboarding.png` — product and privacy model
 2. `03-receive.png` — native Taproot receive flow
@@ -11,7 +11,7 @@ Use these six files, in this order, as the current upload candidates:
 5. `11-vault-list.png` — 2-of-3 vault support
 6. `15-vault-cosign.png` — output-by-output PSBT review
 
-These are deterministic signet fixtures, not real funds. Recheck the set after the mainnet-default change because the onboarding copy currently names signet.
+These are deterministic signet fixtures, not real funds. All six were visually inspected on 2026-08-17; none contains a mnemonic or development endpoint. They are not yet upload-ready: onboarding explicitly names signet and the payment screens use testnet addresses. Recapture and recheck the set after the mainnet-default change in #9.
 
 Do not upload `02`, `14`, `20`, `21`, or `22`: they display the deterministic test mnemonic. Do not upload `07`, `08`, `12`, or `13`: they expose development-node or service configuration. The remaining captures are engineering evidence, not selected store artwork. No App Store upload is performed by the test suite.
 
