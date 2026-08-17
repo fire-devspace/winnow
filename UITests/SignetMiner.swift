@@ -74,26 +74,80 @@ enum SignetMiner {
     /// against the node's background miner, not a broken block.
     private static let offChainAnswers: Set<String> = ["inconclusive", "duplicate-inconclusive"]
 
+    /// One `key=value` line per mining draw, on stderr. Emitted on the
+    /// success path as well as the failure one: a lost race that the retry
+    /// then won used to leave no trace at all, so a quiet log said nothing
+    /// about whether races were being lost — and a retry bound nobody can
+    /// measure is a bound nobody can justify (#28). Every draw prints now, so
+    /// `lost=0` means no race was lost and no `signet-miner:` output at all
+    /// means this code did not run.
+    private static func trace(_ fields: String) {
+        FileHandle.standardError.write(Data("signet-miner: \(fields)\n".utf8))
+    }
+
+    /// Seconds since `start`, as a bare decimal so the trace lines aggregate
+    /// with awk without unit-stripping. The line carries its own duration
+    /// because log timestamps do not: CI stamped all 102 lines of the first
+    /// instrumented run within 10ms of step end, so they are capture times,
+    /// not emit times, and every draw looked instantaneous.
+    private static func elapsed(since start: ContinuousClock.Instant) -> String {
+        let duration = ContinuousClock.now - start
+        return String(format: "%.3f", Double(duration.components.seconds)
+            + Double(duration.components.attoseconds) * 1e-18)
+    }
+
     /// Mines one block paying the subsidy (+fees) to `payoutScript`. Returns
     /// the accepted block hash (display hex) whether or not it became the tip;
     /// callers that need the tip use `mineOntoTip`.
+    ///
+    /// `result=connected-at-submit` is exactly what a nil `submitblock` answer
+    /// licenses — the node accepted the block and connected it *then*. It is
+    /// not a tip claim: this path never re-reads `bestBlockHash`, so a block
+    /// reorged out a moment later still traces as connected-at-submit.
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
-        try await submitMinedBlock(payingTo: payoutScript).hash
+        let start = ContinuousClock.now
+        let submission = try await submitMinedBlock(payingTo: payoutScript)
+        trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
+            + " elapsed_s=\(elapsed(since: start)) answer=\(submission.answer ?? "-")")
+        return submission.hash
     }
 
     /// Mines until one of our blocks is the tip. The dev node's background
     /// miner produces a block every ~10 minutes, so losing a race is expected:
     /// re-mine on the winner rather than failing the test.
+    ///
+    /// `maxAttempts` bounds one tip win, but the suites need long unbroken
+    /// runs of them — 101 in `FullLoopDiffTests`, 102 across the UI e2e — so
+    /// at a per-race loss probability `p` a suite survives with probability
+    /// `(1 - p^maxAttempts)^101`: 4.05% at p = 0.5 on the old bound of 5, and
+    /// 99.99% at 20. Extra attempts cost nothing on runs that lose no race,
+    /// which is what makes raising the bound safe *before* the measurement it
+    /// is waiting on; size it for real once the traces above give a p (#28).
+    ///
+    /// First measurement, uncontended: 0 losses in 101 draws, so p ≤ 2.9% at
+    /// 95% confidence. That is the regime with one suite on the node. The
+    /// contended p — two suites mining together — is still unobserved, and it
+    /// is the one this bound has to survive.
     @discardableResult
     static func mineOntoTip(payingTo payoutScript: Data,
-                            maxAttempts: Int = 5) async throws -> String {
-        var lastAnswer = "our block connected but the tip moved on"
-        for _ in 0 ..< maxAttempts {
+                            maxAttempts: Int = 20) async throws -> String {
+        let start = ContinuousClock.now
+        var lastAnswer = "connected-then-reorged"
+        var lost = 0
+        for attempt in 0 ..< maxAttempts {
             let submission = try await submitMinedBlock(payingTo: payoutScript)
-            if try BitcoinCLI.bestBlockHash() == submission.hash { return submission.hash }
+            if try BitcoinCLI.bestBlockHash() == submission.hash {
+                trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
+                    + " lost=\(lost) elapsed_s=\(elapsed(since: start))"
+                    + " last=\(lost == 0 ? "-" : lastAnswer)")
+                return submission.hash
+            }
+            lost += 1
             if let answer = submission.answer { lastAnswer = answer }
         }
+        trace("mineOntoTip result=exhausted attempts=\(maxAttempts) max=\(maxAttempts)"
+            + " lost=\(lost) elapsed_s=\(elapsed(since: start)) last=\(lastAnswer)")
         throw MinerError.rejected("lost \(maxAttempts) block races (last: \(lastAnswer))")
     }
 
