@@ -71,7 +71,7 @@ Costs, stated plainly:
 - **Block headers** (needed to know the chain and anchor filter headers): exactly 80 bytes per block — approx. 75 MB for the entire historical chain, and *zero* for a fresh wallet that starts at the tip.
 - **Filters, steady state:** ~144 blocks/day × approx. 15–20 KB ≈ **3 MB/day** (approx.) of filter download. A once-daily app open pulls a few MB — comparable to loading a couple of web pages.
 - **Matched blocks:** only blocks that actually contain the wallet's transactions, ~1–2 MB each (exact: block size varies up to 4M weight units). For typical personal use this is rare — days to weeks apart.
-- **CPU/battery:** hashing and matching a filter against a watch list of thousands of scripts is milliseconds of work per block on a modern phone. The signet UI suite measured mined→filter-detected at **0.75s** on an iPhone 17 simulator (2026-08-15, `screenshots/timings.json`) — that figure includes mining-propagation and the match, not just GCS lookup, and is a measurement on signet, not a mainnet bandwidth claim.
+- **CPU/battery:** hashing and matching a filter against a watch list of thousands of scripts is milliseconds of work per block on a modern phone. The signet UI suite measured mined→filter-detected at **0.69s** on an iPhone 17 Pro Max simulator (2026-08-17, `screenshots/timings.json`) — that figure includes mining-propagation and the match, not just GCS lookup, and is a measurement on signet, not a mainnet bandwidth claim.
 
 ### 2.6 Server-side privacy designs (considered, and why none is the default)
 

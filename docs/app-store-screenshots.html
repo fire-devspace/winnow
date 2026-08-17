@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="app-store-screenshot-candidates">App Store screenshot
+candidates</h1>
+<p>The canonical UI suite was last captured on 2026-08-17 using an
+iPhone 17 Pro Max simulator. Every PNG in <code>screenshots/</code> is
+1320 × 2868 pixels, the 6.9-inch portrait size.</p>
+<p>Use these six files, in this order, as the current upload
+candidates:</p>
+<ol type="1">
+<li><code>01-onboarding.png</code> — product and privacy model</li>
+<li><code>03-receive.png</code> — native Taproot receive flow</li>
+<li><code>05-send-form.png</code> — fee selection without a fee
+server</li>
+<li><code>06-send-review.png</code> — explicit payment review before
+signing</li>
+<li><code>11-vault-list.png</code> — 2-of-3 vault support</li>
+<li><code>15-vault-cosign.png</code> — output-by-output PSBT review</li>
+</ol>
+<p>These are deterministic signet fixtures, not real funds. Recheck the
+set after the mainnet-default change because the onboarding copy
+currently names signet.</p>
+<p>Do not upload <code>02</code>, <code>14</code>, <code>20</code>,
+<code>21</code>, or <code>22</code>: they display the deterministic test
+mnemonic. Do not upload <code>07</code>, <code>08</code>,
+<code>12</code>, or <code>13</code>: they expose development-node or
+service configuration. The remaining captures are engineering evidence,
+not selected store artwork. No App Store upload is performed by the test
+suite.</p>
+<p>Validation command:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-g</span> pixelWidth <span class="at">-g</span> pixelHeight docs/screenshots/<span class="pp">*</span>.png</span></code></pre></div>
+<p>The producing run executed 10 tests with zero failures. Its measured
+scenario timings are in <code>screenshots/timings.json</code>.</p>
+</main>
+</body>
+</html>

@@ -101,7 +101,7 @@ Each absence has a paper that says what you get instead. The landing page lists 
 
 ## 7. How the implementation is checked
 
-The validation appendix of [the read side](read-side.md) covers the stack. The mobile-specific claim — that the *app* does what the libraries promise — is the signet UI suite: it drives the real binary, mines to it, spends from it, cosigns a vault, verifies an import, and writes the screenshots on this site plus `screenshots/timings.json`. Latest run (iPhone 17 simulator, 2026-08-15): wallet create 1.78s, address shown 2.17s, mined→filter-detected 0.75s, form→broadcast 0.67s.
+The validation appendix of [the read side](read-side.md) covers the stack. The mobile-specific claim — that the *app* does what the libraries promise — is the signet UI suite: it drives the real binary, mines to it, spends from it, cosigns a vault, verifies an import, and writes the screenshots on this site plus `screenshots/timings.json`. Latest run (iPhone 17 Pro Max simulator, 2026-08-17): wallet create 2.74s, address shown 2.16s, mined→filter-detected 0.69s, form→broadcast 0.66s.
 
 The suite is ~200 tests plus those UI scenarios, on every push.
 

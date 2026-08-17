@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="v1-launch-handoff">v1 launch handoff</h1>
+<p>Status recorded 2026-08-17. This is a handoff checkpoint, not
+authorization to spend bitcoin, switch the default network, tag v1.0.0,
+upload assets, or submit the app.</p>
+<h2 id="ready-for-review">Ready for review</h2>
+<ul>
+<li>PR #36 prevents stale simulators and
+<code>WinnowAppUITests-Runner</code> processes from surviving the UI leg
+on a self-hosted runner. Local package tests passed, and a controlled
+dummy-runner probe verified both cleanup actions.</li>
+<li>PR #37 adds bundle v2 recovery metadata for silent-payment UTXOs,
+keeps v1 imports readable, and refuses incomplete watch-only export when
+silent-payment funds are present. Package tests passed (263 tests), the
+simulator build succeeded, and recovery is covered through independent
+Schnorr verification.</li>
+<li>The 2026-08-17 iPhone 17 Pro Max signet run passed all 10 UI tests
+and produced 1320 × 2868 screenshots. The App Store-safe candidate
+subset and exclusions are in <code>app-store-screenshots.md</code>.</li>
+<li>The uncontended UI mining sample completed 102 tip wins with zero
+lost races. That supports the existing low-contention observation for
+#28; it does not measure the deliberately contended probability needed
+to close that issue.</li>
+</ul>
+<h2 id="external-ci-blocker">External CI blocker</h2>
+<p>Both PRs depend on the same node-backed check. The runner reaches the
+signet node, but GitHub’s <code>BTC_SWIFT_RPC_COOKIE</code> contains a
+cookie invalidated by the node restart. Local RPC with the node’s
+current cookie succeeds, and the existing <code>miner</code> wallet was
+loaded before the successful UI run. No credential is stored in this
+repository.</p>
+<p>Owner action for #14:</p>
+<ol type="1">
+<li>On <code>alexs-mac-mini</code>, generate a dedicated fixed
+<code>rpcauth</code> username/password and add the generated
+<code>rpcauth=</code> line to
+<code>~/.bitcoin-mysignet/bitcoin.conf</code>.</li>
+<li>Restart the node and run <code>loadwallet miner</code> once.</li>
+<li>Store the matching <code>username:password</code> value in the
+repository secret <code>BTC_SWIFT_RPC_COOKIE</code>.</li>
+<li>Rerun the failed node-backed checks on PRs #36 and #37; merge only
+after they pass.</li>
+</ol>
+<p>Do not paste the live cookie into an issue, pull request, log, or
+tracked file. A fixed credential should be dedicated to CI and rotated
+if exposed.</p>
+<h2 id="owner-gated-launch-sequence">Owner-gated launch sequence</h2>
+<ol type="1">
+<li>Merge #36 and #37 after green node-backed checks.</li>
+<li>Perform #8 exactly as written with a deliberately small real-mainnet
+amount and retain the launch recording. This is the only step here that
+spends real bitcoin.</li>
+<li>If #8 passes, implement #9: make mainnet the default, recheck fee
+presets and peer diversity, and update onboarding copy.</li>
+<li>Recapture the selected 6.9-inch screenshots after #9, confirm that
+no mnemonic or development endpoint is visible, then upload them for
+#6.</li>
+<li>Verify full Xcode execution on the intended self-hosted CI runner
+for #11. Keep #28 open until a deliberately contended mining sample
+sizes the retry bound.</li>
+<li>Only after every gate is green: tag v1.0.0, archive, upload, and
+submit.</li>
+</ol>
+</main>
+</body>
+</html>
