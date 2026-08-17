@@ -58,7 +58,7 @@ This is the constraint that makes the rest cheap. It is not a v1 shortcut.
 
 Receiving is BIP86 P2TR. There is no legacy / nested-segwit / P2WPKH path, and no ECDSA signing path. One output type means one watch-list shape, one sighash, one witness size for fee math (66 bytes for a key-path spend), and no "which address type did this contact use?" branch in the UI.
 
-The phone can *pay* any standard address (bech32/bech32m, base58 P2PKH/P2SH) and can *send to* BIP352 silent-payment codes (`sp1…` / `tsp1…`). It cannot *receive* silent payments — that scan is a different, heavier read-side, and is a deliberate absence ([read-side](read-side.md) §3).
+The phone can *pay* any standard address (bech32/bech32m, base58 P2PKH/P2SH) and can send to or receive BIP352 silent payments (`sp1…` / `tsp1…`). Receive is opt-in because it follows a per-block tweak index; candidate scripts are still matched locally against the same compact-filter stream, and full blocks still come from P2P peers ([read-side](read-side.md) §3). The warning is explicit: the index operator learns that an IP follows silent-payment data, and payments received while the option is off are not detected.
 
 ### 4.3 Two modern multisig flavors, same read path
 
@@ -89,7 +89,7 @@ These are product decisions, not missing tickets:
 
 - Always-on mempool / background 0-conf / live fee histograms
 - Historical filter back-scan
-- Silent-payment receive
+- Silent-payment labels and historical backfill for periods when receive scanning was off
 - BIP37, Electrum, or any "ask a node about my address"
 - An embedded consensus engine or fraud-proof verifier
 - A vault coordinator server
@@ -109,6 +109,6 @@ The suite is ~200 tests plus those UI scenarios, on every push.
 
 ## 8. Status
 
-Protocol core, both vault schemes, silent-payment send, and the P2P read/write path are complete and vector-tested. The app runs on signet. Mainnet is available and treated as needing more care than a picker flip.
+Protocol core, both vault schemes, silent-payment send and opt-in receive, and the P2P read/write path are complete and vector-tested. The app runs on signet. Mainnet is available and treated as needing more care than a picker flip.
 
 **v1 is therefore: a foreground iOS client, Taproot-only, fresh-wallet, one dependency, talking only to `NODE_COMPACT_FILTERS` peers unless the user opts into a named server — with the four jobs split across the papers that follow.**

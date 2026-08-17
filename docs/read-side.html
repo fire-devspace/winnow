@@ -409,9 +409,12 @@ provable</td>
 <td>Show a consistent false filter-header chain, hide payments, or stall
 the tip</td>
 <td>Manual peers (Settings) so a user who has a node they trust can skip
-DNS seeds; headers still need PoW + chainwork</td>
+DNS seeds; seeds themselves resolve over DoH (not on-path UDP) with
+<code>getaddrinfo</code> fallback, and RFC1918/loopback answers are
+dropped; headers still need PoW + chainwork</td>
 <td>A partitioned phone can be lied to — the standard light-client
-eclipse caveat</td>
+eclipse caveat. DoH removes the unauthenticated-UDP seed rewrite; it
+does not remove a determined eclipse.</td>
 </tr>
 <tr>
 <td>Network observer (not a peer)</td>
@@ -532,10 +535,34 @@ the leak (address set, balances, IP) and linking to §2.2</td>
 <td>It’s the user’s threat model; the app’s job is to make the trade
 explicit, not to make it for them.</td>
 </tr>
+<tr>
+<td>12</td>
+<td>Optional: silent-payment receive (BIP352)</td>
+<td>User opts into a per-block <strong>tweak index</strong> in settings;
+candidate output scripts are computed on-device from the index’s 33-byte
+per-tx points (<code>input_hash·A</code>, BIP352 Appendix A) and matched
+against the <strong>same filter stream as row 2</strong></td>
+<td>Filters alone can’t do this — a BIP352 output script depends on each
+tx’s <em>input</em> keys, so there is no predetermined watch list. The
+index is block-level and query-free: the operator learns an IP follows
+silent-payment data, never which outputs are yours — a strictly better
+trade than §2.2, shipped the same way: opt-in, default off, warned.</td>
+</tr>
 </tbody>
 </table>
-<p>Two use cases are deliberately <strong>absent</strong> from the
-default path:</p>
+<p>On the trust model of row 12: the index steers <em>which blocks get
+fetched</em>, nothing else. Every credit is resolved against the
+merkle-verified block, and a matched output is spendable by construction
+(<code>b_spend + t_k</code> controls it or it wouldn’t have matched) —
+so a lying index can cause <strong>missed payments, never fake
+ones</strong>. Because the scan is forward-only on the same frontier as
+row 2, an index outage fails the sync loudly rather than silently
+skipping heights, and payments received while the toggle is off are not
+detected — the settings warning says so. Labeled addresses (BIP352
+labels) are out of v1 end-to-end; the wallet’s own change stays BIP86,
+so not even the change label is needed.</p>
+<p>One use case is deliberately <strong>absent</strong> from the default
+path:</p>
 <ul>
 <li><strong>Always-on mempool awareness</strong> (instant notification
 of <em>unexpected</em> payments, background 0-conf, live fee markets) —
@@ -544,11 +571,6 @@ cost the product rejects) or a server (privacy cost the product
 rejects). Bounded windows (§2.8) cover the cases where the user is
 present and expecting something; everything else waits for
 confirmation.</li>
-<li><strong>Silent-payment receive</strong> (BIP352 scan). Send-side is
-implemented (<a href="write-side.md">write-side</a> §6). Receive would
-mean tweak-checking every output in every block — a different, heavier
-read-side than matching a small watch list against BIP158 filters. Not
-in v1.</li>
 </ul>
 <hr />
 <h2 id="conclusion">4. Conclusion</h2>
@@ -634,8 +656,8 @@ surface: BIP39/32/86 (keys), BIP340 (Schnorr), BIP341 (Taproot trees,
 tweaks, control blocks, sighash — script-path vectors generated via
 Bitcoin Core’s own functional-test framework where the official file is
 silent), BIP350 (bech32m), BIP158 (GCS filters, byte-for-byte against
-real blocks), BIP327 (MuSig2), BIP352 (silent-payments sending),
-BIP380/387/389/390 (descriptors).</li>
+real blocks), BIP327 (MuSig2), BIP352 (silent-payment sending and
+receiving), BIP380/387/389/390 (descriptors).</li>
 <li><strong>Differential testing against Bitcoin Core</strong>
 (env-gated, against a local node): descriptor addresses vs
 <code>deriveaddresses</code>, transaction serialization vs
