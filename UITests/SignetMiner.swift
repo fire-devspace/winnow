@@ -104,6 +104,14 @@ enum SignetMiner {
             + Double(duration.components.attoseconds) * 1e-18)
     }
 
+    /// An error as a single space-free token, because the trace lines are
+    /// parsed by splitting on spaces — a message like "bitcoin-cli not found"
+    /// would break every field after it. The type name is enough to route a
+    /// reader to the cause; the full text is already in the test failure.
+    private static func label(_ error: Error) -> String {
+        String(describing: type(of: error))
+    }
+
     /// Mines one block paying the subsidy (+fees) to `payoutScript`. Returns
     /// the accepted block hash (display hex) whether or not it became the tip;
     /// callers that need the tip use `mineOntoTip`.
@@ -119,7 +127,18 @@ enum SignetMiner {
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
         let start = ContinuousClock.now
-        let submission = try await submitMinedBlock(payingTo: payoutScript)
+        let submission: (hash: String, answer: String?)
+        do {
+            submission = try await submitMinedBlock(payingTo: payoutScript)
+        } catch {
+            // draws_s=0.000, not "-": no draw completed, so no exposure was
+            // accrued, and keeping the field numeric everywhere means one awk
+            // recipe reads every line shape without special cases.
+            trace("mineBlock result=threw attempts=1"
+                + " call_s=\(seconds(ContinuousClock.now - start)) draws_s=0.000"
+                + " error=\(label(error))")
+            throw error
+        }
         let draw = ContinuousClock.now - start
         trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
             + " attempts=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
@@ -152,9 +171,21 @@ enum SignetMiner {
         var lost = 0
         for attempt in 0 ..< maxAttempts {
             let drawStart = ContinuousClock.now
-            let submission = try await submitMinedBlock(payingTo: payoutScript)
-            draws += ContinuousClock.now - drawStart
-            if try BitcoinCLI.bestBlockHash() == submission.hash {
+            let submission: (hash: String, answer: String?)
+            let isTip: Bool
+            do {
+                submission = try await submitMinedBlock(payingTo: payoutScript)
+                // Counted here so a throw from the draw itself adds nothing:
+                // an incomplete draw is not exposure.
+                draws += ContinuousClock.now - drawStart
+                isTip = try BitcoinCLI.bestBlockHash() == submission.hash
+            } catch {
+                trace("mineOntoTip result=threw attempts=\(attempt + 1) max=\(maxAttempts)"
+                    + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " draws_s=\(seconds(draws)) error=\(label(error))")
+                throw error
+            }
+            if isTip {
                 trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
                     + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
                     + " draws_s=\(seconds(draws))"

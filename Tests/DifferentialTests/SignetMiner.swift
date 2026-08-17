@@ -80,9 +80,23 @@ enum SignetMiner {
     /// success path as well as the failure one: a lost race that the retry
     /// then won used to leave no trace at all, so a quiet log said nothing
     /// about whether races were being lost — and a retry bound nobody can
-    /// measure is a bound nobody can justify (#28). Every draw prints now, so
-    /// `lost=0` means no race was lost and no `signet-miner:` output at all
-    /// means this code did not run.
+    /// measure is a bound nobody can justify (#28). `lost=0` means no race
+    /// was lost.
+    ///
+    /// **Every exit traces: `won`, `exhausted`, `threw`.** The third was
+    /// missing until CI run 31987164939, where `submitMinedBlock` threw at its
+    /// first `getblocktemplate` and `mineOntoTip` returned through an
+    /// untraced path — the call ran, entered the loop, and printed nothing.
+    /// The comment here previously claimed no output meant the code had not
+    /// run, and that run is the counterexample. Silence is only meaningful
+    /// once all exits are covered, which is what `result=threw` restores.
+    ///
+    /// The remaining caveat is delivery, not coverage: this writes to the
+    /// process's fd 2. `swift test` relays that to the step log (observed).
+    /// The `UITests` copy runs inside the iOS-simulator test runner, whose
+    /// fd 2 relay is **unverified** — simulator `print` (fd 1) is known to
+    /// arrive, fd 2 has never been observed either way. So absent output from
+    /// the UI leg is a delivery question first and a coverage question second.
     private static func trace(_ fields: String) {
         FileHandle.standardError.write(Data("signet-miner: \(fields)\n".utf8))
     }
@@ -106,6 +120,14 @@ enum SignetMiner {
             + Double(duration.components.attoseconds) * 1e-18)
     }
 
+    /// An error as a single space-free token, because the trace lines are
+    /// parsed by splitting on spaces — a message like "bitcoin-cli not found"
+    /// would break every field after it. The type name is enough to route a
+    /// reader to the cause; the full text is already in the test failure.
+    private static func label(_ error: Error) -> String {
+        String(describing: type(of: error))
+    }
+
     /// Mines one block paying the subsidy (+fees) to `payoutScript`. Returns
     /// the accepted block hash (display hex) whether or not it became the tip;
     /// callers that need the tip use `mineOntoTip`.
@@ -121,7 +143,18 @@ enum SignetMiner {
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
         let start = ContinuousClock.now
-        let submission = try await submitMinedBlock(payingTo: payoutScript)
+        let submission: (hash: String, answer: String?)
+        do {
+            submission = try await submitMinedBlock(payingTo: payoutScript)
+        } catch {
+            // draws_s=0.000, not "-": no draw completed, so no exposure was
+            // accrued, and keeping the field numeric everywhere means one awk
+            // recipe reads every line shape without special cases.
+            trace("mineBlock result=threw attempts=1"
+                + " call_s=\(seconds(ContinuousClock.now - start)) draws_s=0.000"
+                + " error=\(label(error))")
+            throw error
+        }
         let draw = ContinuousClock.now - start
         trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
             + " attempts=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
@@ -154,9 +187,21 @@ enum SignetMiner {
         var lost = 0
         for attempt in 0 ..< maxAttempts {
             let drawStart = ContinuousClock.now
-            let submission = try await submitMinedBlock(payingTo: payoutScript)
-            draws += ContinuousClock.now - drawStart
-            if try BitcoinCLI.bestBlockHash() == submission.hash {
+            let submission: (hash: String, answer: String?)
+            let isTip: Bool
+            do {
+                submission = try await submitMinedBlock(payingTo: payoutScript)
+                // Counted here so a throw from the draw itself adds nothing:
+                // an incomplete draw is not exposure.
+                draws += ContinuousClock.now - drawStart
+                isTip = try BitcoinCLI.bestBlockHash() == submission.hash
+            } catch {
+                trace("mineOntoTip result=threw attempts=\(attempt + 1) max=\(maxAttempts)"
+                    + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " draws_s=\(seconds(draws)) error=\(label(error))")
+                throw error
+            }
+            if isTip {
                 trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
                     + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
                     + " draws_s=\(seconds(draws))"
