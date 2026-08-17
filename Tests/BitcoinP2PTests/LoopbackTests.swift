@@ -202,6 +202,92 @@ struct LoopbackTests {
         await pool.stop()
     }
 
+    @Test("extraScripts reach the filter probe and trigger the block fetch")
+    func extraScriptsReachFilterProbe() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint])
+        await pool.start()
+        let chain = try HeaderChain(params: synthetic.params)
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  requiredCheckpointPeers: 1)
+
+        // The paying output at height 3 is discoverable ONLY through
+        // extraScripts — the base watch list is empty, like a silent-payment
+        // output whose candidate script exists nowhere but the tweak index.
+        let recorder = RangeRecorder()
+        let collector = MatchCollector()
+        try await sync.sync(watchScripts: [],
+                            extraScripts: { range in
+                                recorder.add(range)
+                                return [synthetic.watchHeight: [synthetic.watchScript]]
+                            }) { match in
+            collector.add(match)
+        }
+
+        // Consulted once per batch, with exactly the batch's height range.
+        #expect(recorder.ranges == [1 ... 6])
+        // The extra-only script matched height 3's filter and the full block
+        // was fetched and delivered — extras reach the GCS probe.
+        #expect(collector.matches.count == 1)
+        #expect(collector.matches[0].height == synthetic.watchHeight)
+        #expect(collector.matches[0].block.transactions[0].outputs.contains {
+            $0.scriptPubKey == synthetic.watchScript
+        })
+        #expect(await sync.nextScanHeight == 7)
+        await pool.stop()
+    }
+
+    @Test("extraScripts outage is fail-closed: frontier holds, restart finds the payment")
+    func extraScriptsOutageFailsClosed() async throws {
+        struct IndexOutage: Error {}
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint])
+        await pool.start()
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("filter-progress.json")
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1)
+
+        // Index outage: the provider throws. The error must surface and the
+        // frontier must hold — in memory and on disk — or a forward-only scan
+        // would skip the outage's heights permanently and invisibly.
+        await #expect(throws: IndexOutage.self) {
+            try await sync.sync(watchScripts: [],
+                                extraScripts: { _ in throw IndexOutage() }) { _ in }
+        }
+        #expect(await sync.nextScanHeight == 1)
+
+        // Recovery from persisted state, as after a crash/restart: a fresh
+        // instance rescans the held-back heights once the index is healthy,
+        // so the payment is still found.
+        let reloaded = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                      storageURL: progressFile, requiredCheckpointPeers: 1)
+        #expect(await reloaded.nextScanHeight == 1)
+        let collector = MatchCollector()
+        try await reloaded.sync(watchScripts: [],
+                                extraScripts: { _ in
+                                    [synthetic.watchHeight: [synthetic.watchScript]]
+                                }) { match in
+            collector.add(match)
+        }
+        #expect(collector.matches.count == 1)
+        #expect(collector.matches[0].height == synthetic.watchHeight)
+        #expect(await reloaded.nextScanHeight == 7)
+
+        await pool.stop()
+        try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent())
+    }
+
     @Test("a lying filter fails verification against the pinned header chain")
     func filterTamperingDetected() async throws {
         let synthetic = makeSyntheticChain(length: 4, watchHeight: 6)
@@ -222,4 +308,10 @@ struct LoopbackTests {
         }
         await pool.stop()
     }
+}
+
+/// Records the height ranges an extraScripts provider is consulted with.
+private final class RangeRecorder: @unchecked Sendable {
+    private(set) var ranges: [ClosedRange<UInt32>] = []
+    func add(_ range: ClosedRange<UInt32>) { ranges.append(range) }
 }

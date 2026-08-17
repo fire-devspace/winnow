@@ -21,8 +21,8 @@ public enum SilentPaymentSendingError: Error, Equatable {
 
 /// BIP352 silent payments, send side: input eligibility, the shared-secret
 /// derivation (input_hash · a · B_scan), and the per-recipient P2TR output
-/// scripts. Receiving/scanning is out of scope — this wallet only sends to
-/// silent payment addresses.
+/// scripts. Receiving/scanning lives in Receiving.swift and shares this
+/// file's input-eligibility rules.
 public enum SilentPaymentSending {
     /// BIP352 K_max: per-group (shared scan key) recipient limit.
     public static let maxRecipientsPerGroup = 2323
@@ -79,13 +79,20 @@ public enum SilentPaymentSending {
     /// (P2TR, P2WPKH, P2SH-P2WPKH, P2PKH — compressed keys only). Mirrors the
     /// BIP352 reference's get_pubkey_from_input.
     public static func eligiblePublicKey(of input: Input) -> Data? {
-        let script = input.prevoutScriptPubKey
+        eligiblePublicKey(prevoutScriptPubKey: input.prevoutScriptPubKey,
+                          scriptSig: input.scriptSig, witness: input.witness)
+    }
+
+    /// The same eligibility rules without a private key — the list is shared
+    /// by both sides of BIP352, so the receive-side scanner uses this to sum
+    /// input public keys from raw transactions.
+    public static func eligiblePublicKey(prevoutScriptPubKey script: Data,
+                                         scriptSig: Data, witness: [Data]) -> Data? {
         if isP2PKH(script) {
             // Slide a 33-byte window over the scriptSig from the back and take
             // the first slice whose HASH160 matches the scriptPubKey hash —
             // finds the compressed key even in malleated scriptSigs (BIP352).
             let hash = script.subdata(in: script.startIndex + 3 ..< script.startIndex + 23)
-            let scriptSig = input.scriptSig
             guard scriptSig.count >= 33 else { return nil }
             for end in stride(from: scriptSig.count, through: 33, by: -1) {
                 let candidate = scriptSig.subdata(in: end - 33 ..< end)
@@ -99,17 +106,17 @@ public enum SilentPaymentSending {
         if isP2SH(script) {
             // P2SH-P2WPKH: the redeem script (scriptSig minus its push opcode)
             // is a P2WPKH program; the key is the last witness item.
-            let redeemScript = input.scriptSig.dropFirst()
-            guard isP2WPKH(redeemScript), let key = input.witness.last, isValidCompressedKey(key)
+            let redeemScript = scriptSig.dropFirst()
+            guard isP2WPKH(redeemScript), let key = witness.last, isValidCompressedKey(key)
             else { return nil }
             return key
         }
         if isP2WPKH(script) {
-            guard let key = input.witness.last, isValidCompressedKey(key) else { return nil }
+            guard let key = witness.last, isValidCompressedKey(key) else { return nil }
             return key
         }
         if isP2TR(script) {
-            var stack = input.witness
+            var stack = witness
             if !stack.isEmpty {
                 // BIP341: a last item starting with 0x50 is the annex.
                 if stack.count > 1, stack.last?.first == 0x50 { stack.removeLast() }

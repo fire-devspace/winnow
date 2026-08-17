@@ -24,6 +24,7 @@ struct ReceiveView: View {
     }
 
     @State private var address: String?
+    @State private var silentPaymentAddress: String?
     @State private var error: String?
     @State private var unconfirmed: [UnconfirmedPayment] = []
     @State private var window: MempoolWindow?
@@ -62,6 +63,27 @@ struct ReceiveView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
+                    if let silentPaymentAddress {
+                        Divider().padding(.horizontal)
+                        Text("Silent payment address")
+                            .font(.subheadline.weight(.semibold))
+                        Text(silentPaymentAddress)
+                            .font(.system(.footnote, design: .monospaced))
+                            .multilineTextAlignment(.center)
+                            .textSelection(.enabled)
+                            .padding(.horizontal)
+                            .accessibilityIdentifier("silentPaymentAddress")
+                        HStack(spacing: 16) {
+                            Button("Copy") { UIPasteboard.general.string = silentPaymentAddress }
+                            ShareLink(item: silentPaymentAddress)
+                        }
+                        .buttonStyle(.bordered)
+                        Text("Static — reuse it freely; every payment lands at an unlinkable address. Payments are only found while silent payments stay enabled in Settings.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
                 } else if let error {
                     ContentUnavailableView("No address", systemImage: "exclamationmark.triangle",
                                            description: Text(error))
@@ -80,6 +102,9 @@ struct ReceiveView: View {
             .task {
                 address = try? await model.currentReceiveAddress()
                 if address == nil { error = "The wallet is not available." }
+                if model.spReceiveEnabled {
+                    silentPaymentAddress = try? await model.currentSilentPaymentAddress()
+                }
                 await openWindow()
             }
             .onDisappear { closeWindow() }
