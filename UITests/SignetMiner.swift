@@ -85,14 +85,22 @@ enum SignetMiner {
         FileHandle.standardError.write(Data("signet-miner: \(fields)\n".utf8))
     }
 
-    /// Seconds since `start`, as a bare decimal so the trace lines aggregate
-    /// with awk without unit-stripping. The line carries its own duration
-    /// because log timestamps do not: CI stamped all 102 lines of the first
+    /// A duration as bare decimal seconds, so the trace lines aggregate with
+    /// awk without unit-stripping. The lines carry their own durations because
+    /// log timestamps do not: CI stamped all 102 lines of the first
     /// instrumented run within 10ms of step end, so they are capture times,
     /// not emit times, and every draw looked instantaneous.
-    private static func elapsed(since start: ContinuousClock.Instant) -> String {
-        let duration = ContinuousClock.now - start
-        return String(format: "%.3f", Double(duration.components.seconds)
+    ///
+    /// Two fields, because they answer different questions and only coincide
+    /// when no race is lost. `call_s` is the whole call — every attempt plus
+    /// the tip re-read between them. `draws_s` is `submitMinedBlock` time
+    /// only, summed over attempts, which is the *exposure window*: a
+    /// competitor takes the tip only between our `getblocktemplate` and our
+    /// `submitblock`, so `draws_s / attempts` is the mean draw exactly.
+    /// Dividing `call_s` instead folds in the `bestBlockHash` check, which
+    /// sits outside the window and overstates it.
+    private static func seconds(_ duration: Duration) -> String {
+        String(format: "%.3f", Double(duration.components.seconds)
             + Double(duration.components.attoseconds) * 1e-18)
     }
 
@@ -104,12 +112,18 @@ enum SignetMiner {
     /// licenses — the node accepted the block and connected it *then*. It is
     /// not a tip claim: this path never re-reads `bestBlockHash`, so a block
     /// reorged out a moment later still traces as connected-at-submit.
+    ///
+    /// `call_s` and `draws_s` are equal here by construction — the call is
+    /// exactly one draw and does nothing else. Both are emitted anyway so one
+    /// awk recipe reads either trace line.
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
         let start = ContinuousClock.now
         let submission = try await submitMinedBlock(payingTo: payoutScript)
+        let draw = ContinuousClock.now - start
         trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
-            + " elapsed_s=\(elapsed(since: start)) answer=\(submission.answer ?? "-")")
+            + " attempts=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
+            + " answer=\(submission.answer ?? "-")")
         return submission.hash
     }
 
@@ -133,13 +147,17 @@ enum SignetMiner {
     static func mineOntoTip(payingTo payoutScript: Data,
                             maxAttempts: Int = 20) async throws -> String {
         let start = ContinuousClock.now
+        var draws = Duration.zero
         var lastAnswer = "connected-then-reorged"
         var lost = 0
         for attempt in 0 ..< maxAttempts {
+            let drawStart = ContinuousClock.now
             let submission = try await submitMinedBlock(payingTo: payoutScript)
+            draws += ContinuousClock.now - drawStart
             if try BitcoinCLI.bestBlockHash() == submission.hash {
                 trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
-                    + " lost=\(lost) elapsed_s=\(elapsed(since: start))"
+                    + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " draws_s=\(seconds(draws))"
                     + " last=\(lost == 0 ? "-" : lastAnswer)")
                 return submission.hash
             }
@@ -147,7 +165,8 @@ enum SignetMiner {
             if let answer = submission.answer { lastAnswer = answer }
         }
         trace("mineOntoTip result=exhausted attempts=\(maxAttempts) max=\(maxAttempts)"
-            + " lost=\(lost) elapsed_s=\(elapsed(since: start)) last=\(lastAnswer)")
+            + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+            + " draws_s=\(seconds(draws)) last=\(lastAnswer)")
         throw MinerError.rejected("lost \(maxAttempts) block races (last: \(lastAnswer))")
     }
 
