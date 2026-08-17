@@ -189,8 +189,9 @@ never left in the spendable set as if the bundle were current.</p>
 of the bundle plus the <code>MatchEffect</code>s of the scanned blocks,
 so it is unit-tested without a network. The e2e suite drives the real
 app through an import and captures the report screen
-(<code>14-import-report.png</code>); latest run spent 15.82s in verify
-(signet, 2026-08-15, <code>screenshots/timings.json</code>).</p>
+(<code>14-import-report.png</code>); latest run spent 18.79s in verify
+(signet, iPhone 17 Pro Max simulator, 2026-08-17,
+<code>screenshots/timings.json</code>).</p>
 <p>Cost is proportional to how stale the bundle is, not to how old the
 wallet is. A bundle exported at the tip is a JSON parse and a
 zero-length scan.</p>

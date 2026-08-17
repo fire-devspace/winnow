@@ -83,7 +83,7 @@ Vaults are not in this bundle. A vault is a separate descriptor the user adds in
 
 `matchesBundle` is `spentSinceBundle.isEmpty`. A stale export (you spent after you wrote the file) is a report the user can see, not a silent rewrite. Discovered UTXOs are applied — the point of the forward scan is to catch up — but a claimed-and-spent coin is never left in the spendable set as if the bundle were current.
 
-The report core (`ImportReport.make`) is a pure function of the bundle plus the `MatchEffect`s of the scanned blocks, so it is unit-tested without a network. The e2e suite drives the real app through an import and captures the report screen (`14-import-report.png`); latest run spent 15.82s in verify (signet, 2026-08-15, `screenshots/timings.json`).
+The report core (`ImportReport.make`) is a pure function of the bundle plus the `MatchEffect`s of the scanned blocks, so it is unit-tested without a network. The e2e suite drives the real app through an import and captures the report screen (`14-import-report.png`); latest run spent 18.79s in verify (signet, iPhone 17 Pro Max simulator, 2026-08-17, `screenshots/timings.json`).
 
 Cost is proportional to how stale the bundle is, not to how old the wallet is. A bundle exported at the tip is a JSON parse and a zero-length scan.
 

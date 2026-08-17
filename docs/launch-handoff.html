@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
+  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
+  h1 { font-size:1.7rem; margin-top:0; }
+  h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
+  h3 { font-size:1.05rem; }
+  p, li { color:var(--dim); }
+  p { margin:.6rem 0; }
+  ul, ol { padding-left:1.3rem; }
+  li { margin:.3rem 0; }
+  strong { color:var(--fg); font-weight:600; }
+  em { color:var(--fg); }
+  code { background:var(--card); border:1px solid var(--line); border-radius:.3rem; padding:.05em .35em; font-size:.88em; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.8rem 1rem; overflow-x:auto; margin:.8rem 0; }
+  pre code { background:none; border:0; padding:0; }
+  a { color:var(--acc); }
+  hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; margin:1rem 0; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; text-align:left; vertical-align:top; }
+  th { color:var(--fg); background:var(--card); }
+  td { color:var(--dim); }
+  blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+<nav class="home"><a href="/">← Winnow</a></nav>
+<h1 id="v1-launch-handoff">v1 launch handoff</h1>
+<p>Status recorded 2026-08-17. This is a handoff checkpoint, not
+authorization to spend bitcoin, switch the default network, tag v1.0.0,
+upload assets, or submit the app.</p>
+<h2 id="merged-and-verified">Merged and verified</h2>
+<ul>
+<li>PR #36 is merged. Push and pull-request CI now runs only the package
+and app-build suites; both passed on the PR and again on
+<code>main</code>. Node-backed differential/UI E2E is manual-only and
+requires a dedicated <code>node-e2e</code> runner label, so it cannot
+fall back to a developer workstation. The former local custom-signet
+services and repository RPC credential were removed. Issue #35 is
+closed.</li>
+<li>PR #37 is merged. Bundle v2 carries validated
+<code>silentPaymentTweak</code> recovery metadata, ordinary v1 bundles
+remain readable, and watch-only export refuses to create an incomplete
+backup when silent-payment funds are present. The rebased package suite
+passed 263 tests, app-build CI passed, and the recovery test signs and
+independently Schnorr-verifies a restored spend. Issue #19 is
+closed.</li>
+<li>The 2026-08-17 iPhone 17 Pro Max / iOS 26.5 signet run passed all 10
+UI tests and produced 22 screenshots at 1320 × 2868. The six composition
+candidates were visually inspected; none contains a mnemonic or
+development endpoint. See <code>app-store-screenshots.md</code>.</li>
+<li>The uncontended UI mining sample completed 102 first-attempt tip
+wins with zero lost races. This supports the low-contention observation
+for #28 but does not replace the deliberately contended measurement
+required to close it.</li>
+</ul>
+<h2 id="optional-node-backed-ci">Optional node-backed CI</h2>
+<p>Winnow is a direct-P2P compact-filter client; neither the app nor
+normal development requires <code>bitcoind</code>. Keep the manual Node
+E2E workflow disabled until a disposable custom-signet fixture is
+attached to a dedicated runner carrying the <code>node-e2e</code> label.
+Its RPC credential must belong to that fixture, not to an owner’s
+machine. Issue #11 tracks that separate CI capability; issue #14 is
+obsolete under this design.</p>
+<h2 id="owner-gated-launch-sequence">Owner-gated launch sequence</h2>
+<ol type="1">
+<li>Perform #8 exactly as written with a deliberately small real-mainnet
+amount and retain the launch recording. This is the only step here that
+spends real bitcoin.</li>
+<li>If #8 passes, implement #9: make mainnet the default, recheck fee
+presets and peer diversity, and update onboarding copy.</li>
+<li>Recapture the six 6.9-inch composition candidates after #9. Confirm
+dimensions, visually recheck every candidate for mnemonic/development
+data, then upload them for #6. The current signet captures must not be
+uploaded unchanged.</li>
+<li>Provision and verify the dedicated Node E2E environment for #11 if
+it remains a v1 gate; do not restore the owner-workstation dependency.
+Keep #28 open until a deliberately contended mining sample sizes the
+retry bound.</li>
+<li>Only after the owner confirms every gate: tag v1.0.0, archive,
+upload, and submit for #7.</li>
+</ol>
+</main>
+</body>
+</html>
