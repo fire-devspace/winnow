@@ -110,11 +110,19 @@ enum SignetMiner {
     /// Two fields, because they answer different questions and only coincide
     /// when no race is lost. `call_s` is the whole call — every attempt plus
     /// the tip re-read between them. `draws_s` is `submitMinedBlock` time
-    /// only, summed over attempts, which is the *exposure window*: a
+    /// only, summed over completed draws, which is the *exposure window*: a
     /// competitor takes the tip only between our `getblocktemplate` and our
-    /// `submitblock`, so `draws_s / attempts` is the mean draw exactly.
-    /// Dividing `call_s` instead folds in the `bestBlockHash` check, which
-    /// sits outside the window and overstates it.
+    /// `submitblock`. Dividing `call_s` instead folds in the `bestBlockHash`
+    /// check, which sits outside the window and overstates it.
+    ///
+    /// **Divide by `drawn`, never by `attempts`.** They are equal on `won`
+    /// and `exhausted`, and they diverge on `threw` — where `attempts` alone
+    /// cannot tell you by how much, because two throw sources share the
+    /// label. `submitMinedBlock` throwing leaves the in-flight draw
+    /// uncounted (`drawn == attempts - 1`); a throw from the later
+    /// `bestBlockHash` leaves it counted (`drawn == attempts`). `drawn`
+    /// resolves which, so `draws_s / drawn` and `lost / Σ drawn` are exact
+    /// on every line shape instead of exact on two of three.
     private static func seconds(_ duration: Duration) -> String {
         String(format: "%.3f", Double(duration.components.seconds)
             + Double(duration.components.attoseconds) * 1e-18)
@@ -150,14 +158,14 @@ enum SignetMiner {
             // draws_s=0.000, not "-": no draw completed, so no exposure was
             // accrued, and keeping the field numeric everywhere means one awk
             // recipe reads every line shape without special cases.
-            trace("mineBlock result=threw attempts=1"
+            trace("mineBlock result=threw attempts=1 drawn=0"
                 + " call_s=\(seconds(ContinuousClock.now - start)) draws_s=0.000"
                 + " error=\(label(error))")
             throw error
         }
         let draw = ContinuousClock.now - start
         trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
-            + " attempts=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
+            + " attempts=1 drawn=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
             + " answer=\(submission.answer ?? "-")")
         return submission.hash
     }
@@ -183,6 +191,7 @@ enum SignetMiner {
                             maxAttempts: Int = 20) async throws -> String {
         let start = ContinuousClock.now
         var draws = Duration.zero
+        var drawn = 0
         var lastAnswer = "connected-then-reorged"
         var lost = 0
         for attempt in 0 ..< maxAttempts {
@@ -191,19 +200,20 @@ enum SignetMiner {
             let isTip: Bool
             do {
                 submission = try await submitMinedBlock(payingTo: payoutScript)
-                // Counted here so a throw from the draw itself adds nothing:
-                // an incomplete draw is not exposure.
+                // Both counters move here, together, after the draw returns:
+                // an incomplete draw is neither exposure nor a draw.
                 draws += ContinuousClock.now - drawStart
+                drawn += 1
                 isTip = try BitcoinCLI.bestBlockHash() == submission.hash
             } catch {
                 trace("mineOntoTip result=threw attempts=\(attempt + 1) max=\(maxAttempts)"
-                    + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
                     + " draws_s=\(seconds(draws)) error=\(label(error))")
                 throw error
             }
             if isTip {
                 trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
-                    + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
                     + " draws_s=\(seconds(draws))"
                     + " last=\(lost == 0 ? "-" : lastAnswer)")
                 return submission.hash
@@ -212,7 +222,7 @@ enum SignetMiner {
             if let answer = submission.answer { lastAnswer = answer }
         }
         trace("mineOntoTip result=exhausted attempts=\(maxAttempts) max=\(maxAttempts)"
-            + " lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+            + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
             + " draws_s=\(seconds(draws)) last=\(lastAnswer)")
         throw MinerError.rejected("lost \(maxAttempts) block races (last: \(lastAnswer))")
     }
