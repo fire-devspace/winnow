@@ -16,6 +16,10 @@ public enum WalletError: Error, Equatable, LocalizedError {
     /// missing) rather than a BIP39 mnemonic. Refusing is safer than emitting
     /// a bundle that looks spendable and is not.
     case mnemonicUnavailable
+    /// A watch-only bundle cannot faithfully recover silent-payment UTXOs:
+    /// validating and spending them requires the BIP352 key derived from the
+    /// mnemonic, which the BIP86 descriptor does not contain.
+    case silentPaymentExportRequiresMnemonic
 
     public var errorDescription: String? {
         switch self {
@@ -31,6 +35,8 @@ public enum WalletError: Error, Equatable, LocalizedError {
             "The built transaction lost its change output."
         case .mnemonicUnavailable:
             "This wallet has no recovery phrase to export — it was imported from an extended key, not a BIP39 mnemonic."
+        case .silentPaymentExportRequiresMnemonic:
+            "This wallet contains silent-payment funds. Include the recovery phrase so the exported bundle can validate and spend them."
         }
     }
 }
@@ -1252,6 +1258,9 @@ public actor Wallet {
     /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``
     /// rather than silently exporting a non-spendable "backup".
     public func exportBundle(includeMnemonic: Bool = false) throws -> ImportBundle {
+        if !includeMnemonic, state.utxos.contains(where: { $0.silentPaymentTweak != nil }) {
+            throw WalletError.silentPaymentExportRequiresMnemonic
+        }
         let lastKnownHeight = state.nextScanHeight == 0 ? 0 : state.nextScanHeight - 1
         let mnemonic: String?
         if includeMnemonic {
@@ -1274,7 +1283,7 @@ public actor Wallet {
         } else {
             mnemonic = nil
         }
-        return ImportBundle.export(
+        return try ImportBundle.export(
             descriptor: descriptor.serialized(),
             network: network.rawValue,
             lastKnownHeight: lastKnownHeight,

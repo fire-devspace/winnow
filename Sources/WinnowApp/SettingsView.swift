@@ -263,7 +263,7 @@ struct SettingsView: View {
     }
 }
 
-/// Settings → Backup → Export: emit the v1 ImportBundle JSON (watch-only
+/// Settings → Backup → Export: emit the v2 ImportBundle JSON (watch-only
 /// by default; seed behind an explicit confirm).
 private struct ExportBundleView: View {
     @Environment(AppModel.self) private var model

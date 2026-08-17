@@ -31,6 +31,13 @@ public enum SilentPaymentReceiving {
     /// transaction yields at most this many matches (DoS limit).
     public static let scanLimit = SilentPaymentSending.maxRecipientsPerGroup
 
+    /// Whether persisted BIP352 tweak bytes encode a nonzero secp256k1
+    /// scalar. Importers use this before attaching recovery metadata to a
+    /// wallet UTXO.
+    public static func isValidTweak(_ tweak: Data) -> Bool {
+        SilentPaymentSending.isValidScalar(tweak)
+    }
+
     // MARK: - Key derivation (BIP352 §Key Derivation)
 
     /// scan_private_key: m/352'/coinType'/account'/1'/0 — hardened through the
@@ -151,6 +158,15 @@ public enum SilentPaymentReceiving {
             throw SilentPaymentReceivingError.invalidSpendSecret
         }
         return secret
+    }
+
+    /// The P2TR script controlled by `b_spend + tweak`. This is the receiver-
+    /// side reconstruction used when validating a persisted or imported
+    /// silent-payment UTXO; BIP352 outputs do not apply a BIP341 TapTweak.
+    public static func outputScript(spendPrivateKey: Data, tweak: Data) throws -> Data {
+        let secret = try spendSecret(spendPrivateKey: spendPrivateKey, tweak: tweak)
+        let outputKey = try SilentPaymentSending.publicKeyPoint(secret).dropFirst()
+        return Data([0x51, 0x20]) + outputKey
     }
 
     // MARK: - Scanning (BIP352 §Scanning)

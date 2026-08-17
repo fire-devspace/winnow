@@ -71,10 +71,14 @@ services, no background socket the OS will kill. Peers are a small
 outbound pool (default 3): manual endpoints first, then a persisted
 good-peers list, then a few hardcoded fallback peers (IP literals
 verified filter-serving; see <code>NetworkParams</code>) racing the
-DNS-seed results — dialed a batch at a time with a short per-attempt
-timeout, so a fresh launch fills the pool in seconds and reports
-exhaustion instead of spinning forever. No addr gossip, no scoring
-buckets — a misbehaving peer is dropped and replaced.</li>
+DNS-seed results — seeds resolve over DNS-over-HTTPS (Cloudflare
+dns-json at 1.1.1.1, configurable) and fall back to
+<code>getaddrinfo</code> if DoH is empty or down; RFC1918/loopback
+answers are dropped on public networks. Dials race a batch of candidates
+at a time with a short per-attempt timeout, so a fresh launch fills the
+pool in seconds and reports exhaustion instead of spinning forever. No
+addr gossip, no scoring buckets — a misbehaving peer is dropped and
+replaced.</li>
 <li><strong>Foreground only.</strong> There is no
 <code>UIBackgroundModes</code> entry. Sync-while-active is the design,
 not a v1 omission. A payment you are not looking at waits for the next
@@ -83,9 +87,11 @@ notifications would require a server that knows your addresses or your
 txids.</li>
 <li><strong>This-device keychain.</strong> Secrets live in the iOS
 Keychain as <code>kSecAttrAccessibleWhenUnlockedThisDeviceOnly</code>,
-with iCloud Keychain sync off. They are not in the app’s JSON state, not
-in iCloud backup, not in the mnemonic UI after the first screen. Signing
-loads the secret for the call and drops it.</li>
+with iCloud Keychain sync off. They are not in the app’s JSON state and
+not in iCloud backup. After the first screen the words reappear only
+behind an explicit control gated on device-owner authentication
+(Settings → Backup → Show recovery phrase, fail-closed when no passcode
+is set). Signing loads the secret for the call and drops it.</li>
 <li><strong>One runtime dependency.</strong> <a
 href="https://github.com/21-DOT-DEV/swift-secp256k1"><code>swift-secp256k1</code></a>
 — Bitcoin Core’s libsecp256k1. Swift never does raw curve math on
@@ -186,10 +192,14 @@ shape, one sighash, one witness size for fee math (66 bytes for a
 key-path spend), and no “which address type did this contact use?”
 branch in the UI.</p>
 <p>The phone can <em>pay</em> any standard address (bech32/bech32m,
-base58 P2PKH/P2SH) and can <em>send to</em> BIP352 silent-payment codes
-(<code>sp1…</code> / <code>tsp1…</code>). It cannot <em>receive</em>
-silent payments — that scan is a different, heavier read-side, and is a
-deliberate absence (<a href="read-side.md">read-side</a> §3).</p>
+base58 P2PKH/P2SH) and can send to or receive BIP352 silent payments
+(<code>sp1…</code> / <code>tsp1…</code>). Receive is opt-in because it
+follows a per-block tweak index; candidate scripts are still matched
+locally against the same compact-filter stream, and full blocks still
+come from P2P peers (<a href="read-side.md">read-side</a> §3). The
+warning is explicit: the index operator learns that an IP follows
+silent-payment data, and payments received while the option is off are
+not detected.</p>
 <h3 id="two-modern-multisig-flavors-same-read-path">4.3 Two modern
 multisig flavors, same read path</h3>
 <p>A vault is another descriptor and another watch list. The phone does
@@ -238,7 +248,8 @@ into <code>WinnowApp</code>.</p>
 <ul>
 <li>Always-on mempool / background 0-conf / live fee histograms</li>
 <li>Historical filter back-scan</li>
-<li>Silent-payment receive</li>
+<li>Silent-payment labels and historical backfill for periods when
+receive scanning was off</li>
 <li>BIP37, Electrum, or any “ask a node about my address”</li>
 <li>An embedded consensus engine or fraud-proof verifier</li>
 <li>A vault coordinator server</li>
@@ -262,10 +273,10 @@ mined→filter-detected 0.75s, form→broadcast 0.67s.</p>
 <p>The suite is ~200 tests plus those UI scenarios, on every push.</p>
 <hr />
 <h2 id="status">8. Status</h2>
-<p>Protocol core, both vault schemes, silent-payment send, and the P2P
-read/write path are complete and vector-tested. The app runs on signet.
-Mainnet is available and treated as needing more care than a picker
-flip.</p>
+<p>Protocol core, both vault schemes, silent-payment send and opt-in
+receive, and the P2P read/write path are complete and vector-tested. The
+app runs on signet. Mainnet is available and treated as needing more
+care than a picker flip.</p>
 <p><strong>v1 is therefore: a foreground iOS client, Taproot-only,
 fresh-wallet, one dependency, talking only to
 <code>NODE_COMPACT_FILTERS</code> peers unless the user opts into a

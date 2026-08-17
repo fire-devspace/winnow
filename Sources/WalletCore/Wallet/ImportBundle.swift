@@ -26,16 +26,17 @@ private final class EffectCollector: @unchecked Sendable {
 /// forward-scanning from that height. There is no historical back-scan; the
 /// bundle *is* the history.
 ///
-/// JSON format (version 1):
+/// JSON format (version 2):
 ///
 ///     {
-///       "version": 1,
+///       "version": 2,
 ///       "network": "signet",                  // or "mainnet"
 ///       "descriptor": "tr([fp/86'/1'/0']tpub…/<0;1>/*)#checksum",  // optional w/ mnemonic
 ///       "mnemonic": "word …",                 // optional w/ descriptor; enables spending
 ///       "lastKnownHeight": 150000,            // state below is claimed as of this height
 ///       "utxos": [{ "txid": "<display hex>", "vout": 0, "amount": 50000,
-///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000 }],
+///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000,
+///                   "silentPaymentTweak": "<32-byte scalar hex>" }],
 ///       "transactions": [{ "txid": "<display hex>", "height": 149000,
 ///                          "received": 50000, "spent": 0, "fee": 250 }]
 ///     }
@@ -47,11 +48,17 @@ private final class EffectCollector: @unchecked Sendable {
 /// and are not in this schema — a restored wallet falls back to presets
 /// until it observes new sends.
 ///
+/// `silentPaymentTweak` is absent for descriptor-derived UTXOs. When present,
+/// the bundle must also contain the mnemonic: a BIP86 descriptor has no BIP352
+/// spend key with which to validate or spend that output. Version 1 remains
+/// readable for ordinary descriptor UTXOs; writers always emit version 2.
+///
 /// With both descriptor and mnemonic present they must agree; with only a
 /// descriptor the import is watch-only (signing needs the secret). Scanning
 /// resumes at `lastKnownHeight + 1`.
 public struct ImportBundle: Codable, Equatable, Sendable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
+    public static let supportedVersions = 1 ... currentVersion
 
     public struct UTXO: Codable, Equatable, Sendable {
         public var txid: String // display hex
@@ -61,9 +68,13 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         public var chain: Int
         public var index: UInt32
         public var height: UInt32
+        /// BIP352 t_k (with any label tweak folded in), encoded as 32-byte
+        /// scalar hex. nil for descriptor-derived UTXOs and every v1 bundle.
+        public var silentPaymentTweak: String?
 
         public init(txid: String, vout: UInt32, amount: Int64, scriptPubKey: String,
-                    chain: Int, index: UInt32, height: UInt32) {
+                    chain: Int, index: UInt32, height: UInt32,
+                    silentPaymentTweak: String? = nil) {
             self.txid = txid
             self.vout = vout
             self.amount = amount
@@ -71,6 +82,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             self.chain = chain
             self.index = index
             self.height = height
+            self.silentPaymentTweak = silentPaymentTweak
         }
     }
 
@@ -126,12 +138,15 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         self.transactions = transactions
     }
 
-    /// Writer for the documented v1 schema. Txids go out as display hex —
+    /// Writer for the documented v2 schema. Txids go out as display hex —
     /// the same convention `claimedUTXOs()` reverses on the way back in.
     public static func export(descriptor: String, network: String, lastKnownHeight: UInt32,
                               utxos: [WalletUTXO], history: [HistoryEntry],
-                              mnemonic: String? = nil) -> ImportBundle {
-        ImportBundle(
+                              mnemonic: String? = nil) throws -> ImportBundle {
+        if mnemonic == nil, utxos.contains(where: { $0.silentPaymentTweak != nil }) {
+            throw WalletError.silentPaymentExportRequiresMnemonic
+        }
+        return ImportBundle(
             network: network,
             descriptor: descriptor,
             mnemonic: mnemonic,
@@ -139,7 +154,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             utxos: utxos.map { utxo in
                 UTXO(txid: utxo.txid.displayHex, vout: utxo.vout, amount: utxo.amount,
                      scriptPubKey: utxo.scriptPubKey.hex, chain: utxo.chain.rawValue,
-                     index: utxo.index, height: utxo.height)
+                     index: utxo.index, height: utxo.height,
+                     silentPaymentTweak: utxo.silentPaymentTweak?.hex)
             },
             transactions: history.map { entry in
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
@@ -199,9 +215,23 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             guard let chain = AddressChain(rawValue: utxo.chain) else {
                 throw WalletError.invalidBundle("bad chain \(utxo.chain)")
             }
+            let silentPaymentTweak: Data?
+            if let tweakHex = utxo.silentPaymentTweak {
+                guard version >= 2 else {
+                    throw WalletError.invalidBundle("silentPaymentTweak requires version 2")
+                }
+                guard let tweak = Data(hex: tweakHex),
+                      SilentPaymentReceiving.isValidTweak(tweak)
+                else {
+                    throw WalletError.invalidBundle("bad silentPaymentTweak")
+                }
+                silentPaymentTweak = tweak
+            } else {
+                silentPaymentTweak = nil
+            }
             return WalletUTXO(txid: Data(txid.reversed()), vout: utxo.vout, amount: utxo.amount,
                               scriptPubKey: scriptPubKey, chain: chain, index: utxo.index,
-                              height: utxo.height)
+                              height: utxo.height, silentPaymentTweak: silentPaymentTweak)
         }
     }
 }
@@ -273,7 +303,7 @@ extension Wallet {
     /// bundle's `lastKnownHeight` — scanning resumes right after it.
     public static func importing(_ bundle: ImportBundle, keyStore: any KeyStore,
                                  storageURL: URL? = nil) throws -> Wallet {
-        guard bundle.version == ImportBundle.currentVersion else {
+        guard ImportBundle.supportedVersions.contains(bundle.version) else {
             throw WalletError.invalidBundle("unsupported version \(bundle.version)")
         }
         guard let network = BitcoinNetwork(rawValue: bundle.network) else {
@@ -285,9 +315,11 @@ extension Wallet {
 
         var descriptor: Descriptor?
         var accountKey: HDKey?
+        var importMasterKey: HDKey?
         if let mnemonic = bundle.mnemonic {
             try BIP39.validate(mnemonic: mnemonic)
             let master = try HDKey(seed: BIP39.seed(mnemonic: mnemonic))
+            importMasterKey = master
             let coinType = Self.coinType(for: network)
             let account = try BIP86.accountKey(from: master, coinType: coinType, account: 0)
             let origin = Descriptor.KeyOrigin(fingerprint: master.fingerprint,
@@ -324,12 +356,36 @@ extension Wallet {
         }
 
         let utxos = try bundle.claimedUTXOs()
-        // Validate claims against the descriptor: every claimed scriptPubKey
-        // must be what (chain, index) actually derives to.
+        // Validate every claim from key material in the bundle. Descriptor
+        // outputs use their BIP86 coordinates. Silent-payment outputs use the
+        // mnemonic-derived BIP352 spend key plus their persisted tweak.
         for utxo in utxos {
-            let expected = try descriptor
-                .derived(index: utxo.index, network: Self.hdNetwork(for: network))[utxo.chain.rawValue]
-                .scriptPubKey
+            let expected: Data
+            if let tweak = utxo.silentPaymentTweak {
+                guard let importMasterKey else {
+                    throw WalletError.invalidBundle(
+                        "silent-payment UTXOs require a mnemonic")
+                }
+                let origin = try Self.origin(of: descriptor)
+                guard origin.path.count == 3,
+                      origin.path[2] >= HDKey.hardenedOffset
+                else {
+                    throw WalletError.invalidDescriptor("missing BIP86 account in key origin")
+                }
+                let account = origin.path[2] - HDKey.hardenedOffset
+                let spend = try SilentPaymentReceiving.spendKey(
+                    from: importMasterKey, coinType: Self.coinType(for: network), account: account)
+                guard let spendPrivateKey = spend.privateKey else {
+                    throw WalletError.invalidBundle("silent-payment spend key is unavailable")
+                }
+                expected = try SilentPaymentReceiving.outputScript(
+                    spendPrivateKey: spendPrivateKey, tweak: tweak)
+            } else {
+                expected = try descriptor
+                    .derived(index: utxo.index,
+                             network: Self.hdNetwork(for: network))[utxo.chain.rawValue]
+                    .scriptPubKey
+            }
             guard expected == utxo.scriptPubKey else {
                 throw WalletError.invalidBundle(
                     "utxo \(utxo.txid.displayHex):\(utxo.vout) scriptPubKey does not match the descriptor")
@@ -348,8 +404,12 @@ extension Wallet {
             descriptor: descriptor.serialized(),
             network: network.rawValue,
             creationHeight: bundle.lastKnownHeight,
-            nextReceiveIndex: (utxos.filter { $0.chain == .receive }.map(\.index).max().map { $0 + 1 }) ?? 0,
-            nextChangeIndex: (utxos.filter { $0.chain == .change }.map(\.index).max().map { $0 + 1 }) ?? 0,
+            nextReceiveIndex: (utxos.filter {
+                $0.silentPaymentTweak == nil && $0.chain == .receive
+            }.map(\.index).max().map { $0 + 1 }) ?? 0,
+            nextChangeIndex: (utxos.filter {
+                $0.silentPaymentTweak == nil && $0.chain == .change
+            }.map(\.index).max().map { $0 + 1 }) ?? 0,
             nextScanHeight: bundle.lastKnownHeight + 1,
             utxos: utxos,
             history: history
