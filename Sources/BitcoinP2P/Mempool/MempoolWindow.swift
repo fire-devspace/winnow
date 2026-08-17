@@ -191,12 +191,27 @@ public actor MempoolWindow {
         for peer in await pool.connectedPeers() {
             let key = peer.endpoint.description
             guard listenerTasks[key] == nil else { continue }
-            listenerTasks[key] = Task { await self.listen(to: peer, generation: self.generation) }
+            // Subscribe here rather than inside the listener task.
+            // PeerConnection.events() registers the subscriber at call time and
+            // replays nothing, so a listener that only subscribes once its task
+            // is scheduled drops every message announced in that gap — and an
+            // inv is never re-sent. Awaiting the subscription makes start()
+            // returning mean "attached", which is what callers already assume.
+            let gen = generation
+            let stream = await peer.events()
+            // That await is a suspension point on this actor, so a stop (or a
+            // stop-then-start, which is why `gen` is checked and not just
+            // `running`) may have landed meanwhile, making this stream stale:
+            // its buffer holds gossip from the closed window. Dropping it
+            // unconsumed terminates it and unregisters the subscriber.
+            guard running, generation == gen, listenerTasks[key] == nil else { continue }
+            listenerTasks[key] = Task { await self.listen(to: peer, stream: stream, generation: gen) }
         }
     }
 
-    private func listen(to peer: PeerConnection, generation: Int) async {
-        let stream = await peer.events()
+    private func listen(to peer: PeerConnection,
+                        stream: AsyncThrowingStream<PeerEvent, Error>,
+                        generation: Int) async {
         do {
             for try await event in stream {
                 guard running else { break }

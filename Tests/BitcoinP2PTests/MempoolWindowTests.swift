@@ -200,6 +200,10 @@ struct MempoolWindowTests {
                             manualPeers: [await emptyNode.endpoint, await fullNode.endpoint],
                             relayPreference: true)
         await pool.start()
+        // Both dials must have handshaked before anything is announced: a peer
+        // the pool never adopted gets no listener, and the inv below would then
+        // fail as an opaque getdata timeout instead of naming the real cause.
+        #expect(await pool.connectedPeers().count == 2)
 
         let window = MempoolWindow(pool: pool, watchScripts: [Self.watchedScript])
         let seen = WindowEventCollector()
@@ -207,6 +211,7 @@ struct MempoolWindowTests {
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
         await window.start()
+        #expect(await window.isRunning)
 
         let announcement = PeerMessage.inv(InventoryPayload([InventoryVector(type: .tx, hash: watched.txid)]))
         try await emptyNode.send(announcement)
