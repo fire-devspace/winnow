@@ -134,6 +134,8 @@ final class AppModel {
     private(set) var manualPeers: [String] // "host:port"
     private(set) var esploraEnabled: Bool
     private(set) var esploraURLString: String
+    private(set) var spReceiveEnabled: Bool
+    private(set) var spIndexURLString: String
 
     private var syncTask: Task<Void, Never>?
     private var phaseTask: Task<Void, Never>?
@@ -145,6 +147,8 @@ final class AppModel {
         static let manualPeers = "manualPeers"
         static let esploraEnabled = "esploraEnabled"
         static let esploraURL = "esploraURL"
+        static let spReceiveEnabled = "spReceiveEnabled"
+        static let spIndexURL = "spIndexURL"
         /// Set at wallet creation, cleared only by the backup sheet's
         /// confirmed Done — a relaunch in between resumes the backup.
         static func backupPending(_ walletID: String) -> String { "backupPending.\(walletID)" }
@@ -160,6 +164,8 @@ final class AppModel {
         manualPeers = defaults.stringArray(forKey: DefaultsKey.manualPeers) ?? []
         esploraEnabled = defaults.bool(forKey: DefaultsKey.esploraEnabled)
         esploraURLString = defaults.string(forKey: DefaultsKey.esploraURL) ?? ""
+        spReceiveEnabled = defaults.bool(forKey: DefaultsKey.spReceiveEnabled)
+        spIndexURLString = defaults.string(forKey: DefaultsKey.spIndexURL) ?? ""
         // Test mode preconfigures the local node as the (only) manual peer;
         // custom signets have no DNS seeds.
         if let peer = e2e?.peer, !manualPeers.contains(peer) {
@@ -326,10 +332,25 @@ final class AppModel {
         do {
             var scripts = try await wallet.watchScripts()
             scripts.append(contentsOf: await vaultStore.watchScripts(network: network))
+            // Silent payments ride the same filter stream. Deliberately
+            // fail-closed: enabled without a server, or with one that errors,
+            // aborts the sync visibly instead of silently skipping heights a
+            // forward-only scan would never revisit (see FilterSync.sync).
+            var extraScripts: (@Sendable (ClosedRange<UInt32>) async throws -> [UInt32: [Data]])?
+            if spReceiveEnabled {
+                guard let baseURL = spIndexBaseURL else {
+                    status.lastSyncError = "Silent payments: set the tweak-index server URL in Settings."
+                    return
+                }
+                let index = TweakIndexHTTPClient(baseURL: baseURL)
+                extraScripts = { range in
+                    try await wallet.silentPaymentCandidateScripts(range: range, index: index)
+                }
+            }
             let broadcaster = stack.broadcaster
             let network = network
             let vaultStore = vaultStore
-            try await filters.sync(watchScripts: scripts) { match in
+            try await filters.sync(watchScripts: scripts, extraScripts: extraScripts) { match in
                 let walletEffect = try await wallet.apply(match: match)
                 for discarded in walletEffect.discardedReplacements {
                     await broadcaster.cancel(discarded)
@@ -546,6 +567,14 @@ final class AppModel {
     func currentReceiveAddress() async throws -> String {
         guard let wallet else { throw AppError.noWallet }
         return try await wallet.address(chain: .receive, index: wallet.nextReceiveIndex)
+    }
+
+    /// The wallet's static silent payment address. Shown only while the
+    /// silent-payments opt-in is on — payments to it are only *found* via the
+    /// tweak index, so handing it out with the toggle off invites losses.
+    func currentSilentPaymentAddress() async throws -> String {
+        guard let wallet else { throw AppError.noWallet }
+        return try await wallet.silentPaymentAddress()
     }
 
     /// Marks the current receive address used and returns the next one.
@@ -790,6 +819,24 @@ final class AppModel {
         stack = nil
         await activate()
         await refresh()
+    }
+
+    func setSilentPaymentsEnabled(_ enabled: Bool) {
+        spReceiveEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.spReceiveEnabled)
+    }
+
+    func setSilentPaymentIndexURL(_ text: String) {
+        spIndexURLString = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(spIndexURLString, forKey: DefaultsKey.spIndexURL)
+    }
+
+    /// The tweak-index base URL. Unlike esplora there is no public default to
+    /// fall back to (yet) — the user's own instance is required, and sync
+    /// fails closed while the toggle is on without one.
+    var spIndexBaseURL: URL? {
+        guard let url = URL(string: spIndexURLString), url.scheme != nil else { return nil }
+        return url
     }
 
     func setEsploraEnabled(_ enabled: Bool) {

@@ -140,11 +140,13 @@ Filters are not consensus-committed. A future soft fork committing the filter he
 | 9 | "Did my tx get out?" | Peer `inv` gossip — peers echoing our txid back prove propagation; confirmation observed via filter match | Relay acceptance is [write-side](write-side.md) §7; this paper observes the confirmation. |
 | 10 | Importing an existing wallet | History bundle, verified by forward filter-scan from its height | Specified in [import](import.md). |
 | 11 | Optional: everything, faster | User opts into an esplora backend in settings, past a warning naming the leak (address set, balances, IP) and linking to §2.2 | It's the user's threat model; the app's job is to make the trade explicit, not to make it for them. |
+| 12 | Optional: silent-payment receive (BIP352) | User opts into a per-block **tweak index** in settings; candidate output scripts are computed on-device from the index's 33-byte per-tx points (`input_hash·A`, BIP352 Appendix A) and matched against the **same filter stream as row 2** | Filters alone can't do this — a BIP352 output script depends on each tx's *input* keys, so there is no predetermined watch list. The index is block-level and query-free: the operator learns an IP follows silent-payment data, never which outputs are yours — a strictly better trade than §2.2, shipped the same way: opt-in, default off, warned. |
 
-Two use cases are deliberately **absent** from the default path:
+On the trust model of row 12: the index steers *which blocks get fetched*, nothing else. Every credit is resolved against the merkle-verified block, and a matched output is spendable by construction (`b_spend + t_k` controls it or it wouldn't have matched) — so a lying index can cause **missed payments, never fake ones**. Because the scan is forward-only on the same frontier as row 2, an index outage fails the sync loudly rather than silently skipping heights, and payments received while the toggle is off are not detected — the settings warning says so. Labeled addresses (BIP352 labels) are out of v1 end-to-end; the wallet's own change stays BIP86, so not even the change label is needed.
+
+One use case is deliberately **absent** from the default path:
 
 - **Always-on mempool awareness** (instant notification of *unexpected* payments, background 0-conf, live fee markets) — all require either a persistent relay subscription (bandwidth/battery cost the product rejects) or a server (privacy cost the product rejects). Bounded windows (§2.8) cover the cases where the user is present and expecting something; everything else waits for confirmation.
-- **Silent-payment receive** (BIP352 scan). Send-side is implemented ([write-side](write-side.md) §6). Receive would mean tweak-checking every output in every block — a different, heavier read-side than matching a small watch list against BIP158 filters. Not in v1.
 
 ---
 

@@ -101,7 +101,14 @@ public actor FilterSync {
         progress.filterHeaders[String(height)].flatMap { Data(hex: $0) }
     }
 
+    /// `extraScripts` supplies per-height additions to the watch list (the
+    /// silent-payment candidate scripts, which change every block). It is
+    /// deliberately fail-closed: a throw aborts the sync before the frontier
+    /// advances. Continuing a batch without its extra scripts would let a
+    /// forward-only scan skip those payments permanently and invisibly — an
+    /// index outage must surface as a sync error instead.
     public func sync(watchScripts: [Data],
+                     extraScripts: (@Sendable (ClosedRange<UInt32>) async throws -> [UInt32: [Data]])? = nil,
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         var peers = await pool.connectedPeers()
         guard !peers.isEmpty else { throw FilterSyncError.noPeers }
@@ -175,8 +182,10 @@ public actor FilterSync {
             }
             try await pinFilterHeaders(batchStart: batchStart, batchStop: batchStop,
                                        stopHash: stopHash, peers: peers)
+            let extras = try await extraScripts?(batchStart ... batchStop) ?? [:]
             try await scanFilters(batchStart: batchStart, batchStop: batchStop,
-                                  peer: peers[0], watchScripts: watchScripts, onMatch: onMatch)
+                                  peer: peers[0], watchScripts: watchScripts,
+                                  extraScripts: extras, onMatch: onMatch)
             progress.nextScanHeight = batchStop + 1
             try persist()
             peers = await pool.connectedPeers()
@@ -255,7 +264,7 @@ public actor FilterSync {
 
     /// Fetches, verifies and matches all filters in [batchStart, batchStop].
     private func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
-                             watchScripts: [Data],
+                             watchScripts: [Data], extraScripts: [UInt32: [Data]] = [:],
                              onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         guard let stopHash = await chain.blockHash(at: batchStop) else {
             throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
@@ -295,12 +304,13 @@ public actor FilterSync {
                 throw FilterSyncError.filterHeaderMismatch(height: height)
             }
 
-            guard !watchScripts.isEmpty else { continue }
+            let scripts = watchScripts + (extraScripts[height] ?? [])
+            guard !scripts.isEmpty else { continue }
             let parsed = try message.parsedFilter()
             let filter = try GCSFilter(p: GCSFilter.defaultP, m: GCSFilter.defaultM,
                                        key: Data(message.blockHash.prefix(16)),
                                        n: parsed.n, encoded: parsed.encoded)
-            guard filter.containsAny(watchScripts) else { continue }
+            guard filter.containsAny(scripts) else { continue }
 
             // Possible hit (or BIP158 false positive): fetch the full block.
             let blockResponse = try await peer.request(
