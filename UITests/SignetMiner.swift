@@ -78,22 +78,62 @@ enum SignetMiner {
     /// success path as well as the failure one: a lost race that the retry
     /// then won used to leave no trace at all, so a quiet log said nothing
     /// about whether races were being lost — and a retry bound nobody can
-    /// measure is a bound nobody can justify (#28). Every draw prints now, so
-    /// `lost=0` means no race was lost and no `signet-miner:` output at all
-    /// means this code did not run.
+    /// measure is a bound nobody can justify (#28). `lost=0` means no race
+    /// was lost.
+    ///
+    /// **Every exit traces: `won`, `exhausted`, `threw`.** The third was
+    /// missing until CI run 31987164939, where `submitMinedBlock` threw at its
+    /// first `getblocktemplate` and `mineOntoTip` returned through an
+    /// untraced path — the call ran, entered the loop, and printed nothing.
+    /// The comment here previously claimed no output meant the code had not
+    /// run, and that run is the counterexample. Silence is only meaningful
+    /// once all exits are covered, which is what `result=threw` restores.
+    ///
+    /// The remaining caveat is delivery, not coverage: this writes to the
+    /// process's fd 2, and this copy runs inside the iOS-simulator test
+    /// runner, whose fd 2 relay to the step log is **unverified**. Simulator
+    /// fd 1 does arrive — run 31987164939's `UI tests` step carries the
+    /// `E2E send error:` line that `WinnowAppUITests.swift` `print`s — but
+    /// fd 2 has never been observed either way. So absent output from the UI
+    /// leg is a delivery question first and a coverage question second, and
+    /// switching this to `print` is the fix if fd 2 turns out not to relay.
     private static func trace(_ fields: String) {
         FileHandle.standardError.write(Data("signet-miner: \(fields)\n".utf8))
     }
 
-    /// Seconds since `start`, as a bare decimal so the trace lines aggregate
-    /// with awk without unit-stripping. The line carries its own duration
-    /// because log timestamps do not: CI stamped all 102 lines of the first
+    /// A duration as bare decimal seconds, so the trace lines aggregate with
+    /// awk without unit-stripping. The lines carry their own durations because
+    /// log timestamps do not: CI stamped all 102 lines of the first
     /// instrumented run within 10ms of step end, so they are capture times,
     /// not emit times, and every draw looked instantaneous.
-    private static func elapsed(since start: ContinuousClock.Instant) -> String {
-        let duration = ContinuousClock.now - start
-        return String(format: "%.3f", Double(duration.components.seconds)
+    ///
+    /// Two fields, because they answer different questions and only coincide
+    /// when no race is lost. `call_s` is the whole call — every attempt plus
+    /// the tip re-read between them. `draws_s` is `submitMinedBlock` time
+    /// only, summed over completed draws, which is the *exposure window*: a
+    /// competitor takes the tip only between our `getblocktemplate` and our
+    /// `submitblock`. Dividing `call_s` instead folds in the `bestBlockHash`
+    /// check, which sits outside the window and overstates it.
+    ///
+    /// **Divide by `drawn`, never by `attempts`.** They are equal on `won`
+    /// and `exhausted`, and they diverge on `threw` — where `attempts` alone
+    /// cannot tell you by how much, because two throw sources share the
+    /// label. `submitMinedBlock` throwing leaves the in-flight draw
+    /// uncounted (`drawn == attempts - 1`); a throw from the later
+    /// `bestBlockHash` leaves it counted (`drawn == attempts`). `drawn`
+    /// resolves which, so `draws_s / drawn` and `lost / Σ drawn` are exact
+    /// on every line shape instead of exact on two of three.
+    private static func seconds(_ duration: Duration) -> String {
+        String(format: "%.3f", Double(duration.components.seconds)
             + Double(duration.components.attoseconds) * 1e-18)
+    }
+
+    /// An error as a single space-free token, because the trace lines are
+    /// parsed by splitting on spaces — a message like "bitcoin-cli not found"
+    /// would break every field after it. The type name is enough to route a
+    /// reader to the cause; the full text is already in the test failure.
+    private static func label(_ error: Error) -> String {
+        String(describing: type(of: error))
     }
 
     /// Mines one block paying the subsidy (+fees) to `payoutScript`. Returns
@@ -104,12 +144,29 @@ enum SignetMiner {
     /// licenses — the node accepted the block and connected it *then*. It is
     /// not a tip claim: this path never re-reads `bestBlockHash`, so a block
     /// reorged out a moment later still traces as connected-at-submit.
+    ///
+    /// `call_s` and `draws_s` are equal here by construction — the call is
+    /// exactly one draw and does nothing else. Both are emitted anyway so one
+    /// awk recipe reads either trace line.
     @discardableResult
     static func mineBlock(payingTo payoutScript: Data) async throws -> String {
         let start = ContinuousClock.now
-        let submission = try await submitMinedBlock(payingTo: payoutScript)
+        let submission: (hash: String, answer: String?)
+        do {
+            submission = try await submitMinedBlock(payingTo: payoutScript)
+        } catch {
+            // draws_s=0.000, not "-": no draw completed, so no exposure was
+            // accrued, and keeping the field numeric everywhere means one awk
+            // recipe reads every line shape without special cases.
+            trace("mineBlock result=threw attempts=1 drawn=0"
+                + " call_s=\(seconds(ContinuousClock.now - start)) draws_s=0.000"
+                + " error=\(label(error))")
+            throw error
+        }
+        let draw = ContinuousClock.now - start
         trace("mineBlock result=\(submission.answer == nil ? "connected-at-submit" : "offchain")"
-            + " elapsed_s=\(elapsed(since: start)) answer=\(submission.answer ?? "-")")
+            + " attempts=1 drawn=1 call_s=\(seconds(draw)) draws_s=\(seconds(draw))"
+            + " answer=\(submission.answer ?? "-")")
         return submission.hash
     }
 
@@ -133,13 +190,31 @@ enum SignetMiner {
     static func mineOntoTip(payingTo payoutScript: Data,
                             maxAttempts: Int = 20) async throws -> String {
         let start = ContinuousClock.now
+        var draws = Duration.zero
+        var drawn = 0
         var lastAnswer = "connected-then-reorged"
         var lost = 0
         for attempt in 0 ..< maxAttempts {
-            let submission = try await submitMinedBlock(payingTo: payoutScript)
-            if try BitcoinCLI.bestBlockHash() == submission.hash {
+            let drawStart = ContinuousClock.now
+            let submission: (hash: String, answer: String?)
+            let isTip: Bool
+            do {
+                submission = try await submitMinedBlock(payingTo: payoutScript)
+                // Both counters move here, together, after the draw returns:
+                // an incomplete draw is neither exposure nor a draw.
+                draws += ContinuousClock.now - drawStart
+                drawn += 1
+                isTip = try BitcoinCLI.bestBlockHash() == submission.hash
+            } catch {
+                trace("mineOntoTip result=threw attempts=\(attempt + 1) max=\(maxAttempts)"
+                    + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " draws_s=\(seconds(draws)) error=\(label(error))")
+                throw error
+            }
+            if isTip {
                 trace("mineOntoTip result=won attempts=\(attempt + 1) max=\(maxAttempts)"
-                    + " lost=\(lost) elapsed_s=\(elapsed(since: start))"
+                    + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+                    + " draws_s=\(seconds(draws))"
                     + " last=\(lost == 0 ? "-" : lastAnswer)")
                 return submission.hash
             }
@@ -147,7 +222,8 @@ enum SignetMiner {
             if let answer = submission.answer { lastAnswer = answer }
         }
         trace("mineOntoTip result=exhausted attempts=\(maxAttempts) max=\(maxAttempts)"
-            + " lost=\(lost) elapsed_s=\(elapsed(since: start)) last=\(lastAnswer)")
+            + " drawn=\(drawn) lost=\(lost) call_s=\(seconds(ContinuousClock.now - start))"
+            + " draws_s=\(seconds(draws)) last=\(lastAnswer)")
         throw MinerError.rejected("lost \(maxAttempts) block races (last: \(lastAnswer))")
     }
 
