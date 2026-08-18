@@ -3,15 +3,14 @@ import LocalAuthentication
 import SwiftUI
 import WalletCore
 
-/// Network, manual peers, the opt-in esplora fast path (off by default,
-/// behind an explicit warning), and the live peer status list.
+/// Network, manual peers, warned external explorer links, experimental silent
+/// payments, and the live peer status list.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
     @State private var newPeer = ""
     @State private var peerError: String?
     @State private var connectedPeers: [PeerInfo] = []
-    @State private var showEsploraWarning = false
     @State private var showSilentPaymentsWarning = false
     @State private var showReadSide = false
     @State private var showPapers = false
@@ -40,8 +39,13 @@ struct SettingsView: View {
                         Text("Signet").tag(BitcoinNetwork.signet)
                         Text("Mainnet").tag(BitcoinNetwork.mainnet)
                     }
+                    .disabled(model.e2e?.forcedNetwork != nil)
                 } footer: {
-                    Text("Each network has its own wallet on this device. Switching opens that network's wallet, or onboarding when it has none.")
+                    if model.e2e?.forcedNetwork != nil {
+                        Text("This reproducible story run is locked to public signet.")
+                    } else {
+                        Text("Each network has its own wallet on this device. Switching opens that network's wallet, or onboarding when it has none.")
+                    }
                 }
 
                 Section {
@@ -86,38 +90,26 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Esplora fast path", isOn: Binding(
-                        get: { model.esploraEnabled },
-                        set: { enabled in
-                            if enabled {
-                                showEsploraWarning = true
-                            } else {
-                                model.setEsploraEnabled(false)
-                            }
-                        }
+                    TextField("Explorer website URL (empty = mempool.space)", text: Binding(
+                        get: { model.esploraURLString },
+                        set: { model.setEsploraURL($0) }
                     ))
-                    .accessibilityIdentifier("esploraToggle")
-                    if model.esploraEnabled {
-                        TextField("Server URL (empty = public default)", text: Binding(
-                            get: { model.esploraURLString },
-                            set: { model.setEsploraURL($0) }
-                        ))
-                        .font(.system(.footnote, design: .monospaced))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        Text("Active server: \(model.esploraBaseURL.absoluteString)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    .font(.system(.footnote, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("esploraURLField")
+                    Text("Selected: \(model.esploraBaseURL.absoluteString)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Button("What this trades away") { showReadSide = true }
                 } header: {
-                    Text("Server backend (opt-in)")
+                    Text("External block explorer")
                 } footer: {
-                    Text("Off by default. When on, the app queries a server for fee estimates and broadcasts through it too — the default P2P filter sync needs and contacts no server.")
+                    Text("This is a link destination only. Winnow never contacts it for balances, history, fees, synchronization, or broadcasting. Tapping an address or transaction shows a privacy warning before opening the selected website. You may enter a custom Esplora-compatible website.")
                 }
 
                 Section {
-                    Toggle("Silent payments (receive)", isOn: Binding(
+                    Toggle("Receive silent payments", isOn: Binding(
                         get: { model.spReceiveEnabled },
                         set: { enabled in
                             if enabled {
@@ -143,9 +135,9 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Silent payments (opt-in)")
+                    Text("Experimental · Silent payments")
                 } footer: {
-                    Text("Off by default. When on, the app fetches per-block silent-payment data from an index server and matches it on this device — the server learns an IP follows silent-payment data, never which outputs are yours. The wallet's sp address appears on the Receive screen while this is on.")
+                    Text("Experimental and off by default. Sending works without a service. Receiving currently needs per-block tweak data from a service you choose; ordinary Bitcoin compact-filter peers do not yet serve it. Matching and block verification remain on this device, but omitted tweak data can make Winnow miss a payment.")
                 }
 
                 Section("Connected peers") {
@@ -177,22 +169,13 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .task { await refreshPeers() }
-            .alert("Enable silent-payment receive?", isPresented: $showSilentPaymentsWarning) {
-                Button("Enable — I understand the trade") {
+            .alert("Enable experimental silent-payment receive?", isPresented: $showSilentPaymentsWarning) {
+                Button("Enable experimental receive") {
                     model.setSilentPaymentsEnabled(true)
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Receiving on the wallet's sp1 address needs per-block data from a tweak-index server you choose. That server sees your IP and that it follows silent-payment data — not your addresses or balances; matching stays on this device. Scanning is forward-only: payments received while this is OFF are never detected, so enable it before sharing the address and leave it on. If the server is unreachable, sync pauses instead of silently skipping blocks.")
-            }
-            .alert("Enable the esplora fast path?", isPresented: $showEsploraWarning) {
-                Button("Enable — I understand the trade") {
-                    model.setEsploraEnabled(true)
-                }
-                Button("Read the design paper") { showReadSide = true }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("With esplora on, the server sees your IP address and every transaction you broadcast through it, linking the two. It is not asked about your addresses, so your balances and history stay on-device. What you gain today is server fee estimates and a second broadcast path — not mempool-stage visibility; incoming payments still appear only at block confirmation. The default P2P compact-filter sync contacts no server at all.")
+                Text("This feature is experimental. The tweak-data service sees your IP following silent-payment blocks, though it does not receive your address or balance. Matching stays on this device. Scanning is forward-only: payments sent while this is off are not detected. An unavailable service pauses sync; a service that omits data can cause a missed payment.")
             }
             .sheet(isPresented: $showReadSide) {
                 ReadSideDocumentView()
@@ -373,9 +356,8 @@ private struct ExportBundleView: View {
     }
 }
 
-/// Settings → Backup → Show recovery phrase: the words, read-only, after
-/// device authentication. No copy control on purpose — the phrase belongs on
-/// paper, not on the pasteboard.
+/// Settings → Backup → Show recovery phrase: the words and an explicit,
+/// short-lived copy control, available only after device authentication.
 private struct RevealPhraseView: View {
     let mnemonic: String
     @Environment(\.dismiss) private var dismiss
@@ -396,6 +378,12 @@ private struct RevealPhraseView: View {
                     .accessibilityIdentifier("revealedPhraseGrid")
                 } footer: {
                     Text("These words are the wallet. Anyone who sees them can spend — keep them offline, on paper, and close this screen when done.")
+                }
+                Section {
+                    RecoveryPhraseCopyButton(
+                        phrase: mnemonic, accessibilityID: "settingsCopyPhraseButton")
+                } footer: {
+                    Text("Copying is less private than paper. The clipboard item stays on this device and expires after two minutes.")
                 }
             }
             .navigationTitle("Recovery phrase")

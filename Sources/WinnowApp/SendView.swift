@@ -60,6 +60,16 @@ struct SendView: View {
                         }
                 }
 
+                if destinationIsSilentPayment {
+                    Section {
+                        Label("Silent payments are experimental", systemImage: "flask")
+                            .foregroundStyle(.orange)
+                        Text("Sending does not use a tweak-data service, but receiving support and interoperability are still developing. Confirm that the recipient actively supports BIP352.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section {
                     Picker("Priority", selection: $priority) {
                         Text("Low").tag(FeePolicy.Priority.low)
@@ -118,6 +128,11 @@ struct SendView: View {
                         Text(sentTxid.displayHex)
                             .font(.system(.caption2, design: .monospaced))
                             .textSelection(.enabled)
+                        WarnedExplorerLink(
+                            title: "View transaction",
+                            url: model.esploraTransactionURL(sentTxid),
+                            exposedItem: "transaction ID",
+                            accessibilityID: "explorerBroadcastButton")
                         if !relayedPeers.isEmpty {
                             Text("Relayed to \(relayedPeers.count) peer(s)")
                                 .font(.footnote)

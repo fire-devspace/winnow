@@ -50,6 +50,11 @@ struct ReceiveView: View {
                         Button("New address") { newAddress() }
                     }
                     .buttonStyle(.bordered)
+                    WarnedExplorerLink(
+                        title: "View address",
+                        url: model.esploraAddressURL(address),
+                        exposedItem: "address",
+                        accessibilityID: "explorerAddressButton")
                     ForEach(unconfirmed) { payment in
                         Label("Unconfirmed: +\(satsText(payment.amount)) — awaiting confirmation",
                               systemImage: "clock")
@@ -65,7 +70,7 @@ struct ReceiveView: View {
                         .padding(.horizontal)
                     if let silentPaymentAddress {
                         Divider().padding(.horizontal)
-                        Text("Silent payment address")
+                        Text("Experimental · Silent payment address")
                             .font(.subheadline.weight(.semibold))
                         Text(silentPaymentAddress)
                             .font(.system(.footnote, design: .monospaced))
@@ -78,7 +83,7 @@ struct ReceiveView: View {
                             ShareLink(item: silentPaymentAddress)
                         }
                         .buttonStyle(.bordered)
-                        Text("Static — reuse it freely; every payment lands at an unlinkable address. Payments are only found while silent payments stay enabled in Settings.")
+                        Text("Static and reusable, but receiving is experimental. Payments are only found while silent payments and its configured tweak-data service remain available.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -115,6 +120,14 @@ struct ReceiveView: View {
                 case .background: closeWindow()
                 case .active: Task { await openWindow() }
                 default: break
+                }
+            }
+            .onChange(of: model.status.history) { _, history in
+                // The mempool window owns only the temporary presentation.
+                // Once normal filter sync records the same tx in a block,
+                // remove its stale orange row immediately.
+                unconfirmed.removeAll { payment in
+                    history.contains { $0.txid == payment.txid && $0.height > 0 }
                 }
             }
         }

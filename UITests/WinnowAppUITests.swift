@@ -131,9 +131,11 @@ final class WinnowAppUITests: XCTestCase {
 
         let createStart = Date()
         app.buttons["createWalletButton"].tap()
-        // Creation syncs headers from the local node first.
+        // Backup is deliberately independent of peer/header catch-up.
         let toggle = app.switches["writtenDownToggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 180), "backup sheet did not appear")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 30), "backup sheet did not appear promptly")
+        XCTAssertTrue(app.buttons["backupCopyPhraseButton"].exists,
+                      "backup sheet does not offer an explicit phrase copy")
         Timings.record("onboarding", step: "wallet-create", from: createStart)
         Screenshots.capture(app, "02-backup-mnemonic", testCase: self)
 
@@ -371,7 +373,7 @@ final class WinnowAppUITests: XCTestCase {
 
     // MARK: - 05 Settings
 
-    func test05SettingsPeersAndEsploraWarning() throws {
+    func test05SettingsPeersAndExplorerWarning() throws {
         let app = launchApp()
         app.tabBars.buttons["Settings"].tap()
 
@@ -396,22 +398,20 @@ final class WinnowAppUITests: XCTestCase {
         if !localPeer.isHittable { app.collectionViews.firstMatch.swipeUp() }
         Screenshots.capture(app, "12-settings-peers", testCase: self)
 
-        // The esplora opt-in warning is a design artifact: capture it, then
-        // cancel — esplora stays OFF.
-        let toggle = app.switches["esploraToggle"]
-        XCTAssertTrue(scrollUntilExists(app, toggle, up: true), "no esplora toggle")
-        app.flipSwitch(toggle)
-        let alert = app.alerts["Enable the esplora fast path?"]
-        if !alert.waitForExistence(timeout: 10) {
-            // First flip may have been consumed by scroll settling — retry once.
-            app.flipSwitch(toggle)
-        }
-        XCTAssertTrue(alert.waitForExistence(timeout: 10), "esplora warning did not appear")
+        // Esplora is a selectable external link only, never a wallet backend.
+        let explorerField = app.textFields["esploraURLField"]
+        XCTAssertTrue(scrollUntilExists(app, explorerField, up: true), "no explorer URL field")
+
+        // Opening a transaction is the privacy boundary: capture the warning
+        // and cancel before iOS contacts the selected endpoint.
+        app.tabBars.buttons["Wallet"].tap()
+        let explorerLink = app.buttons["explorerTransactionButton"].firstMatch
+        XCTAssertTrue(scrollUntilExists(app, explorerLink), "no transaction explorer link")
+        explorerLink.tap()
+        let alert = app.alerts["Open external block explorer?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10), "explorer warning did not appear")
         Screenshots.capture(app, "13-esplora-warning", testCase: self)
         alert.buttons["Cancel"].tap()
-        poll(timeout: 10, interval: 1, "esplora toggle off") {
-            (toggle.value as? String) == "0"
-        }
     }
 
     // MARK: - 06 Import
@@ -588,6 +588,8 @@ final class WinnowAppUITests: XCTestCase {
         let firstWord = "1. " + (Self.mnemonic.split(separator: " ").first.map(String.init) ?? "")
         XCTAssertTrue(settled.staticTexts[firstWord].waitForExistence(timeout: 30),
                       "revealed phrase grid missing \(firstWord)")
+        XCTAssertTrue(settled.buttons["settingsCopyPhraseButton"].exists,
+                      "Settings recovery screen does not offer phrase copy")
         Screenshots.capture(settled, "22-phrase-revealed", testCase: self)
         settled.buttons["Close"].tap()
     }

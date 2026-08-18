@@ -31,6 +31,25 @@ struct WalletTests {
         #expect(try Descriptor(text) == descriptor)
     }
 
+    @Test("failed wallet persistence rolls back the protected key")
+    func createPersistenceRollback() throws {
+        let keyStore = InMemoryKeyStore()
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "wallet-create-rollback-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invalidFile = root.appending(path: "wallet.json", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: invalidFile, withIntermediateDirectories: false)
+
+        #expect(throws: (any Error).self) {
+            _ = try Wallet.create(network: .signet, keyStore: keyStore,
+                                  storageURL: invalidFile, entropy: testEntropy)
+        }
+        #expect(throws: KeyStoreError.notFound(walletID: "73c5da0a")) {
+            _ = try keyStore.load(walletID: "73c5da0a")
+        }
+    }
+
     @Test("address derivation matches BIP86 (incl. the official mainnet vector)")
     func addresses() async throws {
         let master = try testMaster()

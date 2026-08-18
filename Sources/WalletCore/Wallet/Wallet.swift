@@ -456,8 +456,16 @@ public actor Wallet {
                                 accountKey: accountKey.neutered, keyStore: keyStore,
                                 storageURL: storageURL, state: state)
         try keyStore.store(.mnemonic(mnemonic), for: wallet.id)
-        if let storageURL {
-            try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+        do {
+            if let storageURL {
+                try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+            }
+        } catch {
+            // Wallet creation is one logical operation: do not leave a
+            // keychain entry that makes an idempotent retry fail after local
+            // state persistence was interrupted.
+            try? keyStore.delete(walletID: wallet.id)
+            throw error
         }
         return wallet
     }
@@ -817,6 +825,9 @@ public actor Wallet {
     /// broadcaster, then call `commit(_:)` — never the other way around.
     public struct PreparedSend: Sendable {
         public let built: BuiltTransaction
+        /// Public BIP352 input_hash·A for a silent-payment transaction. nil
+        /// for an ordinary send; safe to hand to a receiver-side tweak index.
+        public let silentPaymentTweakData: Data?
         let selected: [WalletUTXO]
         let change: Payment?
         let changeIndex: UInt32
@@ -850,12 +861,15 @@ public actor Wallet {
         // the tweaked input keys in hand. All inputs are our own P2TR key-path
         // spends, which is exactly the BIP352 wallet case.
         var resolvedPayments = payments
+        var silentPaymentTweakData: Data?
         if !silentPayments.isEmpty {
             let inputs = try selection.selected.map { utxo in
                 try SilentPaymentSending.Input(txid: utxo.txid, vout: utxo.vout,
                                                prevoutScriptPubKey: utxo.scriptPubKey,
                                                privateKey: keyPathSecret(for: utxo))
             }
+            silentPaymentTweakData = try SilentPaymentSending.tweakData(
+                context: SilentPaymentSending.context(inputs: inputs))
             let scripts = try SilentPaymentSending.outputScripts(
                 inputs: inputs, recipients: silentPayments.map(\.address))
             resolvedPayments += zip(silentPayments, scripts).map {
@@ -874,7 +888,8 @@ public actor Wallet {
 
         let built = BuiltTransaction(psbt: psbt, transaction: signed, fee: selection.fee,
                                      changeAmount: selection.changeAmount)
-        return PreparedSend(built: built, selected: selection.selected, change: change,
+        return PreparedSend(built: built, silentPaymentTweakData: silentPaymentTweakData,
+                            selected: selection.selected, change: change,
                             changeIndex: changeIndex,
                             changeOutputIndex: changeOutputIndex.map(UInt32.init), fee: selection.fee)
     }

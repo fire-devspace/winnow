@@ -94,6 +94,7 @@ struct HomeView: View {
 }
 
 private struct HistoryRow: View {
+    @Environment(AppModel.self) private var model
     let entry: HistoryEntry
     let canBump: Bool
     @State private var showFeeBump = false
@@ -109,6 +110,12 @@ private struct HistoryRow: View {
                 Text(entry.txid.displayHex.prefix(16) + "…")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
+                WarnedExplorerLink(
+                    title: "View transaction",
+                    url: model.esploraTransactionURL(entry.txid),
+                    exposedItem: "transaction ID",
+                    accessibilityID: "explorerTransactionButton")
+                    .font(.caption)
                 if canBump {
                     Button("Bump fee") { showFeeBump = true }
                         .buttonStyle(.bordered)

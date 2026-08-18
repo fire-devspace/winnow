@@ -154,6 +154,7 @@ struct VaultSpendView: View {
                                              changeIndex: record.nextChangeIndex,
                                              feeRateSatPerVByte: feeRate)
             created = psbt.base64
+            model.journalPSBT(stage: "vault-spend-created", psbt: psbt)
         } catch {
             self.error = error.localizedDescription
         }

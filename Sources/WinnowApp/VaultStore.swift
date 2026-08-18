@@ -137,10 +137,19 @@ actor VaultStore {
     /// After a vault spend is broadcast: the selected inputs leave the set at
     /// once and the change output enters it pending (height 0) until its block
     /// match confirms it — the same rule `Wallet.send` applies locally.
+    /// Returns false when the same spend was already recorded. This makes a
+    /// repeated relay or resumed UI action harmless to local index state.
+    @discardableResult
     func recordSpend(id: String, transaction: Transaction, changeScriptPubKey: Data?,
-                     changeIndex: UInt32) throws {
-        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+                     changeIndex: UInt32) throws -> Bool {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return false }
         let txid = transaction.txid
+        let spendsKnownInput = transaction.inputs.contains { input in
+            records[index].utxos.contains {
+                $0.txid == input.previousOutput.txid && $0.vout == input.previousOutput.vout
+            }
+        }
+        guard spendsKnownInput else { return false }
         for input in transaction.inputs {
             records[index].utxos.removeAll {
                 $0.txid == input.previousOutput.txid && $0.vout == input.previousOutput.vout
@@ -156,6 +165,7 @@ actor VaultStore {
             records[index].nextChangeIndex = changeIndex + 1
         }
         try persist()
+        return true
     }
 
     /// Indices 0 ..< max(used receive, used change, 1) + 2 of lookahead.

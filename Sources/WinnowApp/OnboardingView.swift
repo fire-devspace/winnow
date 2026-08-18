@@ -18,7 +18,7 @@ struct OnboardingView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("A Taproot-only wallet that syncs over the Bitcoin P2P network with compact block filters. No server learns your addresses. Payments appear once they confirm in a block — there is no “incoming” state. Sync runs while the app is open.")
+                    Text("A Taproot-only wallet that learns about your money from Bitcoin peers using compact block filters, without asking a wallet server about your addresses. Blocks provide the confirmed record; while Receive is open, Winnow can also show a temporary unconfirmed observation from peer relay traffic. Sync runs while the app is open.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -36,7 +36,7 @@ struct OnboardingView: View {
                     }
                     .accessibilityIdentifier("importWalletButton")
                 } footer: {
-                    Text("Network: \(model.network.rawValue) (change in Settings). Creation first finds the chain tip over P2P — scanning runs forward from there.")
+                    Text("Network: \(model.network.rawValue) (change in Settings). Your backup appears immediately; peer and header synchronization continues while you secure it.")
                 }
                 if let busy {
                     Section { ProgressView(model.syncStatusText ?? busy) }
@@ -86,7 +86,7 @@ struct OnboardingView: View {
     }
 
     private func create() {
-        busy = "Finding the chain tip over P2P…"
+        busy = "Creating the wallet…"
         error = nil
         Task {
             do {
@@ -103,6 +103,7 @@ struct OnboardingView: View {
 
 /// The 12 words, shown exactly once, with the written-down confirmation.
 private struct MnemonicBackupView: View {
+    @Environment(AppModel.self) private var model
     let mnemonic: String
     @Binding var writtenDown: Bool
     let onFinish: () -> Void
@@ -125,6 +126,22 @@ private struct MnemonicBackupView: View {
                                 .font(.system(.body, design: .monospaced))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                    }
+                }
+                Section {
+                    RecoveryPhraseCopyButton(
+                        phrase: mnemonic, accessibilityID: "backupCopyPhraseButton")
+                } footer: {
+                    Text("Copying is less private than paper. The clipboard item stays on this device and expires after two minutes.")
+                }
+                if let progress = model.syncStatusText {
+                    Section {
+                        ProgressView(progress)
+                            .accessibilityIdentifier("backupSyncProgress")
+                    } header: {
+                        Text("Wallet synchronization")
+                    } footer: {
+                        Text("You can copy or write down the phrase while Winnow validates headers from Bitcoin peers. Backup does not wait for synchronization.")
                     }
                 }
                 Section {
@@ -162,7 +179,11 @@ private struct ImportBundleView: View {
                 Section {
                     TextEditor(text: $json)
                         .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 160)
+                        // Keep real bundles scrollable inside the editor. A
+                        // minimum-only height lets TextEditor expand to the
+                        // full JSON and can push the import action thousands
+                        // of points off-screen.
+                        .frame(height: 160)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .accessibilityIdentifier("importJSONEditor")

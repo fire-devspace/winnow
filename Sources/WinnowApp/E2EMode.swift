@@ -11,11 +11,19 @@ import Security
 /// - redirects Application Support storage to a throwaway `BTCSwiftE2E-<run>`
 ///   directory and the Keychain to a dedicated service, so a real wallet's
 ///   state is never touched;
-/// - points the sync stack at a local custom-signet node (BIP325 challenge +
-///   manual peer) instead of the public signet;
+/// - can point protocol tests at a custom signet, while story runs omit those
+///   overrides and use Winnow's ordinary public-signet peers;
 /// - can fix the wallet entropy (or full mnemonic) so screenshots are
 ///   reproducible.
 struct E2EMode {
+    struct Event: Codable {
+        let version: Int
+        let timestamp: Date
+        let name: String
+        let persona: String?
+        let fields: [String: String]
+    }
+
     /// Namespace for storage ("main", "import", …) — each test scenario that
     /// needs a fresh wallet gets its own run id.
     let runID: String
@@ -31,8 +39,19 @@ struct E2EMode {
     /// buttons (send destination, import JSON) without cross-app paste
     /// consent prompts.
     let clipboard: String?
+    /// Story role used only in journal labels (Sofía, Elena, replacement).
+    let storyPersona: String?
+    /// Reproducible story runs are locked to public signet. Ordinary UI tests
+    /// and production launches leave this nil and retain the normal picker.
+    let forcedNetwork: BitcoinNetwork?
+    /// Optional initial shell tab for deterministic story-stage launches.
+    /// This changes navigation only and is ignored outside E2E mode.
+    let initialTab: String?
+    /// Manual story runs exercise Local Authentication on the simulator.
+    /// Ordinary XCUITests leave this false so they can run unattended.
+    let requireDeviceAuthentication: Bool
 
-    static let keychainService = "org.btc-swift.wallet.e2e"
+    static let keychainServicePrefix = "org.btc-swift.wallet.e2e"
 
     static var current: E2EMode? {
         let environment = ProcessInfo.processInfo.environment
@@ -50,11 +69,24 @@ struct E2EMode {
                        challenge: environment["WINNOW_E2E_CHALLENGE"].flatMap { Data(hex: $0) },
                        entropy: entropy,
                        reset: environment["WINNOW_E2E_RESET"] == "1",
-                       clipboard: environment["WINNOW_E2E_CLIPBOARD"])
+                       clipboard: environment["WINNOW_E2E_CLIPBOARD"],
+                       storyPersona: environment["WINNOW_STORY_PERSONA"],
+                       forcedNetwork: environment["WINNOW_E2E_NETWORK"]
+                           .flatMap(BitcoinNetwork.init(rawValue:)),
+                       initialTab: environment["WINNOW_E2E_TAB"],
+                       requireDeviceAuthentication: environment["WINNOW_E2E_DEVICE_AUTH"] == "1")
     }
 
     /// The Application Support subdirectory used instead of "BTCSwift".
     var storageDirectoryName: String { "BTCSwiftE2E-\(runID)" }
+    var keychainService: String { "\(Self.keychainServicePrefix).\(safeRunID)" }
+    var defaultsSuiteName: String { "org.btc-swift.defaults.e2e.\(safeRunID)" }
+    var defaults: UserDefaults { UserDefaults(suiteName: defaultsSuiteName) ?? .standard }
+
+    private var safeRunID: String {
+        runID.map { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" ? $0 : "_" }
+            .reduce(into: "") { $0.append($1) }
+    }
 
     /// The sync stack's network parameters: the custom signet when a
     /// challenge was injected, else the stock network params.
@@ -67,13 +99,57 @@ struct E2EMode {
     func wipeIfRequested() {
         guard reset else { return }
         SecItemDelete([kSecClass: kSecClassGenericPassword,
-                       kSecAttrService: Self.keychainService] as CFDictionary)
+                       kSecAttrService: keychainService] as CFDictionary)
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
         if let base = try? FileManager.default.url(for: .applicationSupportDirectory,
                                                    in: .userDomainMask,
                                                    appropriateFor: nil, create: true) {
             try? FileManager.default.removeItem(at: base.appending(path: storageDirectoryName,
                                                                    directoryHint: .isDirectory))
         }
+    }
+
+    /// Versioned, E2E-only event journal. It contains automation facts and
+    /// public transaction material, never mnemonics, private keys, entropy,
+    /// or MuSig2 secret nonces. Normal launches never construct E2EMode and
+    /// therefore never create this file.
+    func journal(_ name: String, fields: [String: String] = [:]) {
+        let forbiddenFieldNames = ["entropy", "mnemonic", "privatekey", "secretnonce", "seedhex"]
+        guard !fields.keys.contains(where: { key in
+            let normalized = key.lowercased().filter(\.isLetter)
+            return forbiddenFieldNames.contains(where: normalized.contains)
+        }) else {
+            // Fail closed: an unsafe schema mistake produces no event at all.
+            return
+        }
+        let containsMnemonic = fields.values.contains { value in
+            let wordCount = value.split(whereSeparator: \.isWhitespace).count
+            guard [12, 15, 18, 21, 24].contains(wordCount) else { return false }
+            return (try? BIP39.validate(mnemonic: value)) != nil
+        }
+        guard !containsMnemonic else { return }
+        guard let base = try? FileManager.default.url(for: .applicationSupportDirectory,
+                                                       in: .userDomainMask,
+                                                       appropriateFor: nil, create: true) else { return }
+        let directory = base.appending(path: storageDirectoryName, directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "story-events.jsonl")
+        let event = Event(version: 1, timestamp: Date(), name: name,
+                          persona: storyPersona, fields: fields)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard var data = try? encoder.encode(event) else { return }
+        data.append(0x0A)
+        if FileManager.default.fileExists(atPath: url.path),
+           let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url, options: .atomic)
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: url.path)
     }
 
     /// Mnemonic sentence → entropy (BIP39 decode; the injected mnemonic is

@@ -35,9 +35,14 @@ struct VaultSignView: View {
     @State private var output: String?
     @State private var error: String?
     @State private var broadcastTxid: Data?
+    @State private var broadcasting = false
     /// MuSig2 round-1 secret nonces per input (participant pubkey → secnonce).
     /// Never persisted, never shown — zeroed by round 2.
     @State private var secretNonces: [Int: [Data: Data]] = [:]
+    /// Round transitions are explicit so a completed signer cannot attach a
+    /// second nonce or sign twice while this sheet remains open.
+    @State private var nonceSessionStarted = false
+    @State private var signedMuSig2ThisSession = false
 
     private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
     private var vault: Vault? { record.flatMap { try? Vault($0.descriptor, network: model.network) } }
@@ -56,6 +61,13 @@ struct VaultSignView: View {
     private var minSignatures: Int { working?.inputs.map(\.tapScriptSignatures.count).min() ?? 0 }
     private var minNonces: Int { working?.inputs.map(\.musig2PubNonces.count).min() ?? 0 }
     private var minPartialSigs: Int { working?.inputs.map(\.musig2PartialSigs.count).min() ?? 0 }
+    private var workingInputsRemainAvailable: Bool {
+        guard let working, let record else { return false }
+        return working.inputs.allSatisfy { input in
+            guard let txid = input.previousTxid, let vout = input.outputIndex else { return false }
+            return record.utxos.contains { $0.txid == txid && $0.vout == vout }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -235,19 +247,42 @@ struct VaultSignView: View {
         if let threshold {
             Section("Actions") {
                 Button("Sign with this device") { signMultiA() }
-                Button("Finalize & broadcast") { finalizeAndBroadcast() }
-                    .disabled(minSignatures < threshold)
+                    .disabled(!workingInputsRemainAvailable || broadcastTxid != nil)
+                Button(broadcasting ? "Broadcasting…" : "Finalize & broadcast") {
+                    finalizeAndBroadcast()
+                }
+                .disabled(minSignatures < threshold || !workingInputsRemainAvailable
+                    || broadcasting || broadcastTxid != nil)
+                if !workingInputsRemainAvailable {
+                    stalePSBTMessage
+                }
             }
         } else if let participantCount {
             Section("Actions") {
                 Button("Round 1 — attach this device's nonce") { attachNonces() }
-                    .disabled(!secretNonces.isEmpty)
+                    .disabled(nonceSessionStarted || minNonces >= participantCount
+                        || minPartialSigs > 0 || !workingInputsRemainAvailable
+                        || broadcastTxid != nil)
                 Button("Round 2 — sign with this device") { signMuSig2() }
-                    .disabled(secretNonces.isEmpty || minNonces < participantCount)
-                Button("Aggregate & broadcast") { aggregateAndBroadcast() }
-                    .disabled(minPartialSigs < participantCount)
+                    .disabled(!nonceSessionStarted || signedMuSig2ThisSession
+                        || secretNonces.isEmpty || minNonces < participantCount
+                        || minPartialSigs >= participantCount || !workingInputsRemainAvailable)
+                Button(broadcasting ? "Broadcasting…" : "Aggregate & broadcast") {
+                    aggregateAndBroadcast()
+                }
+                .disabled(minPartialSigs < participantCount || !workingInputsRemainAvailable
+                    || broadcasting || broadcastTxid != nil)
+                if !workingInputsRemainAvailable {
+                    stalePSBTMessage
+                }
             }
         }
+    }
+
+    private var stalePSBTMessage: some View {
+        Text("This PSBT's input is no longer available. It may already have been spent; create a new PSBT instead.")
+            .font(.footnote)
+            .foregroundStyle(.orange)
     }
 
     private func addPasted() {
@@ -255,6 +290,7 @@ struct VaultSignView: View {
         do {
             let incoming = try PSBT(base64: pasted.trimmingCharacters(in: .whitespacesAndNewlines))
             working = try working?.combined(with: [incoming]) ?? incoming
+            if let working { model.journalPSBT(stage: "vault-psbt-combined", psbt: working) }
             pasted = ""
         } catch {
             self.error = error.localizedDescription
@@ -278,14 +314,18 @@ struct VaultSignView: View {
             try model.withMasterKey { try vault.partialSign(&psbt, master: $0) }
             working = psbt
             output = psbt.base64
+            model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
     private func finalizeAndBroadcast() {
-        guard var psbt = working, let vault, let record else { return }
+        guard !broadcasting, broadcastTxid == nil,
+              var psbt = working, let vault, let record else { return }
+        broadcasting = true
         Task {
+            defer { broadcasting = false }
             do {
                 let transaction = try vault.finalizeSpend(&psbt)
                 try await commitAndBroadcast(transaction, vault: vault, record: record)
@@ -308,8 +348,10 @@ struct VaultSignView: View {
                 }
             }
             secretNonces = nonces
+            nonceSessionStarted = true
             working = psbt
             output = psbt.base64
+            model.journalPSBT(stage: "musig2-public-nonces", psbt: psbt)
         } catch {
             self.error = error.localizedDescription
         }
@@ -318,30 +360,41 @@ struct VaultSignView: View {
     private func signMuSig2() {
         guard var psbt = working, let vault, let record else { return }
         do {
+            // Stage the nonce mutations alongside the PSBT. If a later input
+            // fails, the visible working copy and the in-memory nonce session
+            // both remain retryable instead of becoming half-consumed.
+            var stagedNonces = secretNonces
             for index in psbt.inputs.indices {
                 let context = try context(for: psbt.inputs[index], vault: vault, record: record)
-                var nonces = secretNonces[index] ?? [:]
+                var nonces = stagedNonces[index] ?? [:]
                 try model.withMasterKey {
                     try vault.muSig2Sign(&psbt, input: index, context: context, master: $0,
                                          secretNonces: &nonces)
                 }
-                secretNonces[index] = nonces // zeroed by partialSign
+                stagedNonces[index] = nonces // zeroed by partialSign
             }
             working = psbt
             output = psbt.base64
+            secretNonces.removeAll(keepingCapacity: false)
+            signedMuSig2ThisSession = true
+            model.journalPSBT(stage: "musig2-partial-signed", psbt: psbt)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
     private func aggregateAndBroadcast() {
-        guard var psbt = working, let vault, let record else { return }
+        guard !broadcasting, broadcastTxid == nil,
+              var psbt = working, let vault, let record else { return }
+        broadcasting = true
         Task {
+            defer { broadcasting = false }
             do {
                 for index in psbt.inputs.indices {
                     let context = try context(for: psbt.inputs[index], vault: vault, record: record)
                     try vault.muSig2Aggregate(&psbt, input: index, context: context)
                 }
+                model.journalPSBT(stage: "musig2-aggregated", psbt: psbt)
                 let transaction = try vault.finalizeSpend(&psbt)
                 try await commitAndBroadcast(transaction, vault: vault, record: record)
             } catch {
@@ -359,8 +412,8 @@ struct VaultSignView: View {
         let txid = try await model.broadcast(transaction)
         let changeIndex = record.nextChangeIndex
         let changeScript = try? vault.scriptPubKey(index: changeIndex, choice: AddressChain.change.rawValue)
-        await model.recordVaultSpend(id: record.id, transaction: transaction,
-                                     changeScriptPubKey: changeScript, changeIndex: changeIndex)
+        _ = await model.recordVaultSpend(id: record.id, transaction: transaction,
+                                         changeScriptPubKey: changeScript, changeIndex: changeIndex)
         broadcastTxid = txid
     }
 }

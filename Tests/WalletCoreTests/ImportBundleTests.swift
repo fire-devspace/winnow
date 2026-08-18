@@ -75,6 +75,23 @@ struct ImportBundleTests {
         #expect(await legacyWallet.balance == 150_000)
     }
 
+    @Test("fee-replacement history survives export and import")
+    func replacementHistory() async throws {
+        var bundle = try await makeBundle()
+        let replacement = Data(repeating: 0x91, count: 32)
+        bundle.transactions[0].replacedBy = replacement.displayHex
+
+        let serialized = try bundle.serialized()
+        let decoded = try JSONDecoder().decode(ImportBundle.self, from: Data(serialized.utf8))
+        let restored = try Wallet.importing(decoded, keyStore: InMemoryKeyStore())
+        #expect(await restored.history[0].replacedBy == replacement)
+
+        bundle.transactions[0].replacedBy = "not-a-txid"
+        #expect(throws: WalletError.invalidBundle("bad replacement txid not-a-txid")) {
+            _ = try Wallet.importing(bundle, keyStore: InMemoryKeyStore())
+        }
+    }
+
     @Test("descriptor/mnemonic disagreement and bad claims are rejected")
     func rejection() async throws {
         let bundle = try await makeBundle()

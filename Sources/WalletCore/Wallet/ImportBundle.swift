@@ -38,7 +38,8 @@ private final class EffectCollector: @unchecked Sendable {
 ///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000,
 ///                   "silentPaymentTweak": "<32-byte scalar hex>" }],
 ///       "transactions": [{ "txid": "<display hex>", "height": 149000,
-///                          "received": 50000, "spent": 0, "fee": 250 }]
+///                          "received": 50000, "spent": 0, "fee": 250,
+///                          "replacedBy": "<replacement display hex>" }]
 ///     }
 ///
 /// `fee` on a history entry is optional. It is present only when every
@@ -94,18 +95,22 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         /// Present only when every input was ours. Omitted from JSON when nil
         /// so older v1 files (no `fee` key) remain valid.
         public var fee: Int64?
+        /// The transaction that superseded this one through fee replacement.
+        /// Optional so existing v1/v2 bundles remain readable.
+        public var replacedBy: String?
 
         public init(txid: String, height: UInt32, received: Int64, spent: Int64,
-                    fee: Int64? = nil) {
+                    fee: Int64? = nil, replacedBy: String? = nil) {
             self.txid = txid
             self.height = height
             self.received = received
             self.spent = spent
             self.fee = fee
+            self.replacedBy = replacedBy
         }
 
         private enum CodingKeys: String, CodingKey {
-            case txid, height, received, spent, fee
+            case txid, height, received, spent, fee, replacedBy
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -115,6 +120,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             try container.encode(received, forKey: .received)
             try container.encode(spent, forKey: .spent)
             try container.encodeIfPresent(fee, forKey: .fee)
+            try container.encodeIfPresent(replacedBy, forKey: .replacedBy)
         }
     }
 
@@ -159,7 +165,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             },
             transactions: history.map { entry in
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
-                                 received: entry.received, spent: entry.spent, fee: entry.fee)
+                                 received: entry.received, spent: entry.spent, fee: entry.fee,
+                                 replacedBy: entry.replacedBy?.displayHex)
             }
         )
     }
@@ -396,8 +403,18 @@ extension Wallet {
             guard let txid = Data(hex: known.txid), txid.count == 32 else {
                 throw WalletError.invalidBundle("bad txid \(known.txid)")
             }
+            let replacedBy: Data?
+            if let replacementHex = known.replacedBy {
+                guard let replacement = Data(hex: replacementHex), replacement.count == 32 else {
+                    throw WalletError.invalidBundle("bad replacement txid \(replacementHex)")
+                }
+                replacedBy = Data(replacement.reversed())
+            } else {
+                replacedBy = nil
+            }
             return HistoryEntry(txid: Data(txid.reversed()), height: known.height,
-                                received: known.received, spent: known.spent, fee: known.fee)
+                                received: known.received, spent: known.spent, fee: known.fee,
+                                replacedBy: replacedBy)
         }
 
         let state = WalletState(
