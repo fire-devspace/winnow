@@ -27,6 +27,8 @@ jobs:
           sed -i '' "s/MARKETING_VERSION: \"0.1.0\"/MARKETING_VERSION: \"$VERSION\"/" project.yml
           sed -i '' "s/CURRENT_PROJECT_VERSION: \"1\"/CURRENT_PROJECT_VERSION: \"$GITHUB_RUN_NUMBER\"/" project.yml
           grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" project.yml
+          printf 'TESTFLIGHT_MARKETING_VERSION=%s\n' "$VERSION" >> "$GITHUB_ENV"
+          printf 'TESTFLIGHT_BUILD_NUMBER=%s\n' "$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
       - name: Full test suite (gate)
         run: swift test
@@ -80,6 +82,7 @@ jobs:
         run: |
           chmod +x scripts/testflight.sh
           scripts/testflight.sh wait-processing
+          scripts/testflight.sh notes
           scripts/testflight.sh internal
           scripts/testflight.sh external
 

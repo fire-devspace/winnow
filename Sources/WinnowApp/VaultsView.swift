@@ -70,14 +70,13 @@ struct VaultCreateView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
-    @State private var isMuSig2 = false
-    @State private var threshold = 2
-    @State private var cosigners: [String] = []
+    @State private var draft = VaultDraft()
     @State private var pasted = ""
     @State private var builtDescriptor: Descriptor?
     @State private var error: String?
     @State private var saving = false
 
+    private var isMuSig2: Bool { draft.role == .muSig2 }
     private var policyName: String { isMuSig2 ? "MuSig2" : "k-of-n" }
 
     var body: some View {
@@ -86,26 +85,55 @@ struct VaultCreateView: View {
                 Section {
                     TextField("Vault name", text: $name)
                         .accessibilityIdentifier("vaultNameField")
-                    Picker("Policy", selection: $isMuSig2) {
-                        Text("k-of-n (script path)").tag(false)
-                        Text("n-of-n (MuSig2)").tag(true)
+                    Picker("Policy", selection: Binding(
+                        get: { draft.role },
+                        set: { role in
+                            if draft.setRole(role) {
+                                error = nil
+                                builtDescriptor = nil
+                            }
+                        }
+                    )) {
+                        Text("k-of-n (script path)").tag(VaultCosignerRole.scriptPath)
+                        Text("n-of-n (MuSig2)").tag(VaultCosignerRole.muSig2)
                     }
+                    .disabled(!draft.cosigners.isEmpty)
                     if !isMuSig2 {
-                        Stepper("Threshold: \(threshold) of \(max(cosigners.count, 1))",
-                                value: $threshold, in: 1 ... max(cosigners.count, 1))
+                        if draft.cosigners.count >= 2 {
+                            Stepper("Required signatures: \(draft.threshold) of \(draft.cosigners.count)",
+                                    value: Binding(
+                                        get: { draft.threshold },
+                                        set: { value in
+                                            draft.setThreshold(value)
+                                            builtDescriptor = nil
+                                        }
+                                    ), in: 1 ... draft.cosigners.count)
+                                .accessibilityIdentifier("vaultThresholdStepper")
+                        } else {
+                            LabeledContent("Required signatures") {
+                                Text("Add at least two signers")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityIdentifier("vaultThresholdPending")
+                        }
+                    }
+                    if !draft.cosigners.isEmpty {
+                        Text("Remove all signer keys before changing the policy.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
                 Section {
-                    ForEach(Array(cosigners.enumerated()), id: \.offset) { index, expression in
+                    ForEach(Array(draft.cosigners.enumerated()), id: \.offset) { index, cosigner in
                         VStack(alignment: .leading) {
                             Text("Cosigner \(index + 1)").font(.caption)
-                            Text(expression)
+                            Text(cosigner.expression)
                                 .font(.system(.caption2, design: .monospaced))
                                 .lineLimit(2)
                         }
                     }
-                    .onDelete { cosigners.remove(atOffsets: $0) }
+                    .onDelete(perform: deleteCosigners)
                     TextField("Paste a cosigner key expression", text: $pasted)
                         .font(.system(.caption, design: .monospaced))
                         .autocorrectionDisabled()
@@ -125,13 +153,18 @@ struct VaultCreateView: View {
                 }
 
                 if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                            .accessibilityIdentifier("vaultErrorText")
+                    }
                 }
 
                 Section {
                     Button("Build descriptor") { build() }
                         .accessibilityIdentifier("buildDescriptorButton")
-                        .disabled(cosigners.isEmpty)
+                        .disabled(!draft.canBuild)
                 }
 
                 if let builtDescriptor, let vault = try? Vault(descriptor: builtDescriptor, network: model.network) {
@@ -163,30 +196,47 @@ struct VaultCreateView: View {
     private func addPasted() {
         let text = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        cosigners.append(text)
-        pasted = ""
-        builtDescriptor = nil
+        if addCosigner(text) { pasted = "" }
     }
 
     private func addOwn() {
         do {
             let expression = try model.ownKeyExpression(multipathSuffix: !isMuSig2)
-            guard !cosigners.contains(expression) else { return }
-            cosigners.append(expression)
-            builtDescriptor = nil
+            _ = addCosigner(expression)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
+    @discardableResult
+    private func addCosigner(_ expression: String) -> Bool {
+        do {
+            try draft.add(expression, network: model.network)
+            error = nil
+            builtDescriptor = nil
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            builtDescriptor = nil
+            return false
+        }
+    }
+
+    private func deleteCosigners(at offsets: IndexSet) {
+        draft.remove(at: offsets)
+        error = nil
+        builtDescriptor = nil
+    }
+
     private func build() {
         error = nil
         do {
+            let validated = draft.cosigners.map(\.expression)
             let descriptor: Descriptor
             if isMuSig2 {
-                descriptor = try Descriptor("tr(musig(\(cosigners.joined(separator: ",")))/<0;1>/*)")
+                descriptor = try Descriptor("tr(musig(\(validated.joined(separator: ",")))/<0;1>/*)")
             } else {
-                descriptor = try Vault.multiADescriptor(threshold: threshold, cosigners: cosigners)
+                descriptor = try Vault.multiADescriptor(threshold: draft.threshold, cosigners: validated)
             }
             _ = try Vault(descriptor: descriptor, network: model.network) // validates the policy shape
             builtDescriptor = descriptor

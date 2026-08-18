@@ -1,0 +1,5 @@
+Vault setup
+
+Add and remove signer keys. Confirm Required signatures can move both up and down, never exceeds the total number of keys, and defaults to 2-of-2 once two keys are present.
+
+Paste an invalid signer key. Winnow should keep it editable and explain what is wrong in plain language. Paste a private signer key and confirm Winnow refuses to add or save it.

@@ -60,7 +60,16 @@ public struct Vault: Sendable {
     /// with the BIP341 NUMS internal key, so no single party can key-path
     /// spend. `cosigners` are key expression texts (e.g. `[fp/86'/1'/0']xpub…/<0;1>/*`).
     public static func multiADescriptor(threshold k: Int, cosigners: [String]) throws -> Descriptor {
-        let text = "tr(\(Taproot.unspendableInternalKey.hex),sortedmulti_a(\(k),\(cosigners.joined(separator: ","))))"
+        let validated = try cosigners.map {
+            try VaultCosignerKey.validateWithoutNetwork($0, role: .scriptPath)
+        }
+        guard validated.indices.allSatisfy({ index in
+            !validated[..<index].contains { $0.identity == validated[index].identity }
+        }) else {
+            throw VaultCosignerKeyError.duplicateKey
+        }
+        let expressions = validated.map(\.expression)
+        let text = "tr(\(Taproot.unspendableInternalKey.hex),sortedmulti_a(\(k),\(expressions.joined(separator: ","))))"
         return try Descriptor(text)
     }
 

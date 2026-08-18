@@ -43,6 +43,115 @@ struct VaultFlowTests {
 
     let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32)) // external P2TR
 
+    // MARK: - Vault setup validation
+
+    @Test("vault draft stays valid as keys, thresholds, and policies change")
+    func draftTransitions() throws {
+        let masters = try Self.masters()
+        let keys = try masters.map { try Self.keyExpression(master: $0) }
+        var draft = VaultDraft()
+        #expect(draft.threshold == 1)
+        #expect(!draft.canBuild)
+
+        try draft.add(keys[0], network: .signet)
+        #expect(draft.threshold == 1)
+        #expect(!draft.canBuild)
+        try draft.add(keys[1], network: .signet)
+        #expect(draft.threshold == 2) // the second key defaults the draft to 2-of-2
+        #expect(draft.canBuild)
+
+        try draft.add(keys[2], network: .signet)
+        #expect(draft.threshold == 2)
+        draft.setThreshold(1)
+        #expect(draft.threshold == 1) // decrement works
+        draft.setThreshold(3)
+        #expect(draft.threshold == 3) // increment works
+        draft.setThreshold(99)
+        #expect(draft.threshold == 3) // never exceeds the number of keys
+
+        draft.remove(at: IndexSet(integer: 2))
+        #expect(draft.threshold == 2)
+        draft.remove(at: IndexSet(integer: 1))
+        #expect(draft.threshold == 1)
+        #expect(!draft.canBuild)
+
+        let changedWithKey = draft.setRole(.muSig2)
+        #expect(!changedWithKey) // an incompatible policy cannot replace live keys
+        draft.remove(at: IndexSet(integer: 0))
+        let changedWhenEmpty = draft.setRole(.muSig2)
+        #expect(changedWhenEmpty)
+        #expect(draft.role == .muSig2)
+        #expect(draft.threshold == 1)
+
+        let unchanged = draft
+        #expect(throws: VaultCosignerKeyError.malformed) {
+            try draft.add("not a signer key", network: .signet)
+        }
+        #expect(draft == unchanged) // invalid text is not admitted to the draft
+    }
+
+    @Test("signer keys are public, complete, and match the selected policy")
+    func signerKeyValidation() throws {
+        let master = try Self.masters()[0]
+        let account = try master.derived(path: "m/86'/1'/0'")
+        let scriptPath = try Self.keyExpression(master: master)
+        let muSig2 = try Self.bareKeyExpression(master: master)
+
+        #expect(try VaultCosignerKey(scriptPath, role: .scriptPath,
+                                    network: .signet).expression == scriptPath)
+        #expect(try VaultCosignerKey(muSig2, role: .muSig2,
+                                    network: .signet).expression == muSig2)
+
+        let fingerprint = String(format: "%08x", master.fingerprint)
+        let privateExpression = "[\(fingerprint)/86'/1'/0']\(account.serialized(network: .testnet))/<0;1>/*"
+        #expect(throws: VaultCosignerKeyError.privateKey) {
+            _ = try VaultCosignerKey(privateExpression, role: .scriptPath, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.privateKey) {
+            _ = try VaultCosignerKey(account.serialized(network: .testnet),
+                                     role: .scriptPath, network: .signet)
+        }
+        #expect(VaultCosignerKeyError.privateKey.localizedDescription.contains("private key"))
+
+        let wrongNetwork = "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .mainnet))/<0;1>/*"
+        #expect(throws: VaultCosignerKeyError.wrongNetwork(expectedPrefix: "tpub")) {
+            _ = try VaultCosignerKey(wrongNetwork, role: .scriptPath, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.missingOrigin) {
+            _ = try VaultCosignerKey("\(account.neutered.serialized(network: .testnet))/<0;1>/*",
+                                     role: .scriptPath, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.muSig2DerivationForbidden) {
+            _ = try VaultCosignerKey(scriptPath, role: .muSig2, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.scriptPathDerivationRequired) {
+            _ = try VaultCosignerKey(muSig2, role: .scriptPath, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.malformed) {
+            _ = try VaultCosignerKey("definitely not a signer key", role: .scriptPath, network: .signet)
+        }
+        let mismatchedOrigin = "[deadbeef/86'/1']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
+        #expect(throws: VaultCosignerKeyError.originPathMismatch) {
+            _ = try VaultCosignerKey(mismatchedOrigin, role: .scriptPath, network: .signet)
+        }
+
+        let relabeled = "[deadbeef/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
+        #expect(try VaultCosignerKey(scriptPath, role: .scriptPath, network: .signet).identity ==
+            VaultCosignerKey(relabeled, role: .scriptPath, network: .signet).identity)
+        var duplicateDraft = VaultDraft()
+        try duplicateDraft.add(scriptPath, network: .signet)
+        #expect(throws: VaultCosignerKeyError.duplicateKey) {
+            try duplicateDraft.add(relabeled, network: .signet)
+        }
+        #expect(throws: VaultCosignerKeyError.duplicateKey) {
+            _ = try Vault.multiADescriptor(threshold: 2, cosigners: [scriptPath, relabeled])
+        }
+
+        #expect(throws: VaultCosignerKeyError.privateKey) {
+            _ = try Vault.multiADescriptor(threshold: 1, cosigners: [privateExpression])
+        }
+    }
+
     // MARK: - 2-of-3 multi_a script-path vault
 
     @Test("2-of-3 multi_a vault: derive, fund, build, 2 cosigners, combine, finalize, verify")

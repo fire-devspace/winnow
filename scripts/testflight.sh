@@ -8,7 +8,7 @@
 #   scripts/testflight.sh all
 #
 # Steps (also runnable individually): register-bundle-id, create-app, upload,
-# wait-processing, internal, external, status, all.
+# wait-processing, notes, internal, external, status, all.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,6 +19,9 @@ BUNDLE_ID="com.btcswift.app"
 APP_NAME="Winnow"
 API="https://api.appstoreconnect.apple.com/v1"
 PUBLIC_LINK_ID="${TESTFLIGHT_PUBLIC_LINK_ID:-83djpNE7}"
+WHATS_NEW_FILE="${TESTFLIGHT_WHATS_NEW_FILE:-docs/testflight-what-to-test.txt}"
+EXPECTED_BUILD_NUMBER="${TESTFLIGHT_BUILD_NUMBER:-}"
+EXPECTED_MARKETING_VERSION="${TESTFLIGHT_MARKETING_VERSION:-}"
 
 jwt() { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift scripts/asc-jwt.swift "$KEY_PATH" "$KEY_ID" "$ISSUER"; }
 asc() { # asc <METHOD> <path> [json-body]
@@ -53,9 +56,33 @@ app_id() { asc GET "/apps?filter[bundleId]=$BUNDLE_ID" | python3 -c 'import json
 build_id() {
   if [ -n "${TESTFLIGHT_BUILD_ID:-}" ]; then
     printf '%s\n' "$TESTFLIGHT_BUILD_ID"
-  else
-    asc GET "/builds?filter[app]=$(app_id)&sort=-uploadedDate&limit=1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])'
+    return
   fi
+
+  if [ -n "$EXPECTED_BUILD_NUMBER" ] && [ -n "$EXPECTED_MARKETING_VERSION" ]; then
+    local aid response id
+    aid=$(app_id)
+    for attempt in $(seq 1 30); do
+      response=$(asc GET "/builds?filter[app]=$aid&filter[version]=$EXPECTED_BUILD_NUMBER&filter[preReleaseVersion.version]=$EXPECTED_MARKETING_VERSION&limit=2")
+      id=$(printf '%s' "$response" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)["data"]
+if len(rows) > 1:
+    raise SystemExit(f"expected one matching build; found {len(rows)}")
+print(rows[0]["id"] if rows else "")
+')
+      if [ -n "$id" ]; then
+        printf '%s\n' "$id"
+        return
+      fi
+      echo "waiting for uploaded version $EXPECTED_MARKETING_VERSION build $EXPECTED_BUILD_NUMBER to appear (attempt $attempt/30)" >&2
+      sleep 10
+    done
+    echo "uploaded version $EXPECTED_MARKETING_VERSION build $EXPECTED_BUILD_NUMBER never appeared" >&2
+    return 1
+  fi
+
+  asc GET "/builds?filter[app]=$(app_id)&sort=-uploadedDate&limit=1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])'
 }
 
 step_wait_processing() {
@@ -69,6 +96,53 @@ step_wait_processing() {
     sleep 30
   done
   return 1
+}
+
+step_notes() {
+  local bid localizations localization_id payload response expected actual
+  bid=$(build_id)
+  if [ ! -s "$WHATS_NEW_FILE" ]; then
+    echo "TestFlight What to Test file is missing or empty: $WHATS_NEW_FILE" >&2
+    return 1
+  fi
+
+  localizations=$(asc GET "/builds/$bid/betaBuildLocalizations?limit=200")
+  localization_id=$(printf '%s' "$localizations" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)["data"]
+matches = [row for row in rows if row.get("attributes", {}).get("locale") == "en-US"]
+if len(matches) > 1:
+    raise SystemExit(f"expected at most one en-US localization; found {len(matches)}")
+print(matches[0]["id"] if matches else "")
+')
+
+  if [ -n "$localization_id" ]; then
+    payload=$(python3 -c '
+import json, pathlib, sys
+path, resource_id = sys.argv[1:]
+print(json.dumps({"data": {"type": "betaBuildLocalizations", "id": resource_id,
+                           "attributes": {"whatsNew": pathlib.Path(path).read_text().rstrip()}}}))
+' "$WHATS_NEW_FILE" "$localization_id")
+    response=$(asc PATCH "/betaBuildLocalizations/$localization_id" "$payload")
+    echo "notes: updated en-US What to Test for build $bid"
+  else
+    payload=$(python3 -c '
+import json, pathlib, sys
+path, build_id = sys.argv[1:]
+print(json.dumps({"data": {"type": "betaBuildLocalizations",
+                           "attributes": {"locale": "en-US", "whatsNew": pathlib.Path(path).read_text().rstrip()},
+                           "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}))
+' "$WHATS_NEW_FILE" "$bid")
+    response=$(asc POST /betaBuildLocalizations "$payload")
+    echo "notes: created en-US What to Test for build $bid"
+  fi
+
+  expected=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text().rstrip())' "$WHATS_NEW_FILE")
+  actual=$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["attributes"]["whatsNew"])')
+  if [ "$actual" != "$expected" ]; then
+    echo "notes: App Store Connect did not return the requested What to Test text" >&2
+    return 1
+  fi
 }
 
 step_internal() {
@@ -196,9 +270,10 @@ case "${1:-all}" in
   create-app) step_create_app ;;
   upload) step_upload ;;
   wait-processing) step_wait_processing ;;
+  notes) step_notes ;;
   internal) step_internal ;;
   external) step_external ;;
   status) step_status ;;
-  all) step_register_bundle_id; step_create_app; step_upload; step_wait_processing; step_internal; step_external ;;
+  all) step_register_bundle_id; step_create_app; step_upload; step_wait_processing; step_notes; step_internal; step_external ;;
   *) echo "unknown step $1" >&2; exit 2 ;;
 esac
