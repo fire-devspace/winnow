@@ -26,16 +26,31 @@ struct WinnowApp: App {
 
 /// The four sections of the wallet shell.
 struct MainTabView: View {
+    private enum Tab: String, Hashable {
+        case wallet, send, vaults, settings
+    }
+
+    @State private var selection: Tab
+
+    init() {
+        let requested = E2EMode.current?.initialTab.flatMap(Tab.init(rawValue:))
+        _selection = State(initialValue: requested ?? .wallet)
+    }
+
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             HomeView()
                 .tabItem { Label("Wallet", systemImage: "bitcoinsign.circle") }
+                .tag(Tab.wallet)
             SendView()
                 .tabItem { Label("Send", systemImage: "arrow.up.circle") }
+                .tag(Tab.send)
             VaultsView()
                 .tabItem { Label("Vaults", systemImage: "lock.shield") }
+                .tag(Tab.vaults)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
+                .tag(Tab.settings)
         }
     }
 }

@@ -1,13 +1,35 @@
 import Foundation
 
-public enum HeaderChainError: Error, Equatable {
+public enum HeaderChainError: LocalizedError, Equatable {
     case doesNotConnect
     case invalidTarget(height: UInt32)
     case targetAbovePowLimit(height: UInt32)
     case insufficientProofOfWork(height: UInt32)
     case reorgWithoutMoreWork
     case storageCorrupt(String)
+    case storageUnavailable(String)
     case badPeerResponse(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .doesNotConnect:
+            "A peer sent block headers that do not connect to the known Bitcoin chain."
+        case let .invalidTarget(height):
+            "A peer sent an invalid proof-of-work target at block \(height)."
+        case let .targetAbovePowLimit(height):
+            "A peer sent an impossibly easy proof-of-work target at block \(height)."
+        case let .insufficientProofOfWork(height):
+            "A peer sent a header without enough proof of work at block \(height)."
+        case .reorgWithoutMoreWork:
+            "A peer offered an older or weaker Bitcoin chain."
+        case let .storageCorrupt(reason):
+            "The saved block-header data is damaged (\(reason))."
+        case let .storageUnavailable(reason):
+            "Winnow could not read or save its local block-header data (\(reason))."
+        case let .badPeerResponse(reason):
+            "A peer returned an invalid block-header response (\(reason))."
+        }
+    }
 }
 
 /// Headers-only view of the best proof-of-work chain, synced with `getheaders`.
@@ -44,7 +66,14 @@ public actor HeaderChain {
         chainwork = [UInt256()]
         heightByHash = [genesis.hash: 0]
         if let storageURL, FileManager.default.fileExists(atPath: storageURL.path) {
-            (headers, chainwork, heightByHash) = try Self.load(from: storageURL, params: params)
+            do {
+                (headers, chainwork, heightByHash) = try Self.load(from: storageURL, params: params)
+            } catch let error as HeaderChainError {
+                throw error
+            } catch {
+                throw HeaderChainError.storageUnavailable(
+                    "could not read the header file: \(error.localizedDescription)")
+            }
         } else {
             // Seed cumulative work for genesis.
             chainwork = [try Self.checkedWork(for: genesis, params: params, height: 0)]
@@ -90,17 +119,27 @@ public actor HeaderChain {
 
     /// Validates PoW for one header. Returns the block's work contribution.
     static func checkedWork(for header: BlockHeader, params: NetworkParams, height: UInt32) throws -> UInt256 {
-        guard let target = UInt256.target(compact: header.bits) else {
+        let (target, work) = try targetAndWork(bits: header.bits, params: params, height: height)
+        let hashAsNumber = UInt256(littleEndian: header.hash)
+        guard hashAsNumber <= target else { throw HeaderChainError.insufficientProofOfWork(height: height) }
+        return work
+    }
+
+    /// Target decoding and block-work division depend only on `bits`. Header
+    /// files commonly repeat the same difficulty for long stretches, so load
+    /// can cache this expensive result while still hashing and PoW-checking
+    /// every individual header.
+    private static func targetAndWork(bits: UInt32, params: NetworkParams,
+                                      height: UInt32) throws -> (UInt256, UInt256) {
+        guard let target = UInt256.target(compact: bits) else {
             throw HeaderChainError.invalidTarget(height: height)
         }
         let powLimit = UInt256(littleEndian: params.powLimit)
         guard target <= powLimit else { throw HeaderChainError.targetAbovePowLimit(height: height) }
-        let hashAsNumber = UInt256(littleEndian: header.hash)
-        guard hashAsNumber <= target else { throw HeaderChainError.insufficientProofOfWork(height: height) }
         guard let work = UInt256.blockWork(target: target) else {
             throw HeaderChainError.invalidTarget(height: height)
         }
-        return work
+        return (target, work)
     }
 
     /// Connects a batch of headers received from a peer. The first header must
@@ -170,7 +209,12 @@ public actor HeaderChain {
         data.appendUInt32(UInt32(headers.count))
         for header in headers { data.append(header.serialized) }
         // .atomic writes to a temp file then renames — safe mid-write crash.
-        try data.write(to: storageURL, options: .atomic)
+        do {
+            try data.write(to: storageURL, options: .atomic)
+        } catch {
+            throw HeaderChainError.storageUnavailable(
+                "could not save the header file: \(error.localizedDescription)")
+        }
     }
 
     private static func load(from url: URL, params: NetworkParams) throws
@@ -184,11 +228,25 @@ public actor HeaderChain {
         var loadedHeaders: [BlockHeader] = []
         var loadedWork: [UInt256] = []
         var work = UInt256()
+        var workByBits: [UInt32: (target: UInt256, work: UInt256)] = [:]
         for index in 0 ..< count {
             guard let header = try? BlockHeader.decode(from: &reader) else {
                 throw HeaderChainError.storageCorrupt("bad header at \(index)")
             }
-            work = work + (try checkedWork(for: header, params: params, height: index))
+            let parameters: (target: UInt256, work: UInt256)
+            if let cached = workByBits[header.bits] {
+                parameters = cached
+            } else {
+                parameters = try targetAndWork(bits: header.bits, params: params, height: index)
+                workByBits[header.bits] = parameters
+            }
+            // Caching block-work must never cache header validity: every hash
+            // remains independently checked against the repeated target.
+            let hashAsNumber = UInt256(littleEndian: header.hash)
+            guard hashAsNumber <= parameters.target else {
+                throw HeaderChainError.insufficientProofOfWork(height: index)
+            }
+            work = work + parameters.work
             if index == 0, header != genesis { throw HeaderChainError.storageCorrupt("genesis mismatch") }
             if index > 0, header.previousHash != loadedHeaders[loadedHeaders.count - 1].hash {
                 throw HeaderChainError.storageCorrupt("broken linkage at \(index)")

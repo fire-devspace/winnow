@@ -1,5 +1,19 @@
 import Foundation
 
+public enum PeerPoolHeaderSyncError: LocalizedError, Equatable {
+    case noPeers
+    case exhausted(attempts: Int, lastError: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .noPeers:
+            "No Bitcoin peers are available for block-header sync."
+        case let .exhausted(attempts, lastError):
+            "Winnow tried \(attempts) Bitcoin peer\(attempts == 1 ? "" : "s"), but none supplied a usable block-header chain. Last error: \(lastError)"
+        }
+    }
+}
+
 /// A small pool of outbound peers (default 3). Candidates come from manually
 /// supplied endpoints, a persisted good-peers JSON file, the network's
 /// hardcoded fallback peers, and DNS seeds resolved over DoH (dns-json)
@@ -36,6 +50,10 @@ public actor PeerPool {
     private var replenishing = false
     private var attemptsThisRound = 0
     private var exhausted = false
+    /// Endpoints rejected for a protocol/chain failure during this pool run.
+    /// Without this set a manual or persisted bad peer is immediately dialed
+    /// again after `misbehaving`, starving healthy fallback candidates.
+    private var rejectedForSession: Set<PeerEndpoint> = []
 
     /// UI-facing snapshot of the pool's connection progress.
     public struct ConnectionStatus: Sendable, Equatable {
@@ -101,6 +119,7 @@ public actor PeerPool {
         started = false
         for peer in peers { await peer.disconnect() }
         peers = []
+        rejectedForSession = []
         persistKnownGood()
     }
 
@@ -114,7 +133,54 @@ public actor PeerPool {
         await peer.disconnect()
         peers.removeAll { $0.endpoint == peer.endpoint }
         knownGood.remove(peer.endpoint)
+        rejectedForSession.insert(peer.endpoint)
         await replenish()
+    }
+
+    /// Syncs headers against connected peers with bounded failover. Header
+    /// batches already accepted by `HeaderChain` remain persisted, so the next
+    /// peer resumes from that progress rather than restarting at genesis.
+    /// Local storage failures are never blamed on (or retried against) peers.
+    public func syncHeaders(_ chain: HeaderChain, timeoutPerPeer: Duration = .seconds(30),
+                            maxAttempts: Int = 6) async throws {
+        precondition(maxAttempts > 0)
+        var attempts = 0
+        var lastError: (any Error)?
+
+        while attempts < maxAttempts {
+            guard let peer = peers.first else {
+                if attempts == 0 { throw PeerPoolHeaderSyncError.noPeers }
+                break
+            }
+            attempts += 1
+            do {
+                try await chain.sync(using: peer, timeout: timeoutPerPeer)
+                return
+            } catch let error as HeaderChainError {
+                switch error {
+                case .storageCorrupt, .storageUnavailable:
+                    throw error
+                default:
+                    break
+                }
+                lastError = error
+                await misbehaving(peer, reason: error.localizedDescription)
+            } catch is CancellationError {
+                // App lifecycle cancellation is local control flow, not peer
+                // misconduct. Keep the connection eligible for the next
+                // foreground sync instead of poisoning the session pool.
+                throw CancellationError()
+            } catch {
+                lastError = error
+                // A peer that disconnects, times out, or violates framing in
+                // the middle of header sync is unsuitable for this run too.
+                await misbehaving(peer, reason: error.localizedDescription)
+            }
+        }
+
+        throw PeerPoolHeaderSyncError.exhausted(
+            attempts: attempts,
+            lastError: lastError?.localizedDescription ?? "no additional peers were available")
     }
 
     // MARK: - Internals
@@ -150,7 +216,7 @@ public actor PeerPool {
         // Dial manual / persisted / fallback first. Resolve DNS seeds only
         // if those sources cannot fill the pool — a working manual peer
         // must not wait on DoH.
-        var queue = localCandidates(excluding: Set(peers.map(\.endpoint)))
+        var queue = localCandidates(excluding: Set(peers.map(\.endpoint)).union(rejectedForSession))
         var resolvedSeeds = false
         var needed = peerCount - peers.count
         var next = 0
@@ -159,7 +225,7 @@ public actor PeerPool {
             while needed > 0, started {
                 if next >= queue.count && !resolvedSeeds {
                     resolvedSeeds = true
-                    var seen = Set(peers.map(\.endpoint))
+                    var seen = Set(peers.map(\.endpoint)).union(rejectedForSession)
                     seen.formUnion(queue)
                     queue.append(contentsOf: await seedCandidates(excluding: seen))
                 }

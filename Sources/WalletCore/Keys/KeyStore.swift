@@ -1,10 +1,24 @@
 import Foundation
+import Security
 
-public enum KeyStoreError: Error, Equatable {
+public enum KeyStoreError: LocalizedError, Equatable {
     case notFound(walletID: String)
     case alreadyExists(walletID: String)
     case malformedSecret
     case keychain(OSStatus)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .notFound(walletID):
+            "The protected key for wallet \(walletID) is missing from this device."
+        case let .alreadyExists(walletID):
+            "This device already contains a protected key for wallet \(walletID)."
+        case .malformedSecret:
+            "The protected wallet key is damaged or has an unsupported format."
+        case let .keychain(status):
+            "The device could not store the protected wallet key (\(SecCopyErrorMessageString(status, nil) as String? ?? "keychain status \(status)"))."
+        }
+    }
 }
 
 /// The root secret of a wallet, as held by a `KeyStore`.

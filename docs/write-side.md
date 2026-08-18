@@ -102,7 +102,7 @@ Inputs to a silent-payment send are this wallet's own P2TR key-path spends, whic
 - Re-announce on exponential backoff (60s base, cap 1h) until `FilterSync` reports the tx in a matched block, or the caller cancels (e.g. a replacement).
 - Pending txs persist as JSON (raw tx, feerate, next attempt) so a killed app resumes relay.
 
-While the Send screen is open, a [bounded mempool window](read-side.md#28-bounded-mempool-windows) watches for peers echoing our txid back. An echo is evidence the network has the bytes; it is not confirmation. The UI says "broadcast" / "relayed" / "seen in a block", never "sent" at 0-conf.
+While the Send screen is open, a [bounded mempool window](/read-side#bounded-mempool-windows) watches for peers echoing our txid back. An echo is evidence the network has the bytes; it is not confirmation. The UI says "broadcast" / "relayed" / "seen in a block", never "sent" at 0-conf.
 
 Winnow does not POST transactions to Esplora. A transaction row can open the selected explorer after a warning, but P2P relay remains the broadcast path and the page's answer is not consumed by the wallet.
 

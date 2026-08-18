@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 // Generates a 1024x1024 app icon: Bitcoin-orange rounded square, black ₿ glyph.
-// Usage: swift Scripts/make-icon.swift <output.png>
+// Usage: swift scripts/make-icon.swift <output.png>
 import CoreGraphics
 import CoreText
 import Foundation

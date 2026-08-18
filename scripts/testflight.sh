@@ -5,7 +5,7 @@
 #
 #   export ASC_KEY_ID=5QT8WW3Q8H
 #   export ASC_ISSUER_ID=<issuer uuid>   # ASC → Users and Access → Integrations
-#   Scripts/testflight.sh all
+#   scripts/testflight.sh all
 #
 # Steps (also runnable individually): register-bundle-id, create-app, upload,
 # wait-processing, internal, external, all.
@@ -19,7 +19,7 @@ BUNDLE_ID="com.btcswift.app"
 APP_NAME="Winnow"
 API="https://api.appstoreconnect.apple.com/v1"
 
-jwt() { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift Scripts/asc-jwt.swift "$KEY_PATH" "$KEY_ID" "$ISSUER"; }
+jwt() { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift scripts/asc-jwt.swift "$KEY_PATH" "$KEY_ID" "$ISSUER"; }
 asc() { # asc <METHOD> <path> [json-body]
   local method="$1" path="$2" body="${3:-}"
   local args=(-sS -g -X "$method" -H "Authorization: Bearer $(jwt)" -H "Content-Type: application/json")

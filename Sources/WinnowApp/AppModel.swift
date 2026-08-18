@@ -51,6 +51,7 @@ final class AppModel {
     struct Status: Equatable {
         var balance: Int64 = 0
         var utxoCount = 0
+        var silentUTXOCount = 0
         var history: [HistoryEntry] = []
         var feeBumpableTxids: [Data] = []
         var observedFeeRates: [Double] = []
@@ -125,6 +126,7 @@ final class AppModel {
     /// never touch a real wallet's secrets.
     let keyStore: any KeyStore
     let vaultStore = VaultStore()
+    private let defaults: UserDefaults
 
     /// Non-nil only when launched with WINNOW_E2E=1 (XCUITest runs).
     let e2e: E2EMode?
@@ -132,20 +134,22 @@ final class AppModel {
     // Settings (UserDefaults-persisted; see the mutating methods below).
     private(set) var network: BitcoinNetwork
     private(set) var manualPeers: [String] // "host:port"
-    private(set) var esploraEnabled: Bool
     private(set) var esploraURLString: String
     private(set) var spReceiveEnabled: Bool
     private(set) var spIndexURLString: String
 
     private var syncTask: Task<Void, Never>?
     private var phaseTask: Task<Void, Never>?
-    private var esploraEstimates: [Int: Double]?
     private var isActive = false
+    private var buildingStack = false
+    /// Prevents the E2E journal from repeating an identical wallet/vault
+    /// snapshot every time SwiftUI asks for a refresh.
+    private var lastE2ESnapshotFingerprint: String?
+    private var lastE2EPeerFingerprint: String?
 
     private enum DefaultsKey {
         static let network = "network"
         static let manualPeers = "manualPeers"
-        static let esploraEnabled = "esploraEnabled"
         static let esploraURL = "esploraURL"
         static let spReceiveEnabled = "spReceiveEnabled"
         static let spIndexURL = "spIndexURL"
@@ -158,11 +162,17 @@ final class AppModel {
         let e2e = E2EMode.current
         self.e2e = e2e
         e2e?.wipeIfRequested()
-        keyStore = e2e != nil ? KeychainStore(service: E2EMode.keychainService) : KeychainStore()
-        let defaults = UserDefaults.standard
-        network = BitcoinNetwork(rawValue: defaults.string(forKey: DefaultsKey.network) ?? "") ?? .signet
+        keyStore = e2e.map { KeychainStore(service: $0.keychainService) } ?? KeychainStore()
+        let defaults = e2e?.defaults ?? .standard
+        self.defaults = defaults
+        let selectedNetwork = e2e?.forcedNetwork
+            ?? BitcoinNetwork(rawValue: defaults.string(forKey: DefaultsKey.network) ?? "")
+            ?? .signet
+        network = selectedNetwork
+        if e2e?.forcedNetwork != nil {
+            defaults.set(selectedNetwork.rawValue, forKey: DefaultsKey.network)
+        }
         manualPeers = defaults.stringArray(forKey: DefaultsKey.manualPeers) ?? []
-        esploraEnabled = defaults.bool(forKey: DefaultsKey.esploraEnabled)
         esploraURLString = defaults.string(forKey: DefaultsKey.esploraURL) ?? ""
         spReceiveEnabled = defaults.bool(forKey: DefaultsKey.spReceiveEnabled)
         spIndexURLString = defaults.string(forKey: DefaultsKey.spIndexURL) ?? ""
@@ -172,6 +182,7 @@ final class AppModel {
             manualPeers = [peer]
             defaults.set(manualPeers, forKey: DefaultsKey.manualPeers)
         }
+        e2e?.journal("app.initialized", fields: ["network": network.rawValue])
     }
 
     // MARK: - Lifecycle
@@ -189,10 +200,18 @@ final class AppModel {
             walletDescriptor = await wallet.descriptor
             // A wallet whose backup was never confirmed re-enters onboarding:
             // the backup sheet resumes from the Keychain (#5).
-            stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
+            let backupPending = pendingBackupMnemonic() != nil
+            stage = backupPending ? .onboarding : .ready
+            if backupPending {
+                e2e?.journal("backup.pendingResumed", fields: ["walletID": walletID ?? ""])
+            }
         } else {
             stage = .onboarding
         }
+        e2e?.journal("app.booted", fields: [
+            "stage": stage == .ready ? "ready" : "onboarding",
+            "walletID": walletID ?? "",
+        ])
         await refresh()
     }
 
@@ -250,6 +269,7 @@ final class AppModel {
             return
         }
         let connection = await stack.pool.connectionStatus
+        await journalPeerStatusIfChanged(connection)
         if connection.connected == 0 {
             // No peers at all: still dialing, or the round ran dry.
             syncPhase = connection.exhausted
@@ -278,8 +298,43 @@ final class AppModel {
         }
     }
 
+    /// The story runner uses this safe event to prove that preflight reached
+    /// multiple public peers. Endpoints and user agents are public connection
+    /// metadata; wallet scripts, addresses, and keys are never included.
+    private func journalPeerStatusIfChanged(_ connection: PeerPool.ConnectionStatus) async {
+        guard let e2e, let stack else { return }
+        var descriptions: [String] = []
+        for peer in await stack.pool.connectedPeers() {
+            let endpoint = await peer.endpoint.description
+            let userAgent = await peer.peerUserAgent ?? "unknown"
+            descriptions.append("\(endpoint) \(userAgent)")
+        }
+        descriptions.sort()
+        let fields = [
+            "connected": String(connection.connected),
+            "target": String(connection.target),
+            "dialing": String(connection.dialing),
+            "exhausted": String(connection.exhausted),
+            "peers": descriptions.joined(separator: ","),
+        ]
+        let fingerprint = fields.keys.sorted().map { "\($0)=\(fields[$0] ?? "")" }
+            .joined(separator: "|")
+        guard fingerprint != lastE2EPeerFingerprint else { return }
+        lastE2EPeerFingerprint = fingerprint
+        e2e.journal("peers.status", fields: fields)
+    }
+
     private func buildStackIfNeeded() async {
-        guard stack == nil, let dir = storageDirectory() else { return }
+        guard stack == nil else { return }
+        if buildingStack {
+            while stack == nil, buildingStack {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return
+        }
+        guard let dir = storageDirectory() else { return }
+        buildingStack = true
+        defer { buildingStack = false }
         do {
             let params = e2e?.networkParams ?? NetworkParams.params(for: network)
             // relayPreference: peers inv us relayed transactions so bounded
@@ -289,7 +344,14 @@ final class AppModel {
             let pool = PeerPool(params: params, manualPeers: parsedManualPeers(),
                                 peersFileURL: dir.appending(path: "peers.json"),
                                 relayPreference: true)
-            let chain = try HeaderChain(params: params, storageURL: dir.appending(path: "headers.bin"))
+            let headersURL = dir.appending(path: "headers.bin")
+            // A public signet snapshot is ~25 MB and validating every stored
+            // header's linkage/work is intentionally CPU-heavy. Keep that
+            // validation intact but off the MainActor so relaunching during
+            // backup never freezes the onboarding sheet.
+            let chain = try await Task.detached(priority: .userInitiated) {
+                try HeaderChain(params: params, storageURL: headersURL)
+            }.value
             let broadcaster = TxBroadcaster(pool: pool, storageURL: dir.appending(path: "broadcast.json"))
             var newStack = SyncStack(pool: pool, chain: chain, filters: nil, broadcaster: broadcaster)
             if let wallet {
@@ -380,7 +442,9 @@ final class AppModel {
         var snapshot = Status()
         if let wallet {
             snapshot.balance = await wallet.balance
-            snapshot.utxoCount = await wallet.utxos.count
+            let utxos = await wallet.utxos
+            snapshot.utxoCount = utxos.count
+            snapshot.silentUTXOCount = utxos.filter { $0.silentPaymentTweak != nil }.count
             // Active pending entries first, then newest blocks, with replaced
             // height-0 originals last instead of pinning them as pending.
             snapshot.history = await wallet.history.sorted {
@@ -405,33 +469,38 @@ final class AppModel {
         snapshot.lastSyncError = status.lastSyncError
         status = snapshot
         vaults = await vaultStore.all
+        journalSnapshotIfChanged()
     }
 
     // MARK: - Wallet creation / import (onboarding)
 
-    /// Creates a fresh wallet. Headers are synced first so the creation height
-    /// is the current tip — a fresh wallet scans forward from there
-    /// (docs/read-side.md §3.1). Returns the new mnemonic, shown once.
+    /// Creates a fresh wallet immediately at the last locally validated header.
+    /// Peer/header catch-up continues through the regular sync loop while the
+    /// user backs up the phrase. Starting at the known height (rather than
+    /// jumping to the eventual peer tip) keeps the race safe: any payment made
+    /// while onboarding is visible will still be covered by filter scanning.
     func createWallet() async throws -> String {
         await buildStackIfNeeded()
         guard let stack else { throw AppError.noStack }
-        await stack.pool.start()
-        let peer = try await waitForPeer(timeout: .seconds(90))
-        try await stack.chain.sync(using: peer, timeout: .seconds(60))
-        let tip = await stack.chain.height
+        let knownHeight = await stack.chain.height
         guard let walletURL = walletURL() else { throw AppError.noWallet }
         let wallet = try Wallet.create(network: network, keyStore: keyStore,
                                        storageURL: walletURL, entropy: e2e?.entropy,
-                                       creationHeight: tip)
+                                       creationHeight: knownHeight)
         // Flag BEFORE adopt(): the wallet is already in the Keychain, so a
         // throw below must not leave it unflagged — the next boot would land
         // on .ready with the backup silently skipped, the exact bug class #5
         // kills. A stuck-true flag merely re-presents the sheet: fail-safe.
-        UserDefaults.standard.set(true, forKey: DefaultsKey.backupPending(await wallet.id))
+        defaults.set(true, forKey: DefaultsKey.backupPending(await wallet.id))
         try await adopt(wallet: wallet)
         guard let walletID, case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw AppError.mnemonicUnavailable
         }
+        e2e?.journal("wallet.created", fields: [
+            "walletID": walletID,
+            "height": String(knownHeight),
+            "headersContinueInBackground": "true",
+        ])
         return words
     }
 
@@ -446,6 +515,13 @@ final class AppModel {
         }
         let bundle = try JSONDecoder().decode(ImportBundle.self, from: data)
         guard bundle.network == network.rawValue else { throw AppError.wrongNetwork(bundle.network) }
+        e2e?.journal("import.started", fields: [
+            "bundleVersion": String(bundle.version),
+            "seedBearing": String(bundle.mnemonic != nil),
+            "lastKnownHeight": String(bundle.lastKnownHeight),
+            "utxoCount": String(bundle.utxos.count),
+            "historyCount": String(bundle.transactions.count),
+        ])
         guard let walletURL = walletURL() else { throw AppError.noWallet }
         let wallet = try Wallet.importing(bundle, keyStore: keyStore, storageURL: walletURL)
         // Verification below runs its own one-shot filter sync; the regular
@@ -455,13 +531,31 @@ final class AppModel {
         try await adopt(wallet: wallet, startSync: false)
         defer { if isActive { startSyncLoop() } }
         await buildStackIfNeeded()
-        guard let filters = stack?.filters else { return nil }
+        guard let filters = stack?.filters else {
+            e2e?.journal("import.verificationWaiting", fields: ["reason": "sync stack unavailable"])
+            return nil
+        }
         await stack?.pool.start()
-        guard (try? await waitForPeer(timeout: .seconds(60))) != nil else { return nil }
+        guard (try? await waitForPeer(timeout: .seconds(60))) != nil else {
+            e2e?.journal("import.verificationWaiting", fields: ["reason": "public peers unavailable"])
+            return nil
+        }
         // A verification failure (e.g. a peer serving a bad filter) is a real
         // error for the user, not the "no peers yet" soft path.
         let report = try await wallet.verifyImport(bundle, using: filters)
         await refresh()
+        e2e?.journal("import.verified", fields: [
+            "scannedFromHeight": String(report.scannedFromHeight),
+            "scannedToHeight": report.scannedToHeight.map(String.init) ?? "waiting",
+            "matchesBundle": String(report.matchesBundle),
+            "confirmedUTXOCount": String(report.confirmedUTXOs.count),
+            "spentSinceBundleCount": String(report.spentSinceBundle.count),
+            "discoveredUTXOCount": String(report.discoveredUTXOs.count),
+            "balance": String(status.balance),
+            "utxoCount": String(status.utxoCount),
+            "historyCount": String(status.history.count),
+            "nextScanHeight": String(status.nextScanHeight),
+        ])
         return report
     }
 
@@ -475,7 +569,16 @@ final class AppModel {
         if let filters = stack?.filters {
             try await wallet.recordScanHeight(await filters.nextScanHeight)
         }
-        return try await wallet.exportBundle(includeMnemonic: includeMnemonic).serialized()
+        let bundle = try await wallet.exportBundle(includeMnemonic: includeMnemonic)
+        let serialized = try bundle.serialized()
+        e2e?.journal("wallet.exported", fields: [
+            "bundleVersion": String(bundle.version),
+            "seedBearing": String(bundle.mnemonic != nil),
+            "lastKnownHeight": String(bundle.lastKnownHeight),
+            "utxoCount": String(bundle.utxos.count),
+            "historyCount": String(bundle.transactions.count),
+        ])
+        return serialized
     }
 
     /// Switches to a just-created/imported wallet: anything chain-facing from
@@ -506,9 +609,21 @@ final class AppModel {
     /// Leaves onboarding once the backup flow (or import report) is done.
     func finishOnboarding() {
         if let walletID {
-            UserDefaults.standard.removeObject(forKey: DefaultsKey.backupPending(walletID))
+            let wasBackupPending = defaults.bool(forKey: DefaultsKey.backupPending(walletID))
+            defaults.removeObject(forKey: DefaultsKey.backupPending(walletID))
+            e2e?.journal(wasBackupPending ? "backup.completed" : "import.onboardingCompleted",
+                         fields: ["walletID": walletID])
         }
-        if wallet != nil { stage = .ready }
+        if wallet != nil {
+            stage = .ready
+            e2e?.journal("wallet.ready", fields: [
+                "walletID": walletID ?? "",
+                "balance": String(status.balance),
+                "utxoCount": String(status.utxoCount),
+                "historyCount": String(status.history.count),
+                "nextScanHeight": String(status.nextScanHeight),
+            ])
+        }
     }
 
     /// The mnemonic of a wallet created but never backup-confirmed — non-nil
@@ -517,7 +632,7 @@ final class AppModel {
     /// the same words.
     func pendingBackupMnemonic() -> String? {
         guard let walletID,
-              UserDefaults.standard.bool(forKey: DefaultsKey.backupPending(walletID)),
+              defaults.bool(forKey: DefaultsKey.backupPending(walletID)),
               case let .mnemonic(words) = try? keyStore.load(walletID: walletID)
         else { return nil }
         return words
@@ -530,7 +645,7 @@ final class AppModel {
     /// throws `WalletError.mnemonicUnavailable`.
     func revealMnemonic() async throws -> String {
         guard let walletID else { throw AppError.noWallet }
-        if e2e == nil {
+        if e2e == nil || e2e?.requireDeviceAuthentication == true {
             let context = LAContext()
             var unavailable: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {
@@ -544,6 +659,9 @@ final class AppModel {
         guard case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw WalletError.mnemonicUnavailable
         }
+        e2e?.journal("backup.phraseRevealReady", fields: [
+            "deviceAuthenticationRequired": String(e2e?.requireDeviceAuthentication == true),
+        ])
         return words
     }
 
@@ -566,7 +684,9 @@ final class AppModel {
     /// payment to it arrives, or via `freshReceiveAddress`).
     func currentReceiveAddress() async throws -> String {
         guard let wallet else { throw AppError.noWallet }
-        return try await wallet.address(chain: .receive, index: wallet.nextReceiveIndex)
+        let address = try await wallet.address(chain: .receive, index: wallet.nextReceiveIndex)
+        e2e?.journal("address.receive", fields: ["address": address])
+        return address
     }
 
     /// The wallet's static silent payment address. Shown only while the
@@ -574,7 +694,9 @@ final class AppModel {
     /// tweak index, so handing it out with the toggle off invites losses.
     func currentSilentPaymentAddress() async throws -> String {
         guard let wallet else { throw AppError.noWallet }
-        return try await wallet.silentPaymentAddress()
+        let address = try await wallet.silentPaymentAddress()
+        e2e?.journal("address.silent", fields: ["address": address])
+        return address
     }
 
     /// Marks the current receive address used and returns the next one.
@@ -585,14 +707,13 @@ final class AppModel {
         return address
     }
 
-    /// The resolved feerate (sat/vB): user override, then the opt-in esplora
-    /// estimate when enabled, then the wallet's own observed feerates, then the
-    /// static presets — clamped from below by the peers' BIP133 floor
+    /// The resolved feerate (sat/vB): user override, then the wallet's own
+    /// observed feerates, then the static presets — clamped from below by the
+    /// peers' BIP133 floor
     /// (FeePolicy, docs/write-side.md §4).
     func resolvedFeeRate(priority: FeePolicy.Priority, override: Double?) async -> Double {
         let observed = await wallet?.observedFeeRates ?? []
-        let serverEstimate = await esploraEstimate(for: priority)
-        return FeePolicy.resolve(priority: priority, override: override ?? serverEstimate,
+        return FeePolicy.resolve(priority: priority, override: override,
                                  observed: observed, floorSatPerVByte: status.feeFloorSatPerVByte)
     }
 
@@ -649,6 +770,12 @@ final class AppModel {
                                        feeRateSatPerVByte: preview.feeRateSatPerVByte)
         try await wallet.commit(prepared)
         await refresh()
+        e2e?.journal("transaction.sent", fields: [
+            "txid": txid.displayHex,
+            "raw": prepared.built.transaction.serialized(includeWitness: true).hex,
+            "silent": String(!preview.silentPayments.isEmpty),
+            "tweakData": prepared.silentPaymentTweakData?.hex ?? "",
+        ])
         return txid
     }
 
@@ -684,20 +811,23 @@ final class AppModel {
         }
         await broadcaster.cancel(txid)
         await refresh()
+        e2e?.journal("transaction.replaced", fields: [
+            "original": txid.displayHex,
+            "replacement": replacementTxid.displayHex,
+            "raw": prepared.built.transaction.serialized(includeWitness: true).hex,
+        ])
         return replacementTxid
     }
 
-    /// Broadcasts a fully-signed transaction via P2P relay — and additionally
-    /// POSTs it to the esplora backend when the user opted in.
+    /// Broadcasts a fully-signed transaction via P2P relay. Block-explorer
+    /// settings are links only and are never used as a broadcast backend.
     /// `feeRateSatPerVByte` (known from the send preview) enables the
     /// broadcaster's BIP133 fee-floor events.
     func broadcast(_ transaction: BitcoinTransaction, feeRateSatPerVByte: Double? = nil) async throws -> Data {
         guard let broadcaster = stack?.broadcaster else { throw AppError.noStack }
         let raw = transaction.serialized(includeWitness: true)
         let txid = try await broadcaster.broadcast(raw, feeRateSatPerVByte: feeRateSatPerVByte)
-        if esploraEnabled {
-            _ = try? await EsploraClient(baseURL: esploraBaseURL).broadcast(raw)
-        }
+        e2e?.journal("transaction.broadcast", fields: ["txid": txid.displayHex, "raw": raw.hex])
         return txid
     }
 
@@ -728,6 +858,11 @@ final class AppModel {
         }
         let record = try await vaultStore.add(name: name, descriptor: descriptor, createdAtHeight: height)
         vaults = await vaultStore.all
+        e2e?.journal("vault.created", fields: [
+            "name": name,
+            "descriptor": descriptor.serialized(),
+            "height": String(height),
+        ])
         return record
     }
 
@@ -742,11 +877,71 @@ final class AppModel {
     }
 
     /// Commits a broadcast vault spend to the vault's local UTXO set.
+    @discardableResult
     func recordVaultSpend(id: String, transaction: BitcoinTransaction, changeScriptPubKey: Data?,
-                          changeIndex: UInt32) async {
-        try? await vaultStore.recordSpend(id: id, transaction: transaction,
-                                          changeScriptPubKey: changeScriptPubKey, changeIndex: changeIndex)
+                          changeIndex: UInt32) async -> Bool {
+        let recorded = (try? await vaultStore.recordSpend(
+            id: id, transaction: transaction,
+            changeScriptPubKey: changeScriptPubKey, changeIndex: changeIndex)) ?? false
         vaults = await vaultStore.all
+        guard recorded else { return false }
+        e2e?.journal("vault.spendRecorded", fields: [
+            "vaultID": id,
+            "txid": transaction.txid.displayHex,
+            "changeIndex": String(changeIndex),
+            "hasChange": String(changeScriptPubKey != nil),
+        ])
+        journalSnapshotIfChanged()
+        return true
+    }
+
+    /// Records only the public PSBT exchanged with cosigners. Secret MuSig2
+    /// nonces never enter a PSBT and remain in `VaultSignView` memory.
+    func journalPSBT(stage: String, psbt: PSBT) {
+        e2e?.journal("psbt.generated", fields: [
+            "stage": stage,
+            "base64": psbt.base64,
+            "inputCount": String(psbt.inputs.count),
+            "outputCount": String(psbt.outputs.count),
+        ])
+    }
+
+    /// Safe, public automation facts emitted only in E2E mode. The complete
+    /// txid/height and vault UTXO summaries let the story runner compare an
+    /// original and replacement phone and notice confirmations after resume.
+    private func journalSnapshotIfChanged() {
+        guard let e2e, wallet != nil else { return }
+        let confirmed = status.history.filter { $0.height > 0 }.map {
+            "\($0.txid.displayHex)@\($0.height)"
+        }.joined(separator: ",")
+        let pending = status.history.filter { $0.height == 0 && $0.replacedBy == nil }
+            .map { $0.txid.displayHex }.joined(separator: ",")
+        let replacements = status.history.compactMap { entry in
+            entry.replacedBy.map { "\(entry.txid.displayHex)>\($0.displayHex)" }
+        }.joined(separator: ",")
+        let vaultSummary = vaults.map { record in
+            let confirmedCount = record.utxos.filter { $0.height > 0 }.count
+            return "\(record.id):\(record.balance):\(record.utxos.count):\(confirmedCount)"
+        }.joined(separator: ",")
+        let fields = [
+            "walletID": walletID ?? "",
+            "balance": String(status.balance),
+            "utxoCount": String(status.utxoCount),
+            "historyCount": String(status.history.count),
+            "silentUTXOCount": String(status.silentUTXOCount),
+            "nextScanHeight": String(status.nextScanHeight),
+            "tipHeight": String(status.tipHeight),
+            "peerCount": String(status.peerCount),
+            "confirmedTransactions": confirmed,
+            "pendingTransactions": pending,
+            "replacements": replacements,
+            "vaults": vaultSummary,
+        ]
+        let fingerprint = fields.keys.sorted().map { "\($0)=\(fields[$0] ?? "")" }
+            .joined(separator: "|")
+        guard fingerprint != lastE2ESnapshotFingerprint else { return }
+        lastE2ESnapshotFingerprint = fingerprint
+        e2e.journal("wallet.snapshot", fields: fields)
     }
 
     /// Loads the wallet's master key for one vault signing operation.
@@ -765,6 +960,7 @@ final class AppModel {
     /// Per-network wallets: switching network opens that network's own state
     /// (or onboarding when it has none) with a freshly built stack.
     func switchNetwork(to newNetwork: BitcoinNetwork) async {
+        guard e2e?.forcedNetwork == nil || e2e?.forcedNetwork == newNetwork else { return }
         guard newNetwork != network else { return }
         syncTask?.cancel()
         syncTask = nil
@@ -774,8 +970,7 @@ final class AppModel {
         walletID = nil
         walletDescriptor = nil
         network = newNetwork
-        UserDefaults.standard.set(newNetwork.rawValue, forKey: DefaultsKey.network)
-        esploraEstimates = nil
+        defaults.set(newNetwork.rawValue, forKey: DefaultsKey.network)
         await vaultStore.configure(storageURL: vaultsURL())
         if let walletURL = walletURL(), let wallet = try? Wallet.open(storageURL: walletURL, keyStore: keyStore) {
             self.wallet = wallet
@@ -803,12 +998,12 @@ final class AppModel {
         let endpoint = try Self.parsePeer(text)
         guard !manualPeers.contains(endpoint.description) else { return }
         manualPeers.append(endpoint.description)
-        UserDefaults.standard.set(manualPeers, forKey: DefaultsKey.manualPeers)
+        defaults.set(manualPeers, forKey: DefaultsKey.manualPeers)
     }
 
     func removeManualPeers(at offsets: IndexSet) {
         manualPeers.remove(atOffsets: offsets)
-        UserDefaults.standard.set(manualPeers, forKey: DefaultsKey.manualPeers)
+        defaults.set(manualPeers, forKey: DefaultsKey.manualPeers)
     }
 
     /// Rebuilds the stack so changed peer settings take effect.
@@ -823,12 +1018,18 @@ final class AppModel {
 
     func setSilentPaymentsEnabled(_ enabled: Bool) {
         spReceiveEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: DefaultsKey.spReceiveEnabled)
+        defaults.set(enabled, forKey: DefaultsKey.spReceiveEnabled)
+        e2e?.journal("setting.silentPayments", fields: ["enabled": String(enabled)])
     }
 
     func setSilentPaymentIndexURL(_ text: String) {
         spIndexURLString = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        UserDefaults.standard.set(spIndexURLString, forKey: DefaultsKey.spIndexURL)
+        defaults.set(spIndexURLString, forKey: DefaultsKey.spIndexURL)
+        let host = URL(string: spIndexURLString)?.host?.lowercased()
+        e2e?.journal("setting.silentIndex", fields: [
+            "configured": String(!spIndexURLString.isEmpty),
+            "localFixture": String(host == "127.0.0.1" || host == "localhost"),
+        ])
     }
 
     /// The tweak-index base URL. Unlike esplora there is no public default to
@@ -839,41 +1040,36 @@ final class AppModel {
         return url
     }
 
-    func setEsploraEnabled(_ enabled: Bool) {
-        esploraEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: DefaultsKey.esploraEnabled)
-        if !enabled { esploraEstimates = nil }
-    }
-
     func setEsploraURL(_ text: String) {
         esploraURLString = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        UserDefaults.standard.set(esploraURLString, forKey: DefaultsKey.esploraURL)
-        esploraEstimates = nil
+        defaults.set(esploraURLString, forKey: DefaultsKey.esploraURL)
     }
 
-    /// The esplora base URL: the user's own instance when set, else the
-    /// well-known public default for the current network. Only ever contacted
-    /// when the opt-in toggle is on.
+    /// The selected external block-explorer website. Winnow never contacts it
+    /// in the background; URLs derived here are opened only after a user taps
+    /// a link and accepts the privacy warning.
     var esploraBaseURL: URL {
-        if let url = URL(string: esploraURLString), url.scheme != nil { return url }
-        return network == .mainnet ? EsploraClient.mempoolSpaceMainnet : EsploraClient.mempoolSpaceSignet
+        if let url = URL(string: esploraURLString),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+           url.host != nil {
+            return url
+        }
+        let defaultURL = network == .mainnet
+            ? "https://mempool.space"
+            : "https://mempool.space/signet"
+        return URL(string: defaultURL)!
     }
 
-    /// Fee estimates from the opt-in esplora backend (cached per session);
-    /// nil when the toggle is off — nothing is contacted then.
-    private func esploraEstimate(for priority: FeePolicy.Priority) async -> Double? {
-        guard esploraEnabled else { return nil }
-        if esploraEstimates == nil {
-            esploraEstimates = try? await EsploraClient(baseURL: esploraBaseURL).feeEstimates()
-        }
-        guard let estimates = esploraEstimates, !estimates.isEmpty else { return nil }
-        let target = switch priority {
-        case .low: 144
-        case .medium: 6
-        case .high: 1
-        }
-        if let rate = estimates[target] { return rate }
-        return estimates.min(by: { abs($0.key - target) < abs($1.key - target) })?.value
+    func esploraTransactionURL(_ txid: Data) -> URL {
+        esploraBaseURL
+            .appending(path: "tx")
+            .appending(path: txid.displayHex)
+    }
+
+    func esploraAddressURL(_ address: String) -> URL {
+        esploraBaseURL
+            .appending(path: "address")
+            .appending(path: address)
     }
 
     // MARK: - Storage

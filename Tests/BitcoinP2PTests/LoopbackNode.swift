@@ -22,6 +22,9 @@ actor LoopbackNode {
     /// When set, the node answers inv announcements of transactions with a
     /// getdata after this delay (nil = never request, the silent peer).
     let autoRequestDelay: Duration?
+    /// Optional delay before the node sends its version message. Tests use
+    /// this to make pool connection order deterministic.
+    let versionDelay: Duration
     /// The node's mempool: transactions it serves over getdata (MSG_TX /
     /// MSG_WITNESS_TX) — unknown tx hashes get a notfound.
     let transactions: [Data: Transaction] // keyed by txid (internal order)
@@ -44,13 +47,14 @@ actor LoopbackNode {
     init(params: NetworkParams, services: UInt64 = PeerConnection.nodeCompactFilters,
          chain: [Block] = [], corruptFilterAtHeight: Int? = nil,
          autoRequestDelay: Duration? = nil, transactions: [Transaction] = [],
-         listenPort: UInt16? = nil) {
+         listenPort: UInt16? = nil, versionDelay: Duration = .zero) {
         self.params = params
         self.services = services
         self.chain = chain
         self.corruptFilterAtHeight = corruptFilterAtHeight
         self.autoRequestDelay = autoRequestDelay
         self.transactions = Dictionary(uniqueKeysWithValues: transactions.map { ($0.txid, $0) })
+        self.versionDelay = versionDelay
         self.listenPort = listenPort
         framer = MessageFramer(magic: params.magic)
     }
@@ -168,7 +172,9 @@ actor LoopbackNode {
                 }
                 connection.start(queue: DispatchQueue(label: "org.winnow.tests.loopback.conn"))
             }
-            // A real node sends its version immediately on connect.
+            // A real node sends its version immediately on connect. The
+            // optional test delay only controls deterministic pool ordering.
+            if versionDelay > .zero { try await Task.sleep(for: versionDelay) }
             try await send(.version(nodeVersion()))
             while true {
                 let chunk = try await receive(connection)

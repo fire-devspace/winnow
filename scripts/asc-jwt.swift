@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 // Mints an App Store Connect API JWT (ES256) from an AuthKey .p8 file.
-// Usage: swift Scripts/asc-jwt.swift <keyPath> <keyId> <issuerId>
+// Usage: swift scripts/asc-jwt.swift <keyPath> <keyId> <issuerId>
 import Foundation
 import CryptoKit
 

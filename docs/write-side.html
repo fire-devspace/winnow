@@ -41,7 +41,7 @@
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/paper">Canonical paper</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/architecture">Architecture</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="the-write-side-how-a-phone-pays-without-asking-anyone">The Write
 Side: How a Phone Pays Without Asking Anyone</h1>
 <blockquote>
@@ -236,10 +236,10 @@ cancels (e.g. a replacement).</li>
 killed app resumes relay.</li>
 </ul>
 <p>While the Send screen is open, a <a
-href="read-side.md#28-bounded-mempool-windows">bounded mempool
-window</a> watches for peers echoing our txid back. An echo is evidence
-the network has the bytes; it is not confirmation. The UI says
-“broadcast” / “relayed” / “seen in a block”, never “sent” at 0-conf.</p>
+href="/read-side#bounded-mempool-windows">bounded mempool window</a>
+watches for peers echoing our txid back. An echo is evidence the network
+has the bytes; it is not confirmation. The UI says “broadcast” /
+“relayed” / “seen in a block”, never “sent” at 0-conf.</p>
 <p>Winnow does not POST transactions to Esplora. A transaction row can
 open the selected explorer after a warning, but P2P relay remains the
 broadcast path and the page’s answer is not consumed by the wallet.</p>

@@ -1,6 +1,57 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
+
+/// An explicit, short-lived clipboard handoff for recovery words. Clipboard
+/// access is inherently less private than paper, so the item stays on-device
+/// and asks the system pasteboard to expire it after two minutes.
+struct RecoveryPhraseCopyButton: View {
+    let phrase: String
+    let accessibilityID: String
+    @State private var copied = false
+
+    var body: some View {
+        Button(copied ? "Copied for 2 minutes" : "Copy recovery phrase") {
+            UIPasteboard.general.setItems(
+                [[UTType.plainText.identifier: phrase]],
+                options: [
+                    .localOnly: true,
+                    .expirationDate: Date().addingTimeInterval(120),
+                ])
+            copied = true
+        }
+        .accessibilityIdentifier(accessibilityID)
+    }
+}
+
+/// A user-initiated handoff to the selected external block explorer. Merely
+/// rendering this view performs no request; the exact host and privacy leak
+/// are confirmed immediately before iOS opens the URL.
+struct WarnedExplorerLink: View {
+    let title: String
+    let url: URL
+    let exposedItem: String
+    let accessibilityID: String
+
+    @Environment(\.openURL) private var openURL
+    @State private var showingWarning = false
+
+    var body: some View {
+        Button {
+            showingWarning = true
+        } label: {
+            Label(title, systemImage: "safari")
+        }
+        .accessibilityIdentifier(accessibilityID)
+        .alert("Open external block explorer?", isPresented: $showingWarning) {
+            Button("Open \(url.host ?? "explorer")") { openURL(url) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Opening \(url.host ?? "this explorer") shares your IP address and this exact \(exposedItem) with that service. Winnow does not use its response for wallet balance, history, fees, synchronization, or broadcasting.")
+        }
+    }
+}
 
 /// Address/PSBT QR via CoreImage's CIQRCodeGenerator.
 struct QRCodeView: View {

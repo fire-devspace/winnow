@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winnow — how it actually works</title>
+<meta name="description" content="Five animated explanations of the architectural choices behind Winnow: compact block filters, bounded mempool windows, forward-only scanning, MuSig2 vaults, and cross-peer agreement.">
+<link rel="canonical" href="https://winnowwallet.com/architecture">
+<meta property="og:title" content="Winnow — how it actually works">
+<meta property="og:description" content="Five animated explanations of Winnow's private read path, bounded relay windows, portable recovery, MuSig2 custody, and peer comparison.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://winnowwallet.com/architecture">
+<meta property="og:image" content="https://winnowwallet.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f7931a'/%3E%3Cpath d='M7 9h18L18 19v5l-4 2v-7z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  /* ══════════════════════════════════════════════════════════
+     Winnow — architecture figures
+     Design tokens are identical to index.html on purpose: these
+     figures are meant to be lifted straight into the site.
+     Each figure is self-contained (markup + its own .fig-* rules),
+     has no dependencies, and is legible as a FROZEN FRAME — which
+     is also what prefers-reduced-motion falls back to.
+     ══════════════════════════════════════════════════════════ */
+  :root{
+    --paper:#fcfbf9; --paper-2:#f4f1ea;
+    --ink:#14130e; --ink-2:#585549; --ink-3:#8a8577;
+    --rule:#e5e1d6; --rule-2:#d6d1c2;
+    --seed:#b35f05; --mark:#f7931a; --good:#1f7a4d; --bad:#c0392b;
+    --card:#ffffff;
+    --night:#100e0a; --night-2:#1b1811;
+    --night-ink:#f2eee4; --night-ink-2:#a8a294; --night-rule:#2d281d;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0d0c09; --paper-2:#151309;
+      --ink:#f3efe6; --ink-2:#a9a496; --ink-3:#807b6d;
+      --rule:#272319; --rule-2:#332e21;
+      --seed:#f5a94b; --card:#181510; --good:#4fc389; --bad:#e8705f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d0c09; --paper-2:#151309;
+    --ink:#f3efe6; --ink-2:#a9a496; --ink-3:#807b6d;
+    --rule:#272319; --rule-2:#332e21;
+    --seed:#f5a94b; --card:#181510; --good:#4fc389; --bad:#e8705f;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+  body{background:var(--paper);color:var(--ink);font-family:var(--sans);
+    font-size:17px;line-height:1.55;letter-spacing:-.011em;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:var(--seed);text-decoration:none}
+  a:hover{text-decoration:underline;text-underline-offset:3px}
+  :focus-visible{outline:2px solid var(--mark);outline-offset:3px;border-radius:5px}
+
+  .wrap{width:100%;max-width:58rem;margin:0 auto;padding:0 clamp(1.1rem,4vw,2rem)}
+  h1,h2{line-height:1.07;letter-spacing:-.032em;font-weight:680;text-wrap:balance}
+  h1{font-size:clamp(2.1rem,5.4vw,3.2rem)}
+  h2{font-size:clamp(1.5rem,3.4vw,2.1rem)}
+  .sub{font-size:clamp(1.02rem,1.8vw,1.18rem);line-height:1.45;color:var(--ink-2)}
+  .eyebrow{font-family:var(--mono);font-size:.7rem;font-weight:600;text-transform:uppercase;
+    letter-spacing:.13em;color:var(--seed);margin-bottom:.8rem}
+  .note{font-size:.83rem;color:var(--ink-3);line-height:1.5}
+  header.page{padding:clamp(3rem,7vw,5rem) 0 clamp(1.5rem,3vw,2rem)}
+
+  /* ── figure shell ─────────────────────────────────────────── */
+  .fig{margin:clamp(2.5rem,6vw,4.5rem) 0;padding-bottom:clamp(2rem,4vw,3rem);border-bottom:1px solid var(--rule)}
+  .fig:last-of-type{border-bottom:none}
+  .fig > h2{margin-bottom:.6rem}
+  .fig > .sub{margin-bottom:1.6rem;max-width:44rem}
+  .stage{
+    background:var(--night);border-radius:1.1rem;padding:clamp(1.2rem,3vw,2rem);
+    position:relative;overflow:hidden;color:var(--night-ink);
+  }
+  .stage .lbl{font-family:var(--mono);font-size:.66rem;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--night-ink-2)}
+  .stage .val{font-family:var(--mono);font-size:.78rem;color:var(--night-ink);font-variant-numeric:tabular-nums}
+  .takeaway{margin-top:1.1rem;font-size:.93rem;color:var(--ink-2);border-left:2px solid var(--mark);padding-left:.9rem}
+  .takeaway b{color:var(--ink);font-weight:620}
+
+  /* ══ FIG 1 — compact block filters ══════════════════════════ */
+  .f1{display:grid;gap:1.1rem;grid-template-columns:1fr;align-items:center}
+  @media(min-width:46rem){.f1{grid-template-columns:1fr auto 1fr}}
+  .f1-col{min-width:0}
+  .f1-track{position:relative;height:118px;border-radius:.7rem;background:var(--night-2);
+    border:1px solid var(--night-rule);overflow:hidden}
+  .f1-chip{
+    position:absolute;left:8px;width:calc(100% - 16px);height:17px;border-radius:.28rem;
+    background:rgba(168,162,148,.16);border:1px solid var(--night-rule);
+    display:flex;align-items:center;justify-content:space-between;padding:0 .45rem;
+    font-family:var(--mono);font-size:.56rem;color:var(--night-ink-2);
+    animation:f1fall 6s linear infinite;
+  }
+  @keyframes f1fall{
+    0%{transform:translateY(-24px);opacity:0}
+    12%{opacity:1}
+    88%{opacity:1}
+    100%{transform:translateY(120px);opacity:0}
+  }
+  .f1-chip:nth-child(1){animation-delay:0s}
+  .f1-chip:nth-child(2){animation-delay:-1.2s}
+  .f1-chip:nth-child(3){animation-delay:-2.4s}
+  .f1-chip:nth-child(4){animation-delay:-3.6s}
+  .f1-chip:nth-child(5){animation-delay:-4.8s}
+  .f1-phone{
+    width:96px;height:150px;border-radius:1rem;border:2px solid var(--mark);
+    background:var(--night-2);display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:.3rem;text-align:center;padding:.5rem;margin-inline:auto;position:relative;
+  }
+  .f1-phone .t{font-family:var(--mono);font-size:.58rem;color:var(--mark);letter-spacing:.06em}
+  .f1-phone .m{font-size:.62rem;color:var(--night-ink-2);line-height:1.35}
+  .f1-pulse{position:absolute;inset:-6px;border-radius:1.2rem;border:1px solid var(--mark);
+    opacity:0;animation:f1pulse 6s ease-out infinite}
+  @keyframes f1pulse{0%,72%{opacity:0;transform:scale(.97)}78%{opacity:.85;transform:scale(1)}100%{opacity:0;transform:scale(1.05)}}
+  .f1-block{
+    height:64px;border-radius:.55rem;border:1px solid var(--mark);
+    background:rgba(247,147,26,.13);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:.15rem;
+    animation:f1rare 6s ease-in-out infinite;
+  }
+  @keyframes f1rare{
+    0%,70%{opacity:.18;transform:translateY(-6px)}
+    80%{opacity:1;transform:translateY(0)}
+    97%{opacity:1;transform:translateY(0)}
+    100%{opacity:.18;transform:translateY(-6px)}
+  }
+  .f1-block .big{font-family:var(--mono);font-size:.8rem;color:var(--mark);font-weight:600}
+
+  /* ══ FIG 2 — bounded mempool window ═════════════════════════ */
+  .f2-axis{position:relative;height:150px;border-radius:.7rem;background:var(--night-2);
+    border:1px solid var(--night-rule);overflow:hidden}
+  .f2-base{position:absolute;left:0;right:0;bottom:44px;height:1px;background:rgba(168,162,148,.25)}
+  .f2-tick{position:absolute;bottom:44px;width:1px;height:13px;background:rgba(168,162,148,.5)}
+  .f2-tick span{position:absolute;top:15px;left:50%;transform:translateX(-50%);
+    font-family:var(--mono);font-size:.52rem;color:var(--night-ink-2);white-space:nowrap}
+  .f2-win{
+    position:absolute;top:0;bottom:44px;background:rgba(247,147,26,.09);
+    border-left:1px dashed var(--mark);border-right:1px dashed var(--mark);
+  }
+  .f2-win .cap{position:absolute;top:6px;left:50%;transform:translateX(-50%);
+    font-family:var(--mono);font-size:.55rem;color:var(--mark);white-space:nowrap;letter-spacing:.05em}
+  .f2-dot{position:absolute;width:4px;height:4px;border-radius:50%;background:rgba(200,194,180,.85);
+    animation:f2flow 3.4s linear infinite}
+  @keyframes f2flow{0%{opacity:0;transform:translateY(0)}10%{opacity:1}90%{opacity:1}100%{opacity:0;transform:translateY(46px)}}
+  /* the payment marker never fully disappears: a frozen frame must still
+     show the thing this figure exists to explain */
+  .f2-mine{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--mark);
+    box-shadow:0 0 0 3px rgba(247,147,26,.22);animation:f2mine 6.5s ease-out infinite}
+  @keyframes f2mine{
+    0%{transform:translateY(-9px) scale(.55);box-shadow:0 0 0 3px rgba(247,147,26,.22)}
+    14%{transform:translateY(0) scale(1.25);box-shadow:0 0 0 8px rgba(247,147,26,.30)}
+    26%{transform:translateY(0) scale(1);box-shadow:0 0 0 3px rgba(247,147,26,.22)}
+    100%{transform:translateY(0) scale(1);box-shadow:0 0 0 3px rgba(247,147,26,.22)}
+  }
+  .f2-mine b{position:absolute;left:14px;top:-5px;font-family:var(--mono);font-size:.56rem;
+    color:var(--mark);white-space:nowrap;font-weight:500}
+  .f2-legend{display:flex;flex-wrap:wrap;gap:.5rem 1.4rem;margin-top:.9rem;font-size:.78rem;color:var(--night-ink-2)}
+  .f2-legend i{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;margin-right:.35rem;vertical-align:baseline}
+
+  /* ══ FIG 3 — forward-only scan ══════════════════════════════ */
+  .f3-row{display:grid;gap:.5rem;margin-bottom:1.15rem}
+  .f3-row:last-child{margin-bottom:0}
+  .f3-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+  .f3-bar{position:relative;height:34px;border-radius:.4rem;overflow:hidden;background:var(--night-2);
+    border:1px solid var(--night-rule)}
+  .f3-never{position:absolute;top:0;bottom:0;left:0;
+    background:repeating-linear-gradient(-45deg,rgba(168,162,148,.13) 0 5px,transparent 5px 10px);
+    border-right:1px solid rgba(168,162,148,.35)}
+  .f3-never span{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    font-family:var(--mono);font-size:.55rem;color:var(--night-ink-2);white-space:nowrap}
+  .f3-scan{position:absolute;top:0;bottom:0;background:rgba(247,147,26,.2);
+    border-right:2px solid var(--mark);animation:f3sweep 5s ease-in-out infinite}
+  @keyframes f3sweep{0%{width:0}70%,100%{width:var(--w)}}
+  .f3-scan span{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    font-family:var(--mono);font-size:.55rem;color:var(--mark);white-space:nowrap}
+  .f3-bundle{
+    position:absolute;top:-4px;height:42px;width:auto;padding:0 .5rem;border-radius:.35rem;
+    border:1px solid var(--mark);background:var(--night);display:flex;align-items:center;
+    font-family:var(--mono);font-size:.55rem;color:var(--mark);white-space:nowrap;z-index:2;
+    animation:f3drop 5s ease-out infinite;
+  }
+  @keyframes f3drop{0%{opacity:0;transform:translateY(-16px)}12%,100%{opacity:1;transform:translateY(0)}}
+
+  /* ══ FIG 4 — MuSig2 ═════════════════════════════════════════ */
+  .f4{display:grid;gap:.9rem;grid-template-columns:1fr;align-items:stretch}
+  @media(min-width:52rem){.f4{grid-template-columns:1fr 1fr 1fr auto 1.15fr}}
+  .f4-stage{border:1px solid var(--night-rule);border-radius:.6rem;padding:.75rem .7rem;
+    background:var(--night-2);animation:f4lit 7.5s ease-in-out infinite}
+  /* the three rounds light in sequence via delay, not via parameterised
+     keyframe selectors — keyframe selectors must be literal percentages */
+  .f4 > .f4-stage:nth-child(1){animation-delay:0s}
+  .f4 > .f4-stage:nth-child(2){animation-delay:1.5s}
+  .f4 > .f4-stage:nth-child(3){animation-delay:3s}
+  @keyframes f4lit{
+    0%{border-color:var(--night-rule);background:var(--night-2)}
+    5%{border-color:var(--mark);background:rgba(247,147,26,.10)}
+    20%{border-color:var(--mark);background:rgba(247,147,26,.10)}
+    28%{border-color:var(--night-rule);background:var(--night-2)}
+    100%{border-color:var(--night-rule);background:var(--night-2)}
+  }
+  .f4-stage h4{font-size:.8rem;font-weight:640;margin-bottom:.3rem}
+  .f4-stage p{font-size:.72rem;color:var(--night-ink-2);line-height:1.4}
+  .f4-signers{display:flex;gap:.28rem;margin-top:.5rem}
+  .f4-signers i{flex:1;height:4px;border-radius:2px;background:rgba(247,147,26,.5)}
+  .f4-arrow{display:none;align-self:center;color:var(--night-ink-2);font-size:1.1rem}
+  @media(min-width:52rem){.f4-arrow{display:block}}
+  .f4-out{border:1px solid var(--mark);border-radius:.6rem;padding:.75rem .7rem;background:rgba(247,147,26,.1)}
+  .f4-out .sig{font-family:var(--mono);font-size:.62rem;color:var(--mark);word-break:break-all;line-height:1.4}
+  .f4-out h4{font-size:.8rem;font-weight:640;margin-bottom:.3rem;color:var(--night-ink)}
+
+  /* ══ FIG 5 — cross-peer agreement ═══════════════════════════ */
+  .f5{display:grid;gap:.7rem}
+  .f5-peer{display:grid;grid-template-columns:auto 1fr auto;gap:.7rem;align-items:center;
+    border:1px solid var(--night-rule);border-radius:.6rem;padding:.65rem .8rem;background:var(--night-2)}
+  .f5-peer .src{font-family:var(--mono);font-size:.6rem;color:var(--night-ink-2);
+    letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+  .f5-peer .hash{font-family:var(--mono);font-size:.64rem;color:var(--night-ink);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .f5-peer .verdict{font-family:var(--mono);font-size:.6rem;white-space:nowrap;letter-spacing:.05em}
+  .f5-ok .verdict{color:var(--good)}
+  .f5-bad{animation:f5eject 7s ease-in-out infinite}
+  .f5-bad .hash{color:var(--bad)}
+  .f5-bad .verdict{color:var(--bad)}
+  @keyframes f5eject{
+    0%,42%{opacity:1;transform:translateX(0);border-color:var(--night-rule)}
+    50%{opacity:1;transform:translateX(0);border-color:var(--bad)}
+    64%{opacity:0;transform:translateX(28px);border-color:var(--bad)}
+    70%{opacity:0;transform:translateX(28px)}
+    78%,100%{opacity:1;transform:translateX(0);border-color:var(--night-rule)}
+  }
+  .f5-note{margin-top:.2rem;font-size:.78rem;color:var(--night-ink-2)}
+
+  /* ── reduced motion: freeze every figure on a legible frame ── */
+  @media (prefers-reduced-motion:reduce){
+    .f1-chip,.f1-pulse,.f1-block,.f2-dot,.f2-mine,.f3-scan,.f3-bundle,.f4-stage,.f5-bad{
+      animation:none !important;
+    }
+    .f1-chip{position:relative;left:auto;width:100%;margin-bottom:5px;opacity:1;transform:none}
+    .f1-track{height:auto;padding:8px}
+    .f1-block{opacity:1;transform:none}
+    .f2-dot,.f2-mine{opacity:1}
+    .f3-scan{width:var(--w)}
+    .f3-bundle{opacity:1;transform:none}
+    .f4-stage{border-color:var(--mark)}
+  }
+  footer{border-top:1px solid var(--rule);padding:2rem 0 3rem;font-size:.86rem;color:var(--ink-3);margin-top:3rem}
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="wrap">
+    <p class="eyebrow">Architecture</p>
+    <h1>How Winnow actually works.</h1>
+    <p class="sub" style="margin-top:1.1rem;max-width:40rem">Five choices that make a private wallet practical on a phone. Each one is a real trade, drawn rather than asserted.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ═══ FIGURE 1 ═══ -->
+  <figure class="fig" id="fig-filters">
+    <h2>1 · It reads summaries, not the chain.</h2>
+    <p class="sub">Every block gets a compact filter — a small summary that answers “might this block touch one of your scripts?” Winnow checks that <em>on the phone</em>. Only a hit costs a full block download, and nobody is ever told which scripts it asked about.</p>
+    <div class="stage">
+      <div class="f1">
+        <div class="f1-col">
+          <p class="lbl" style="margin-bottom:.5rem">Every block · always</p>
+          <div class="f1-track">
+            <div class="f1-chip"><span>filter · newest</span><span>checked</span></div>
+            <div class="f1-chip"><span>filter · newer</span><span>checked</span></div>
+            <div class="f1-chip"><span>filter · older</span><span>checked</span></div>
+            <div class="f1-chip"><span>filter · older</span><span>checked</span></div>
+            <div class="f1-chip"><span>filter · oldest</span><span>checked</span></div>
+          </div>
+          <p class="note" style="color:var(--night-ink-2);margin-top:.5rem">the same public filter any compact-filter client can request</p>
+        </div>
+        <div class="f1-col">
+          <div class="f1-phone">
+            <div class="f1-pulse"></div>
+            <span class="t">MATCHED HERE</span>
+            <span class="m">against your own scripts, on the device</span>
+          </div>
+        </div>
+        <div class="f1-col">
+          <p class="lbl" style="margin-bottom:.5rem">On a hit only · rare</p>
+          <div class="f1-block">
+            <span class="big">a whole block</span>
+            <span class="lbl">the one block that matched</span>
+          </div>
+          <p class="note" style="color:var(--night-ink-2);margin-top:.5rem">only when a filter matches</p>
+        </div>
+      </div>
+    </div>
+    <p class="takeaway">The asymmetry is the design. A small public filter for each block, a whole block only on a match, and <b>no query that names an address</b> — so there is nothing for a wallet server to log, because there is no wallet server.</p>
+  </figure>
+
+  <!-- ═══ FIGURE 2 ═══ -->
+  <figure class="fig" id="fig-window">
+    <h2>2 · It listens hard, but only briefly.</h2>
+    <p class="sub">Filters describe blocks, so a payment would normally be invisible until it confirms. While the Receive screen is open — exactly when you are expecting money — Winnow subscribes to full relay traffic and matches locally, then closes the window when you leave.</p>
+    <div class="stage">
+      <div class="f2-axis">
+        <div class="f2-base"></div>
+        <div class="f2-tick" style="left:12%"><span>block</span></div>
+        <div class="f2-tick" style="left:44%"><span>block</span></div>
+        <div class="f2-tick" style="left:76%"><span>block</span></div>
+        <div class="f2-win" style="left:30%;right:34%">
+          <span class="cap">RECEIVE SCREEN OPEN</span>
+          <div class="f2-dot" style="left:14%;top:32px;animation-delay:0s"></div>
+          <div class="f2-dot" style="left:26%;top:26px;animation-delay:-.5s"></div>
+          <div class="f2-dot" style="left:38%;top:38px;animation-delay:-1s"></div>
+          <div class="f2-dot" style="left:52%;top:28px;animation-delay:-1.6s"></div>
+          <div class="f2-dot" style="left:64%;top:44px;animation-delay:-2.1s"></div>
+          <div class="f2-dot" style="left:78%;top:30px;animation-delay:-2.7s"></div>
+          <div class="f2-mine" style="left:44%;top:60px"><b>yours — seen unconfirmed while Receive is open</b></div>
+        </div>
+      </div>
+      <div class="f2-legend">
+        <span><i style="background:rgba(168,162,148,.6)"></i>everyone's relay traffic — asked for wholesale, never per address</span>
+        <span><i style="background:var(--mark)"></i>your payment, spotted on the device</span>
+      </div>
+    </div>
+    <p class="takeaway">Asking for <b>everything</b> is what keeps it private — asking for one address is what would give you away. The cost is bandwidth, and it is bounded by a screen you actually have open.</p>
+  </figure>
+
+  <!-- ═══ FIGURE 3 ═══ -->
+  <figure class="fig" id="fig-forward">
+    <h2>3 · It never looks backwards.</h2>
+    <p class="sub">Recovering an old wallet privately would mean re-downloading years of filters. Winnow refuses that: a new wallet scans forward from the day it was made, and an imported one arrives with its own history plus the height it was true as of.</p>
+    <div class="stage">
+      <div class="f3-row">
+        <div class="f3-head"><span class="lbl">New wallet</span><span class="val">created at height H · nothing before it exists</span></div>
+        <div class="f3-bar">
+          <div class="f3-never" style="width:34%"><span>never scanned</span></div>
+          <div class="f3-scan" style="left:34%;--w:66%"><span>scanning forward →</span></div>
+        </div>
+      </div>
+      <div class="f3-row">
+        <div class="f3-head"><span class="lbl">Imported wallet</span><span class="val">bundle is true as of height H · verify forward from there</span></div>
+        <div class="f3-bar">
+          <div class="f3-never" style="width:62%"><span>the old wallet already did this</span></div>
+          <div class="f3-bundle" style="left:62%">bundle ↓ UTXOs + history</div>
+          <div class="f3-scan" style="left:62%;--w:38%"><span>verifying →</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="takeaway">Import cost is proportional to <b>how stale the bundle is, not how old the wallet is</b>. A bundle exported at the tip is a JSON parse and a zero-length scan — and it's why Winnow writes one of its own.</p>
+  </figure>
+
+  <!-- ═══ FIGURE 4 ═══ -->
+  <figure class="fig" id="fig-musig">
+    <h2>4 · Two signatures that look like one.</h2>
+    <p class="sub">Elena and Mateo hold the family reserve together — a 2-of-2 MuSig2 vault, coordinated over PSBTs with no wallet server in the middle. Two rounds, public nonces then partial signatures, collapse into a single Schnorr signature.</p>
+    <div class="stage">
+      <div class="f4">
+        <div class="f4-stage">
+          <h4>Round 1 · nonces</h4>
+          <p>Each phone publishes a public nonce. The secret halves stay in the signing screen and never persist — leaving before round&nbsp;2 abandons the session.</p>
+          <div class="f4-signers"><i></i><i></i></div>
+        </div>
+        <div class="f4-stage">
+          <h4>Round 2 · partials</h4>
+          <p>Elena and Mateo each sign the same sighash, producing a partial signature that is verified before it is attached. Signing zeroes the secret nonce.</p>
+          <div class="f4-signers"><i></i><i></i></div>
+        </div>
+        <div class="f4-stage">
+          <h4>Aggregate</h4>
+          <p>The two partials combine, and the result is checked against the vault's aggregate key before it is trusted.</p>
+          <div class="f4-signers"><i style="background:var(--mark)"></i></div>
+        </div>
+        <div class="f4-arrow">→</div>
+        <div class="f4-out">
+          <h4>On chain</h4>
+          <p class="sig">64 bytes · P2TR key-path</p>
+          <p style="font-size:.72rem;color:var(--night-ink-2);line-height:1.4;margin-top:.35rem">
+            Identical in form to an ordinary single-signature spend. Watchers cannot tell a vault from an everyday wallet.</p>
+        </div>
+      </div>
+    </div>
+    <p class="takeaway">Both-of-two costs the chain <b>one signature</b>, so the <b>on-chain witness shape and fee</b> are those of an everyday spend. That is a statement about the chain only — coordination between cosigners and network-level privacy are separate matters. The k-of-n vault is the honest opposite: it uses a script path, which is visibly multisig — a cost paid deliberately for “k of us, and nobody holds an escape hatch.”</p>
+  </figure>
+
+  <!-- ═══ FIGURE 5 ═══ -->
+  <figure class="fig" id="fig-peers">
+    <h2>5 · It asks several strangers the same question.</h2>
+    <p class="sub">A peer can lie by leaving your transaction out of a filter. You cannot prove which peer lied — but you can notice when they disagree. Winnow asks up to three of them for the same <em>filter checkpoint</em> and compares those answers before trusting any of them.</p>
+    <div class="stage">
+      <div class="f5">
+        <div class="f5-peer f5-ok">
+          <span class="src">peer A</span>
+          <span class="hash">cfcheckpt 000000a3f8…e21c</span>
+          <span class="verdict">✓ agrees</span>
+        </div>
+        <div class="f5-peer f5-ok">
+          <span class="src">peer B</span>
+          <span class="hash">cfcheckpt 000000a3f8…e21c</span>
+          <span class="verdict">✓ agrees</span>
+        </div>
+        <div class="f5-peer f5-bad">
+          <span class="src">peer C</span>
+          <span class="hash">cfcheckpt 0000004b17…9d02</span>
+          <span class="verdict">✕ dropped</span>
+        </div>
+      </div>
+      <p class="f5-note">Among checkpoint answers a strict majority wins, and the odd peer out is dropped and replaced. When two disagree with no majority the lie is unattributable, so Winnow drops <em>all</em> the queried peers and re-dials rather than guess. This majority rule is the checkpoint comparison specifically — it does not govern every filter-header batch.</p>
+    </div>
+    <p class="takeaway">Detection, not proof — and not operator independence. Peers are dialled by whichever candidates answer fastest, so nothing yet stops one operator supplying more than one slot; pinning slots by source is planned, not shipped. What ships is the comparison and the refusal to proceed on a tie — and a fully eclipsed phone can still be told one coordinated lie.</p>
+  </figure>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    Winnow — <a href="/">the story</a> · <a href="/present">the walkthrough</a> · <a href="/paper">the paper</a> · <a href="/evidence">the evidence</a>
+  </div>
+</footer>
+
+</body>
+</html>

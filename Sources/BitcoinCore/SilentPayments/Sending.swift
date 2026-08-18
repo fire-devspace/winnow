@@ -183,6 +183,17 @@ public enum SilentPaymentSending {
         return shared.dataRepresentation
     }
 
+    /// Public BIP352 index payload for this transaction: input_hash·A.
+    /// It reveals no private input key and is exactly what a receiver's tweak
+    /// index publishes for local output scanning.
+    public static func tweakData(context: Context) throws -> Data {
+        guard let aggregate = try? P256K.Signing.PrivateKey(
+            dataRepresentation: context.privateKeySum).publicKey,
+              let tweaked = try? aggregate.multiply([UInt8](context.inputHash))
+        else { throw SilentPaymentSendingError.invalidInputHash }
+        return tweaked.dataRepresentation
+    }
+
     /// One output: t_k = hash_BIP0352/SharedSecret(ser_P(ecdh) ‖ ser32(k)),
     /// P = B_m + t_k·G, encoded as a BIP341 taproot scriptPubKey. ser32 is
     /// big-endian (BIP352 conventions).

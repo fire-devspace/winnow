@@ -113,8 +113,11 @@ public actor FilterSync {
         var peers = await pool.connectedPeers()
         guard !peers.isEmpty else { throw FilterSyncError.noPeers }
 
-        // 1. Headers to tip.
-        try await chain.sync(using: peers[0])
+        // 1. Headers to tip. A stale or broken peer is evicted and the pool
+        // retries another peer without discarding already-persisted progress.
+        try await pool.syncHeaders(chain)
+        peers = await pool.connectedPeers()
+        guard !peers.isEmpty else { throw FilterSyncError.noPeers }
         let tip = await chain.height
         let tipHash = await chain.tipHash
         guard tip >= progress.nextScanHeight else { try persist(); return }
