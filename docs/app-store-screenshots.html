@@ -4,11 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winnow</title>
+
+
+
+
+
 <style>
-  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  :root { color-scheme:light dark;--bg:#fcfbf9;--fg:#17140f;--dim:#625e54;--acc:#b35f05;--card:#f4f1ea;--line:#ded9cc; }
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e8e6e3;--dim:#aaa497;--acc:#f5a94b;--card:#14171c;--line:#302b20}}
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
-  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  main { max-width:48rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
   h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
   h1 { font-size:1.7rem; margin-top:0; }
   h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
@@ -29,12 +35,13 @@
   th { color:var(--fg); background:var(--card); }
   td { color:var(--dim); }
   blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
-  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; display:flex;gap:1rem;flex-wrap:wrap; }
+  :focus-visible{outline:2px solid #f7931a;outline-offset:3px}
 </style>
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/architecture">Architecture</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="app-store-screenshot-candidates">App Store screenshot
 candidates</h1>
 <p>The canonical UI suite was last captured on 2026-08-17 using an

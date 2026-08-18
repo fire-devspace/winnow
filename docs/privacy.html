@@ -4,11 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winnow</title>
+
+
+
+
+
 <style>
-  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  :root { color-scheme:light dark;--bg:#fcfbf9;--fg:#17140f;--dim:#625e54;--acc:#b35f05;--card:#f4f1ea;--line:#ded9cc; }
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e8e6e3;--dim:#aaa497;--acc:#f5a94b;--card:#14171c;--line:#302b20}}
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
-  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  main { max-width:48rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
   h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
   h1 { font-size:1.7rem; margin-top:0; }
   h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
@@ -29,12 +35,13 @@
   th { color:var(--fg); background:var(--card); }
   td { color:var(--dim); }
   blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
-  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; display:flex;gap:1rem;flex-wrap:wrap; }
+  :focus-visible{outline:2px solid #f7931a;outline-offset:3px}
 </style>
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/architecture">Architecture</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="winnow-privacy-policy">Winnow Privacy Policy</h1>
 <p><strong>Winnow collects nothing.</strong> No accounts, no analytics,
 no crash-reporting beacons, no advertising SDKs, no server of ours
@@ -57,10 +64,16 @@ locally — the same data every full node sees. Nothing about you is
 queried or revealed.</li>
 <li><strong>Broadcasting.</strong> Signed transactions are relayed
 directly to P2P peers.</li>
-<li><strong>Optional esplora mode.</strong> If you explicitly enable an
-esplora backend in Settings (off by default, behind a warning), that
-server operator can link the addresses you query to your IP. The app
-tells you this before you turn it on.</li>
+<li><strong>External explorer links.</strong> Settings lets you choose
+mempool.space or a custom Esplora-compatible website. Winnow never
+queries it automatically. If you tap an address or transaction link, a
+warning identifies that the selected service will learn your IP and the
+exact item before iOS opens it.</li>
+<li><strong>Experimental silent-payment receiving.</strong> If
+explicitly enabled, Winnow requests block-wide tweak data from the
+service you choose. The service sees your IP following silent-payment
+blocks but is not given your address or balance. Matching stays
+on-device; an incomplete service can cause a missed payment.</li>
 <li><strong>Third-party code.</strong> One dependency: libsecp256k1 (via
 the P256K Swift package). It makes no network calls.</li>
 </ul>

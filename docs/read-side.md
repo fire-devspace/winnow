@@ -124,7 +124,7 @@ What an adversary can do to *this* paper's mechanism, not to keys or broadcast (
 | Fully eclipsed peer set | Same, and they agree with each other | Show a consistent false filter-header chain, hide payments, or stall the tip | Manual peers (Settings) so a user who has a node they trust can skip DNS seeds; seeds themselves resolve over DoH (not on-path UDP) with `getaddrinfo` fallback, and RFC1918/loopback answers are dropped; headers still need PoW + chainwork | A partitioned phone can be lied to — the standard light-client eclipse caveat. DoH removes the unauthenticated-UDP seed rewrite; it does not remove a determined eclipse. |
 | Network observer (not a peer) | Timing, sizes, destination IPs of the outbound pool | Infer that this IP is syncing filters from height H | No addresses on the wire | Height H plus "is a BIP157 client" |
 
-Filters are not consensus-committed. A future soft fork committing the filter header into the block would collapse the first three rows' residual column ([§5.1](#51-consensus-committed-block-filters)). Until then this table is the honest one.
+Filters are not consensus-committed. A future soft fork committing the filter header into the block would collapse the first three rows' residual column ([§5.1](#consensus-committed-block-filters)). Until then this table is the honest one.
 
 ---
 
