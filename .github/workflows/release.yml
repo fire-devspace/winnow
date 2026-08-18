@@ -33,7 +33,7 @@ jobs:
       - name: Full test suite (gate)
         run: swift test
 
-      - name: Install signing identity
+      - name: Prepare signing credentials
         run: scripts/ci-sign.sh
 
       - name: Archive
