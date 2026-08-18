@@ -14,6 +14,23 @@ struct PeerPoolTests {
     /// peers the test gives it.
     private let params = NetworkParams.customSignet(challenge: Data([0x51]))
 
+    /// A shorter branch that shares only `best`'s genesis. It has valid
+    /// trivial PoW but cannot replace the longer branch's accumulated work.
+    private func weakerFork(of best: SyntheticChain, length: Int = 4) -> [Block] {
+        var result = [best.blocks[0]]
+        var previous = best.blocks[0].hash
+        for height in 1 ... length {
+            let transaction = best.blocks[height].transactions[0]
+            let header = minedHeader(
+                previousHash: previous,
+                merkleRoot: Data(repeating: UInt8(0xA0 + height), count: 32),
+                time: best.blocks[0].header.time + UInt32(height * 601))
+            result.append(Block(header: header, transactions: [transaction]))
+            previous = header.hash
+        }
+        return result
+    }
+
     @Test("pool fills from mixed accept / reject / silent / refused candidates")
     func mixedCandidates() async throws {
         let goodA = LoopbackNode(params: params)
@@ -142,6 +159,101 @@ struct PeerPoolTests {
         status = await pool.connectionStatus
         #expect(status.connected == 1)
         #expect(!status.exhausted)
+        await pool.stop()
+    }
+
+    @Test("header sync rejects a stale peer and continues with a healthy fallback")
+    func headerSyncFailover() async throws {
+        let best = makeSyntheticChain(length: 8, watchHeight: 3)
+        let stale = weakerFork(of: best)
+        let staleNode = LoopbackNode(params: best.params, chain: stale)
+        let goodNode = LoopbackNode(params: best.params, chain: best.blocks,
+                                    versionDelay: .milliseconds(200))
+        try await staleNode.start()
+        try await goodNode.start()
+        defer {
+            Task { await staleNode.stop() }
+            Task { await goodNode.stop() }
+        }
+
+        let chain = try HeaderChain(params: best.params)
+        try await chain.connect(Array(best.blocks.dropFirst().map(\.header)))
+        let pool = PeerPool(params: best.params, peerCount: 1,
+                            manualPeers: [await staleNode.endpoint, await goodNode.endpoint],
+                            dialTimeout: .seconds(1))
+        await pool.start()
+        try await pool.syncHeaders(chain, timeoutPerPeer: .seconds(1), maxAttempts: 2)
+
+        #expect(await chain.height == 8)
+        var endpoints: [PeerEndpoint] = []
+        for peer in await pool.connectedPeers() { endpoints.append(await peer.endpoint) }
+        #expect(endpoints == [await goodNode.endpoint])
+        await pool.stop()
+    }
+
+    @Test("header sync reports exhaustion after every candidate fails")
+    func headerSyncExhaustion() async throws {
+        let best = makeSyntheticChain(length: 8, watchHeight: 3)
+        let staleNode = LoopbackNode(params: best.params, chain: weakerFork(of: best))
+        try await staleNode.start()
+        defer { Task { await staleNode.stop() } }
+
+        let chain = try HeaderChain(params: best.params)
+        try await chain.connect(Array(best.blocks.dropFirst().map(\.header)))
+        let pool = PeerPool(params: best.params, peerCount: 1,
+                            manualPeers: [await staleNode.endpoint],
+                            dialTimeout: .seconds(1))
+        await pool.start()
+        var caught: PeerPoolHeaderSyncError?
+        do {
+            try await pool.syncHeaders(chain, timeoutPerPeer: .seconds(1), maxAttempts: 1)
+        } catch let error as PeerPoolHeaderSyncError {
+            caught = error
+        }
+        #expect(caught?.localizedDescription.contains(
+            "Winnow tried 1 Bitcoin peer, but none supplied a usable block-header chain") == true)
+        #expect(caught?.localizedDescription.contains("older or weaker Bitcoin chain") == true)
+        await pool.stop()
+    }
+
+    @Test("local header storage damage is not retried against another peer")
+    func localStorageFailureIsNotRetried() async throws {
+        let best = makeSyntheticChain(length: 4, watchHeight: 2)
+        let first = LoopbackNode(params: best.params, chain: best.blocks)
+        let second = LoopbackNode(params: best.params, chain: best.blocks,
+                                  versionDelay: .milliseconds(200))
+        try await first.start()
+        try await second.start()
+        defer {
+            Task { await first.stop() }
+            Task { await second.stop() }
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "header-storage-failure-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appending(path: "headers.bin")
+        let chain = try HeaderChain(params: best.params, storageURL: storage)
+        // Replacing the not-yet-created file with a directory makes the
+        // first atomic persistence fail after valid headers arrive.
+        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false)
+
+        let pool = PeerPool(params: best.params, peerCount: 1,
+                            manualPeers: [await first.endpoint, await second.endpoint],
+                            dialTimeout: .seconds(1))
+        await pool.start()
+        var caught: HeaderChainError?
+        do {
+            try await pool.syncHeaders(chain, timeoutPerPeer: .seconds(1), maxAttempts: 2)
+        } catch let error as HeaderChainError {
+            caught = error
+        }
+        #expect({
+            if case .storageUnavailable? = caught { return true }
+            return false
+        }())
+        #expect(await pool.connectedPeers().count == 1)
         await pool.stop()
     }
 }

@@ -130,4 +130,31 @@ struct HeaderChainTests {
         }
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
+
+    @Test("repeated difficulty caching still verifies every stored header hash")
+    func cachedDifficultyStillChecksPoW() async throws {
+        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
+        let genesis = chain.blocks[0].header
+        var nonce: UInt32 = 0
+        var bad = BlockHeader(version: 1, previousHash: genesis.hash,
+                              merkleRoot: Data(repeating: 0xA5, count: 32),
+                              time: genesis.time + 600, bits: genesis.bits, nonce: nonce)
+        while (try? HeaderChain.checkedWork(for: bad, params: chain.params, height: 1)) != nil {
+            nonce &+= 1
+            bad = BlockHeader(version: 1, previousHash: genesis.hash,
+                              merkleRoot: bad.merkleRoot, time: bad.time,
+                              bits: genesis.bits, nonce: nonce)
+        }
+
+        let file = tempFileURL("headers.dat")
+        var stored = Data()
+        stored.appendUInt32(2)
+        stored.append(genesis.serialized)
+        stored.append(bad.serialized)
+        try stored.write(to: file)
+        #expect(throws: HeaderChainError.insufficientProofOfWork(height: 1)) {
+            _ = try HeaderChain(params: chain.params, storageURL: file)
+        }
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    }
 }
