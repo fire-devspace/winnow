@@ -1,0 +1,42 @@
+name: TestFlight Promotion
+
+# Recover or verify an already-uploaded build without creating another archive.
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: App Store Connect build ID; blank selects the latest upload
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+  ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+  ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+  TESTFLIGHT_PUBLIC_LINK_ID: 83djpNE7
+  TESTFLIGHT_BUILD_ID: ${{ inputs.build_id }}
+
+jobs:
+  promote:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install App Store Connect key
+        run: |
+          install -d -m 700 "${RUNNER_TEMP}/winnow-asc"
+          printf '%s' "$ASC_PRIVATE_KEY" > "${RUNNER_TEMP}/winnow-asc/AuthKey.p8"
+          chmod 600 "${RUNNER_TEMP}/winnow-asc/AuthKey.p8"
+
+      - name: Promote latest build to the established public beta
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/winnow-asc/AuthKey.p8
+        run: scripts/testflight.sh external
+
+      - name: Verify TestFlight state
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/winnow-asc/AuthKey.p8
+        run: scripts/testflight.sh status
