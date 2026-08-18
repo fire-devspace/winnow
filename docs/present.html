@@ -1,19 +1,19 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Winnow — from Brisa Café to the family vault</title>
-<meta name="description" content="A 15-minute story about private Bitcoin discovery, Taproot custody, recovery, and a wallet designed for a phone.">
+<title>Winnow — one wallet, two signers, three roles</title>
+<meta name="description" content="A 15-minute story about Winnow's custody ladder, private Bitcoin discovery, recovery, and planned professional services.">
 <link rel="canonical" href="https://winnowwallet.com/present">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://winnowwallet.com/present">
-<meta property="og:title" content="Winnow — from Brisa Café to the family vault">
-<meta property="og:description" content="A 15-minute story about private Bitcoin discovery, Taproot custody, and family recovery.">
+<meta property="og:title" content="Winnow — one wallet, two signers, three roles">
+<meta property="og:description" content="A 15-minute story about personal liquidity, independent signers, and professionally stewarded Bitcoin.">
 <meta property="og:image" content="https://winnowwallet.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Winnow — from Brisa Café to the family vault">
-<meta name="twitter:description" content="A 15-minute story about private Bitcoin discovery, Taproot custody, and family recovery.">
+<meta name="twitter:title" content="Winnow — one wallet, two signers, three roles">
+<meta name="twitter:description" content="A 15-minute story about personal liquidity, independent signers, and professionally stewarded Bitcoin.">
 <meta name="twitter:image" content="https://winnowwallet.com/og.png">
 <style>
 :root{
@@ -33,7 +33,7 @@ button{font:inherit}
 .topbar{position:fixed;z-index:100;inset:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(18px);border-bottom:1px solid var(--line)}
 .brand{font-weight:750;letter-spacing:-.02em}.brand b{color:var(--orange)}
 .actions{display:flex;align-items:center;gap:.7rem}
-.present-btn{border:1px solid var(--orange);border-radius:2rem;padding:.48rem .9rem;background:var(--orange);color:#fff;font-weight:650;cursor:pointer}
+.present-btn{border:1px solid var(--orange);border-radius:2rem;padding:.48rem .9rem;background:var(--orange);color:#17140f;font-weight:650;cursor:pointer}
 .home-link{font-size:.82rem;color:var(--ink2);text-decoration:none}
 .scene{min-height:100svh;padding:clamp(6rem,10vw,8rem) clamp(1.2rem,5vw,5rem) clamp(4rem,7vw,6rem);display:grid;align-items:center;border-bottom:1px solid var(--line)}
 .scene-inner{width:min(74rem,100%);margin:auto}
@@ -70,7 +70,7 @@ h1{font-size:clamp(3rem,8vw,7.5rem)}h2{font-size:clamp(2.4rem,6vw,5.2rem)}
 .status-grid{display:grid;gap:.8rem}.status{border:1px solid var(--line);border-radius:1rem;background:var(--card);padding:1.1rem}.status b{display:flex;align-items:center;gap:.55rem}.status b::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--tone)}.status p{font-size:.85rem;color:var(--ink2);margin:.35rem 0 0}
 details{border-top:1px solid var(--line);margin-top:1.5rem;padding-top:1rem;max-width:40rem}summary{cursor:pointer;font-weight:650;color:var(--ink2);font-size:.88rem}details p{font-size:.86rem;color:var(--ink2)}
 .final{background:var(--night);color:#f3efe6}.final .lead,.final .fiction{color:#aaa497}.final .kicker{color:var(--orange)}
-.final-actions{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:2rem}.cta{display:inline-flex;padding:.75rem 1.1rem;border:1px solid #3b3427;border-radius:2rem;color:#f3efe6;text-decoration:none;font-weight:650}.cta.primary{background:var(--orange);border-color:var(--orange);color:#fff}
+.final-actions{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:2rem}.cta{display:inline-flex;padding:.75rem 1.1rem;border:1px solid #3b3427;border-radius:2rem;color:#f3efe6;text-decoration:none;font-weight:650}.cta.primary{background:var(--orange);border-color:var(--orange);color:#17140f}
 .qr{display:grid;justify-items:center;gap:.7rem}.qr img{width:min(16rem,58vw);background:#fff;padding:.7rem;border-radius:1rem}.qr span{font:650 .75rem var(--mono);color:#aaa497}
 .controls{display:none;position:fixed;z-index:110;inset:auto 0 0;padding:.6rem 1rem;background:color-mix(in srgb,var(--night) 92%,transparent);color:#eee8dc;align-items:center;justify-content:space-between;gap:1rem}
 .counter{font:650 .75rem var(--mono);min-width:4rem}.dots{display:flex;gap:.38rem}.dots button{width:.58rem;height:.58rem;border:0;border-radius:50%;padding:0;background:#625b4d;cursor:pointer}.dots button[aria-current="true"]{background:var(--orange);transform:scale(1.25)}.hint{font-size:.7rem;color:#aaa497}
@@ -84,34 +84,34 @@ body.presenting .topbar{display:none}body.presenting .scene{display:none;border:
 <body>
 <header class="topbar">
   <a class="home-link" href="/">← Winnow</a>
-  <span class="brand"><b>₿</b> Café to vault</span>
+  <span class="brand"><b>₿</b> Winnow 1–2–3</span>
   <div class="actions"><a class="home-link" href="/architecture">Architecture</a><a class="home-link" href="/paper">Paper</a><button class="present-btn" id="presentButton" type="button">Present</button></div>
 </header>
 
 <main class="deck" id="deck">
-  <section class="scene active" data-title="Why Winnow?">
+  <section class="scene active" data-title="The 1–2–3 ladder">
     <div class="scene-inner grid">
       <div>
         <p class="kicker">Winnow · Puerto Rico · 15 minutes</p>
-        <h1>From the café till.<br><span class="soft">To the family vault.</span></h1>
-        <p class="lead">Meet Sofía. Her day explains why a phone wallet should learn from Bitcoin, adapt custody to the money, and tell the truth about its tradeoffs.</p>
-        <p class="fiction">Sofía Cruz, Brisa Café, Harbor Exchange, Ceiba Trust, and the Rivera family are fictional. The signet transactions are real test evidence.</p>
+        <h1>One wallet.<br><span class="soft">Two signers. Three roles.</span></h1>
+        <p class="lead">Sofía starts with the smallest policy that fits the money, then adds independent failure domains as her café and family needs grow.</p>
+        <p class="fiction">Sofía Cruz, Brisa Café, Harbor Exchange, Ceiba Trust, and the Rivera family are fictional. The linked signet transactions are real test evidence.</p>
       </div>
-      <div class="visual ladder" aria-label="Three custody levels">
-        <div class="level" style="--tone:var(--amber)"><small>Daily</small><strong>Sofía's hot wallet</strong><span>Fast enough to run Brisa Café.</span></div>
-        <div class="level" style="--tone:var(--blue)"><small>Savings</small><strong>Rivera 2-of-3 reserve</strong><span>Shared enough to survive one missing key.</span></div>
-        <div class="level" style="--tone:var(--teal)"><small>Family</small><strong>Elena + Mateo MuSig2</strong><span>Two people; one Taproot key on chain.</span></div>
+      <div class="visual ladder" role="group" aria-label="Winnow custody ladder">
+        <div class="level" style="--tone:var(--amber)"><small>1 · personal · implemented</small><strong>One hot-wallet key</strong><span>Simple daily liquidity; one-key loss or compromise risk.</span></div>
+        <div class="level" style="--tone:var(--teal)"><small>2 · independent · coming soon</small><strong>Two different Bitcoin wallets</strong><span>Compatibility is planned; one compromised signer cannot spend alone.</span></div>
+        <div class="level" style="--tone:var(--blue)"><small>3 · stewarded · coming soon</small><strong>Owner · lender · trust</strong><span>Institutional accounts are planned; any two provide continuity.</span></div>
       </div>
     </div>
   </section>
 
-  <section class="scene" data-title="Daily payments">
+  <section class="scene" data-title="One: personal">
     <div class="scene-inner grid flip">
       <div>
-        <p class="kicker">01 · the hot wallet</p>
+        <p class="kicker">01 · personal · implemented</p>
         <h2>Open first.<br><span class="soft">Synchronize behind it.</span></h2>
-        <p class="lead">Sofía creates keys, copies her recovery phrase, and receives at Brisa Café without waiting for a historical header download.</p>
-        <details><summary>For Q&amp;A: what happens at payment time?</summary><p>The Receive screen watches a bounded relay window for an early observation. Confirmation still comes from a block. Spending shows destination, amount, fee, inputs, and change before signing; every spend is replaceable with RBF.</p></details>
+        <p class="lead">Sofía creates Brisa Café's key, copies her recovery phrase, and receives without waiting for historical headers. This is the right-sized wallet for daily payments and modest balances.</p>
+        <details><summary>For Q&amp;A: what happens at payment time?</summary><p>The Receive screen watches a bounded relay window for an early observation. Confirmation still comes from a block. Spending shows destination, amount, fee, inputs, and change before signing; spends opt into RBF.</p></details>
       </div>
       <div class="visual phone"><img src="screenshots/03-receive.png" width="1320" height="2868" alt="Winnow receive screen with a fresh signet Taproot address."></div>
     </div>
@@ -120,12 +120,12 @@ body.presenting .topbar{display:none}body.presenting .scene{display:none;border:
   <section class="scene" data-title="Private reading">
     <div class="scene-inner grid">
       <div>
-        <p class="kicker">02 · the read path</p>
+        <p class="kicker">02 · the read path · implemented</p>
         <h2>Bring Bitcoin<br><span class="soft">to the phone.</span></h2>
         <p class="lead">Peers serve public headers and compact block filters. Sofía's phone checks those summaries against her scripts locally. It never asks a wallet server for her balance.</p>
-        <details><summary>For Q&amp;A: what does a peer still learn?</summary><p>A peer sees a network connection and public chain ranges. A matched full-block request can add a correlation clue, so Winnow can use different peers. A full eclipse remains a real threat; this is a light client, not a validating full node.</p></details>
+        <details><summary>For Q&amp;A: what does a peer still learn?</summary><p>A peer sees a connection and public chain ranges. A matched full-block request can add a correlation clue, so Winnow can separate peers. A full eclipse remains a real threat; this is a light client, not a validating full node.</p></details>
       </div>
-      <div class="visual network" aria-label="Three Bitcoin peers send public filters to a phone that matches privately">
+      <div class="visual network" role="group" aria-label="Three Bitcoin peers send public filters to a phone that matches privately">
         <div class="nodes"><div class="node"><b>Peer A</b><span>headers</span></div><div class="node"><b>Peer B</b><span>filter headers</span></div><div class="node"><b>Peer C</b><span>compact filters</span></div></div>
         <div class="stream" aria-hidden="true"></div>
         <div class="device-box"><b>Sofía's phone</b><span>matches wallet scripts here</span><div class="zero">addresses sent: 0</div></div>
@@ -133,76 +133,94 @@ body.presenting .topbar{display:none}body.presenting .scene{display:none;border:
     </div>
   </section>
 
-  <section class="scene" data-title="Move funds cold">
+  <section class="scene" data-title="Two: independent">
     <div class="scene-inner grid flip">
       <div>
-        <p class="kicker">03 · close the café</p>
-        <h2>Tomorrow's cash stays hot.<br><span class="soft">Savings move cold.</span></h2>
-        <p class="lead">One person does not need one custody model. Sofía sweeps excess operating funds into the Rivera reserve instead of leaving the whole business behind one phone key.</p>
+        <p class="kicker">03 · independent · coming soon · planned</p>
+        <h2>Do not trust<br><span class="soft">one wallet implementation.</span></h2>
+        <p class="lead">Winnow and a different Bitcoin wallet each generate a seed, review the same transaction, and provide one required signature. One exposed key cannot spend alone.</p>
+        <details><summary>For Q&amp;A: would this contain a weak-entropy hardware-wallet incident?</summary><p>Yes, if only one independently generated key were affected. That key would remain compromised, but its missing second signature would stop a spend. The other wallet might never display the attempted theft. Shared seeds, two affected devices, or a common implementation failure defeat the benefit—and losing either unbacked-up key locks a 2-of-2.</p></details>
       </div>
-      <div class="visual ladder">
-        <div class="level" style="--tone:var(--amber)"><small>Spendable now</small><strong>Brisa Café</strong><span>Customers and suppliers</span></div>
-        <div style="text-align:center;color:var(--orange);font-size:2rem" aria-hidden="true">↓</div>
-        <div class="level" style="--tone:var(--blue)"><small>2 signatures required</small><strong>Rivera cold reserve</strong><span>Elena · Leo · Marina</span></div>
+      <div class="visual signature">
+        <div class="signers"><div class="sig"><i class="dot" style="--tone:var(--amber);display:inline-block"></i><b>Winnow</b><span>independent seed + review</span></div><div class="sig"><i class="dot" style="--tone:var(--teal);display:inline-block"></i><b>Another wallet</b><span>independent seed + review</span></div></div>
+        <div class="plus" aria-hidden="true">both signatures required</div>
+        <div class="onchain"><b>Current status</b><br><code>primitives verified · interoperability planned</code></div>
       </div>
     </div>
   </section>
 
-  <section class="scene" data-title="Ordinary access">
+  <section class="scene" data-title="Move funds up">
     <div class="scene-inner grid">
       <div>
-        <p class="kicker">04 · ordinary 2-of-3</p>
-        <h2>Elena and Leo<br><span class="soft">return operating money.</span></h2>
-        <p class="lead">The transaction moves as a PSBT. Each signer reviews the destination and fee before adding a partial signature. No coordinator account can silently change the policy.</p>
-        <details><summary>For Q&amp;A: what appears on chain?</summary><p>This path uses a Taproot script leaf with a threshold policy. Spending reveals that chosen script path, as Taproot is designed to do.</p></details>
+        <p class="kicker">04 · match policy to purpose</p>
+        <h2>Tomorrow's cash stays hot.<br><span class="soft">Long-term funds gain continuity.</span></h2>
+        <p class="lead">One owner can use more than one custody level. Sofía keeps operating money in Brisa Café and moves excess funds into a 2-of-3 reserve instead of leaving everything behind one phone key.</p>
+      </div>
+      <div class="visual ladder">
+        <div class="level" style="--tone:var(--amber)"><small>1 · daily</small><strong>Brisa Café hot wallet</strong><span>Fast, simple liquidity.</span></div>
+        <div style="text-align:center;color:var(--orange);font-size:2rem" aria-hidden="true">↓</div>
+        <div class="level" style="--tone:var(--blue)"><small>3 · continuity</small><strong>Rivera 2-of-3 reserve</strong><span>Owner · exchange/lender · trust.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene" data-title="Three: stewarded">
+    <div class="scene-inner grid flip">
+      <div>
+        <p class="kicker">05 · stewarded accounts · coming soon · planned</p>
+        <h2>Three roles.<br><span class="soft">Any two signatures.</span></h2>
+        <p class="lead">The owner keeps agency. An exchange or lender can support liquidity and operational recovery. A trust or fiduciary can support succession and legal continuity.</p>
+        <details><summary>For Q&amp;A: what is still planned?</summary><p>Winnow can construct and spend the generic 2-of-3 policy today, and two paths were verified on signet. Safe provider packages, account handoffs, a directory, referrals, and production institution integrations do not exist yet.</p></details>
       </div>
       <div class="visual policy">
         <div class="policy-title">Rivera reserve · 2 of 3</div>
-        <div class="person"><i class="dot" style="--tone:var(--blue)"></i><div><b>Elena Rivera</b><span>family steward</span></div><em class="yes">signs</em></div>
-        <div class="person"><i class="dot" style="--tone:var(--cobalt)"></i><div><b>Leo Santos</b><span>Harbor Exchange</span></div><em class="yes">signs</em></div>
-        <div class="person"><i class="dot" style="--tone:var(--sage)"></i><div><b>Marina Ortiz</b><span>Ceiba Trust</span></div><em>—</em></div>
+        <div class="person"><i class="dot" style="--tone:var(--blue)"></i><div><b>Elena Rivera</b><span>owner and family steward</span></div><em class="yes">key A</em></div>
+        <div class="person"><i class="dot" style="--tone:var(--cobalt)"></i><div><b>Leo Santos</b><span>fictional Harbor Exchange / lender</span></div><em class="yes">key B</em></div>
+        <div class="person"><i class="dot" style="--tone:var(--sage)"></i><div><b>Marina Ortiz</b><span>fictional Ceiba Trust / fiduciary</span></div><em class="yes">key C</em></div>
       </div>
     </div>
   </section>
 
-  <section class="scene" data-title="Recovery">
-    <div class="scene-inner grid flip">
-      <div>
-        <p class="kicker">05 · inheritance path</p>
-        <h2>A missing signer<br><span class="soft">does not erase the family plan.</span></h2>
-        <p class="lead">If Elena cannot participate, Leo and Marina can exercise the same threshold after the family's real-world checks. Bitcoin enforces two keys; people define what qualifies as recovery.</p>
-      </div>
-      <div class="visual branches">
-        <div class="branch"><b style="color:var(--blue)">Normal path</b><p>Elena + Leo → Brisa Café liquidity</p></div>
-        <div class="branch"><b style="color:var(--sage)">Recovery path</b><p>Leo + Marina → next-generation reserve</p></div>
-        <div class="branch"><b>Same Bitcoin policy</b><p>Either pair satisfies 2-of-3. Both paths confirmed in the public-signet story.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene" data-title="MuSig2">
+  <section class="scene" data-title="Three signing pairs">
     <div class="scene-inner grid">
       <div>
-        <p class="kicker">06 · joint reserve</p>
-        <h2>Two people sign.<br><span class="soft">The chain sees one key.</span></h2>
-        <p class="lead">Elena and Mateo complete MuSig2's nonce and signing rounds. Their contributions aggregate into an ordinary Taproot key-path signature.</p>
-        <details><summary>For Q&amp;A: why does nonce state matter?</summary><p>Reusing a secret nonce can expose a signing key. Winnow keeps it only in the active signing screen, consumes it during round 2, and requires a new session if the signer leaves early. The verified spend had one 64-byte witness item and no revealed script.</p></details>
+        <p class="kicker">06 · contract meaning</p>
+        <h2>Bitcoin counts signatures.<br><span class="soft">The agreement explains them.</span></h2>
+        <p class="lead">Winnow shows every valid pair. Bitcoin does not know whether a loan was repaid, an owner died, a beneficiary qualified, or a court acted.</p>
       </div>
-      <div class="visual signature">
-        <div class="signers"><div class="sig"><i class="dot" style="--tone:var(--blue);display:inline-block"></i><b>Elena</b><span>contribution</span></div><div class="sig"><i class="dot" style="--tone:var(--teal);display:inline-block"></i><b>Mateo</b><span>contribution</span></div></div>
-        <div class="plus" aria-hidden="true">↓ aggregate ↓</div>
-        <div class="onchain"><b>On chain</b><br><code>one Taproot key-path signature</code></div>
+      <div class="visual branches">
+        <div class="branch"><b style="color:var(--cobalt)">Owner + exchange</b><p>Loans, collateral changes, and ordinary liquidity.</p></div>
+        <div class="branch"><b style="color:var(--blue)">Owner + trust</b><p>Recovery or migration after lender obligations clear.</p></div>
+        <div class="branch"><b style="color:var(--sage)">Exchange + trust</b><p>Inheritance when the owner is unavailable—also the principal collusion risk.</p></div>
+        <div class="branch"><b>Verified boundary</b><p>Two generic 2-of-3 paths confirmed on signet; the professional service workflows are planned.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene" data-title="Transaction routes">
+    <div class="scene-inner grid flip">
+      <div>
+        <p class="kicker">07 · miner API · coming soon · planned</p>
+        <h2>Signing and sending<br><span class="soft">are separate decisions.</span></h2>
+        <p class="lead">Peer relay remains Winnow's default. Planned routes add one selected miner with no silent fallback, miner and peers, or export of the signed transaction without submission.</p>
+        <details><summary>For Q&amp;A: is a selected miner private?</summary><p>Not automatically. The miner receives the raw transaction and connection metadata and may log, reject, delay, or disclose it. “Miner and peers” improves delivery but is not private. Each route needs its own durable receipt and explicit warning.</p></details>
+      </div>
+      <div class="visual branches">
+        <div class="branch"><b>Bitcoin peers · shipping default</b><p>Relay over the ordinary P2P network.</p></div>
+        <div class="branch"><b>Selected miner only · planned</b><p>No hidden fallback to peers.</p></div>
+        <div class="branch"><b>Miner and peers · planned</b><p>Two routes; broader disclosure.</p></div>
+        <div class="branch"><b>Export only · planned</b><p>Sign here, submit somewhere else.</p></div>
       </div>
     </div>
   </section>
 
   <section class="scene" data-title="Recovery and experiments">
-    <div class="scene-inner grid flip">
+    <div class="scene-inner grid">
       <div>
-        <p class="kicker">07 · tell the whole truth</p>
+        <p class="kicker">08 · tell the whole truth</p>
         <h2>A replacement phone works.<br><span class="soft">Silent receive is not finished.</span></h2>
         <p class="lead">Winnow's export carries public history and scan state so a new phone can verify forward. Silent Payment sending works; receiving stays off by default while its mobile tweak-data backend remains experimental.</p>
-        <details><summary>For Q&amp;A: why not compact filters alone?</summary><p>A Silent Payment output is not recognizable from the recipient's static code. The phone first needs a per-transaction tweak derived from sender inputs, then it can derive candidate scripts and query the ordinary block filter. The planned block-dn path requests fixed public ranges, never wallet identifiers, but a provider could still omit data.</p></details>
+        <details><summary>For Q&amp;A: why not compact filters alone?</summary><p>A Silent Payment output is not recognizable from the recipient's static code. The phone first needs a per-transaction tweak derived from sender inputs, then it can derive candidate scripts and query the ordinary block filter. A provider could still observe timing or omit data.</p></details>
       </div>
       <div class="visual status-grid">
         <div class="status" style="--tone:#1f7a4d"><b>Verified on signet</b><p>Replacement phone matched balance, UTXOs, history, RBF links, and scan height.</p></div>
@@ -215,10 +233,10 @@ body.presenting .topbar{display:none}body.presenting .scene{display:none;border:
   <section class="scene final" data-title="Try Winnow">
     <div class="scene-inner grid">
       <div>
-        <p class="kicker">08 · public beta, open source</p>
-        <h2>Try the story.<br><span class="soft">Inspect the choices.</span></h2>
-        <p class="lead">Winnow defaults to public signet. Test without risking money, read the paper, and challenge the architecture.</p>
-        <div class="final-actions"><a class="cta primary" href="https://testflight.apple.com/join/83djpNE7">Join TestFlight</a><a class="cta" href="https://github.com/posix4e/winnow">Read the source</a><a class="cta" href="/architecture">Explore the architecture</a><a class="cta" href="/paper">Read the paper</a></div>
+        <p class="kicker">09 · public beta, open source</p>
+        <h2>Start with one.<br><span class="soft">Grow deliberately.</span></h2>
+        <p class="lead">Winnow defaults to public signet. Test the implemented wallet, inspect the evidence, or claim an open issue and help build external-wallet support, institutional accounts, or miner submission.</p>
+        <div class="final-actions"><a class="cta primary" href="https://testflight.apple.com/join/83djpNE7">Join TestFlight</a><a class="cta" href="https://github.com/posix4e/winnow">Read the source</a><a class="cta" href="https://github.com/posix4e/winnow/issues/60">Follow the roadmap</a><a class="cta" href="/paper">Read the paper</a></div>
         <p class="fiction">winnowwallet.com/present</p>
       </div>
       <div class="visual qr"><img src="present-qr.png" width="248" height="248" alt="QR code for winnowwallet.com/present"><span>Take the story with you</span></div>
@@ -226,9 +244,9 @@ body.presenting .topbar{display:none}body.presenting .scene{display:none;border:
   </section>
 </main>
 
-<div class="controls" aria-label="Presentation controls">
-  <span class="counter" id="counter" aria-live="polite">1 / 9</span>
-  <div class="dots" id="dots" aria-label="Choose scene"></div>
+<div class="controls" role="group" aria-label="Presentation controls">
+  <span class="counter" id="counter" aria-live="polite">1 / 10</span>
+  <div class="dots" id="dots" role="navigation" aria-label="Choose scene"></div>
   <span class="hint">← → · Page Up/Down · Home/End · Esc</span>
 </div>
 

@@ -1,9 +1,10 @@
 # Winnow design paper
 
-The canonical paper is [Winnow: From a Phone Wallet to Family Custody](paper.md).
-It connects the mobile constraints, private read path, transaction relay,
-Taproot vaults, recovery, Silent Payment limitations, and reproducible signet
-evidence through Sofía Cruz's fictional Brisa Café story.
+The canonical paper is [Winnow: One Wallet, Two Signers, Three Roles](paper.md).
+It connects the mobile constraints and private read path to a custody ladder:
+one hot wallet, two independent wallet implementations, and three professional
+roles. It also covers recovery, transaction submission, Silent Payment limits,
+and reproducible signet evidence through Sofía Cruz's fictional Brisa Café story.
 
 The earlier focused papers remain as archived technical notes:
 

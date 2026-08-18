@@ -1,139 +1,218 @@
 ---
-title: "Winnow: From a Phone Wallet to Family Custody"
-description: "A mobile-first Bitcoin wallet architecture for private discovery, direct payment, Taproot shared custody, and portable recovery."
+title: "Winnow: One Wallet, Two Signers, Three Roles"
+description: "A mobile-first Bitcoin custody ladder for personal liquidity, independent verification, professional continuity, and private peer-based discovery."
 url: "https://winnowwallet.com/paper"
 ---
 
-# Winnow: From a Phone Wallet to Family Custody
+# Winnow: One Wallet, Two Signers, Three Roles
 
 *A canonical design paper for Winnow, August 2026.*
 
 ## Abstract
 
 A phone wallet is often a remote control for somebody else's wallet server. It
-creates keys locally, then gives an indexer enough information to answer the
-questions that make the wallet useful: what has been received, what remains
-unspent, what confirmed, and what should be broadcast.
+creates keys locally, then gives an indexer enough information to answer what
+has been received, what remains unspent, what confirmed, and what should be
+broadcast.
 
 Winnow takes a different position. A phone cannot be a full validating node,
 but it can verify Bitcoin's proof-of-work header chain, obtain compact block
 filters from ordinary peers, match those filters locally, fetch relevant
 blocks, construct and sign transactions, and relay them over the peer-to-peer
-network. That read and write path can serve a single-key hot wallet, a Taproot
-script-path threshold reserve, and a MuSig2 key-path reserve without adding a
-coordinator service.
+network. The same read and write path can support a custody ladder whose levels
+have different failure domains:
 
-This paper explains the design through a fictional business. Sofía Cruz uses a
-small wallet to run Brisa Café, moves savings into a Rivera family 2-of-3 cold
-reserve, and prepares a 2-of-2 MuSig2 reserve for the next generation. The
-people and institutions are fictional. The transactions used as evidence were
-broadcast and confirmed on public signet, where coins have no monetary value.
+1. **One · Personal:** one Winnow hot-wallet key for daily liquidity.
+2. **Two · Independent:** Winnow and a different Bitcoin wallet, with distinct
+   seeds and implementations, both authorize a spend.
+3. **Three · Stewarded:** an owner, an exchange or lender, and a trust or
+   fiduciary form a 2-of-3 policy for liquidity, recovery, and succession.
 
-The paper uses four status words deliberately:
+The ladder is not a claim that more signers are always safer. Two-of-two cannot
+survive one missing key. A professional 2-of-3 can survive one missing key, but
+it also allows two institutions to act without the owner. Jurisdiction,
+contracts, privacy, fees, operational competence, and counterparty risk remain
+part of custody.
+
+This paper explains the design through fictional people and institutions:
+Sofía Cruz and Brisa Café; Elena and Mateo Rivera; Harbor Exchange; and Ceiba
+Trust. Public transaction evidence comes from Bitcoin signet, where coins have
+no monetary value.
+
+Four status words are used deliberately:
 
 | Status | Meaning |
 |---|---|
-| **Implemented** | Present in the current code and covered by deterministic tests. |
+| **Implemented** | Present in current code and covered by deterministic tests. |
 | **Verified on signet** | Exercised in the reproducible public-signet story and backed by public transaction evidence. |
 | **Experimental** | Available only with an explicit warning and unresolved privacy or reliability constraints. |
 | **Planned** | Designed or tracked, but not represented as working product behavior. |
 
-## 1. The custody ladder
+## 1. The 1–2–3 custody ladder
 
-The usual wallet comparison asks which application should hold a person's
-Bitcoin. Sofía's story starts with a different question: which policy should
-protect each kind of money?
+The useful question is not “which single wallet should hold everything?” It is
+“which independent failures should this money survive?” The smallest policy
+that fits the purpose is often the safest policy a person will operate well.
 
-### 1.1 Daily money: Sofía alone
+### 1.1 One · Personal
 
-Customers pay Brisa Café throughout the day. Sofía must be able to receive and
-spend from one phone. The cost of this convenience is clear: the hot-wallet key
-is available to that device after authentication.
+**Implemented; daily payments and RBF verified on signet.**
+
+Sofía receives customer payments and pays suppliers from one BIP86 hot wallet
+on her phone. This level is fast, understandable, and appropriate for modest
+balances and everyday liquidity. Its principal failure mode is equally plain:
+one compromised or irrecoverably lost key can lose the funds.
 
 The wallet is created locally. Its recovery phrase can be copied during
-onboarding or later from Settings behind device authentication. Creation and
-backup do not wait for the header chain. Synchronization is a background task,
-not a prerequisite for generating keys or writing down recovery material.
+onboarding or later from Settings after device authentication. Creation and
+backup do not wait for header synchronization. Chain history loads in the
+background.
 
-### 1.2 Business savings: any two of three
+### 1.2 Two · Independently verified
 
-At closing time Sofía leaves enough for the next day's expenses and sweeps the
-rest into the Rivera cold reserve. It has three named key holders:
+**Coming soon · planned:** Taproot threshold and MuSig2 primitives are
+implemented. A polished ceremony with a different wallet implementation is not
+yet verified and is tracked in [issue 58](https://github.com/posix4e/winnow/issues/58).
 
-- Elena Rivera, the family steward;
-- Leo Santos, a custodian at the fictional Harbor Exchange; and
-- Marina Ortiz, an officer at the fictional Ceiba Trust.
+Winnow and a different Bitcoin wallet each generate independent seed material,
+derive one participant key, review the same proposed transaction, and provide
+one required signature. A hardware wallet is one possible second wallet; it is
+not a separate custody architecture.
 
-Any two keys can spend. Elena and Leo form the ordinary operating path. Leo and
-Marina form a recovery path if Elena cannot participate. Bitcoin enforces the
-threshold; legal and family processes determine when the recovery path should
-be used.
+The benefit comes from independence, not from owning two objects. An attacker
+who learns one key still lacks a valid spend. A second wallet can independently
+show the destination, amount, fee, inputs, and change before the owner approves
+its signature. Shared seed material, two devices affected by the same defect,
+or a common signing implementation can erase the diversity benefit.
 
-### 1.3 Joint family money: both of two
+Two-of-two has a severe availability cost: losing either unbacked-up key locks
+the funds. Winnow therefore treats it as an advanced compromise-containment
+option, not the universal default. A 2-of-3 is usually a better fit when the
+owner also needs loss tolerance.
 
-Elena and Mateo Rivera hold the next-generation reserve together. MuSig2
-aggregates their keys and signature contributions. Both people must cooperate,
-but the final Taproot key-path spend has the same on-chain witness shape as an
-ordinary single-key Taproot spend.
+#### Incident case study: one weak key is still a weak key
 
-These are not three wallet architectures. They are three descriptors using the
-same chain, filter, transaction, and storage machinery.
+Public reporting on the 2026 Coldcard incident attributes affected seed
+generation to a weak-entropy firmware path. The incident is useful here as a
+narrow model, not as a claim that any product is infallible.
 
-## 2. The phone is the constraint
+In a mixed-wallet threshold whose second seed was independently generated, the
+affected Coldcard key would remain compromised. The threshold would contain
+that compromise because the attacker could not produce the second signature.
+The second wallet would not necessarily display an attempted theft: the
+absence of its signature is what stops the transaction from becoming valid.
+Two affected devices, a shared seed, or a common entropy failure would defeat
+that protection. This is a counterfactual security analysis, not a Winnow test
+performed against the incident.
+
+### 1.3 Three · Professionally stewarded
+
+**Coming soon · planned:** Generic 2-of-3 construction and two signing paths are
+verified on signet. Provider onboarding and institutional accounts are tracked
+in [issue 53](https://github.com/posix4e/winnow/issues/53).
+
+The Rivera cold reserve assigns three distinct roles:
+
+- **Owner — Elena Rivera:** keeps a key in Winnow or a compatible external
+  wallet.
+- **Exchange/lender — Leo Santos at fictional Harbor Exchange:** supports
+  temporary liquidity and operational recovery.
+- **Trust/fiduciary — Marina Ortiz at fictional Ceiba Trust:** supports
+  succession and legal continuity.
+
+Any two keys satisfy the Bitcoin policy:
+
+| Signing pair | Intended real-world meaning |
+|---|---|
+| Owner + exchange | Loans, collateral changes, and ordinary liquidity. |
+| Owner + trust | Recovery or migration after lender obligations have cleared. |
+| Exchange + trust | Inheritance when the owner is unavailable, subject to the governing agreement. |
+
+Bitcoin enforces only two valid signatures. It does not know whether a loan was
+repaid, an owner died, a beneficiary qualified, or a court acted. Those facts
+come from people, contracts, and jurisdictions. Level three is Winnow's
+strongest continuity option in this ladder, not “maximum safety” for everyone:
+the exchange and trust can cooperate without the owner.
+
+## 2. Independent failure domains
+
+A signer count is not a security model. Winnow evaluates diversity across:
+
+- seed generation and backup;
+- wallet implementation and release process;
+- secure hardware and operating system;
+- person or institution controlling approval;
+- signing transport and transaction review;
+- jurisdiction and legal authority; and
+- network path used to learn and submit transactions.
+
+Two wallets built from one seed have one cryptographic failure domain. Two
+brands that share a vulnerable library may have one implementation failure
+domain. Three institutional signers in one jurisdiction can have a common legal
+failure domain. The interface should expose these relationships rather than
+reduce safety to “number of keys.”
+
+The 1–2–3 ladder also separates purposes. Sofía's café wallet optimizes for
+liquidity. A mixed-wallet 2-of-2 optimizes for compromise containment. The
+owner–exchange–trust 2-of-3 optimizes for financial and legal continuity.
+
+## 3. The phone is the constraint
 
 A phone is intermittent. The application can be suspended, killed between
 protocol rounds, moved between networks, or left offline for days. Storage,
-bandwidth, and battery matter, but continuity is the sharper constraint.
+bandwidth, battery, and continuity all matter.
 
-Winnow therefore adopts the following boundaries:
+Winnow adopts these boundaries:
 
 1. **No local Bitcoin Core requirement.** The application speaks the Bitcoin
    peer protocol; the owner does not operate an RPC service for the phone.
 2. **No wallet-server read path by default.** An Esplora endpoint may be chosen
-   for human explorer links, but it does not supply balances, histories, fee
-   estimates, discovery, or broadcast.
-3. **Fresh and forward-oriented.** A newly created wallet scans from its
-   creation height. Recovery carries public history rather than silently
-   outsourcing a full historical search.
+   for warned human explorer links, but it does not silently supply balances,
+   histories, fee estimates, discovery, or broadcast.
+3. **Fresh and forward-oriented.** A new wallet scans from its creation height.
+   Recovery carries public history instead of silently outsourcing a complete
+   historical search.
 4. **Taproot-first output policy.** The wallet receives to BIP86 Taproot and
-   expresses shared custody through Taproot script and key paths. It may pay
-   standard legacy destinations when a recipient requires them.
+   expresses shared custody through Taproot script and key paths.
 5. **Interruption is normal where replay is safe.** Header sync, filter sync,
-   PSBT exchange, broadcast, and public-signet waits are resumable and
-   idempotent. A MuSig2 secret-nonce session is the deliberate exception:
-   leaving before round 2 abandons it rather than persisting reusable nonce
-   material.
+   PSBT exchange, broadcast, and signet waits are resumable and idempotent. A
+   MuSig2 secret-nonce session is the exception: leaving before round two
+   abandons it instead of persisting reusable nonce material.
 
 The design does not claim a phone is a full node. It verifies header proof of
-work and block inclusion for relevant data, but it does not execute every
-consensus rule for every block.
+work and relevant block inclusion but does not execute every consensus rule for
+every block.
 
-## 3. Threat model and trust boundaries
+## 4. Threat model and trust boundaries
 
 Winnow tries to prevent a wallet service from learning a stable set of wallet
 identifiers. It does not promise network anonymity or immunity from a complete
 eclipse.
 
-| Component | It may learn | It must not receive by default |
-|---|---|---|
-| Bitcoin peer | IP connection, timing, public header/filter ranges, requested blocks | addresses, descriptors, scan keys, balance query |
-| Selected explorer | IP address and the specific public item the user opens | automatic wallet history or background address queries |
-| PSBT cosigner | the transaction proposed for joint authorization | another signer's private key |
-| Silent Payment tweak provider, when enabled | IP address, network, fixed public block ranges | scan key, spend key, address, matched output, balance |
-| Export recipient | exactly the bundle the user chooses to share | unredacted recovery material in logs or previews |
+| Component | It may learn | It must not receive by default | Status |
+|---|---|---|---|
+| Bitcoin peer | IP connection, timing, public header/filter ranges, requested blocks | addresses, descriptors, scan keys, balance query | Implemented default |
+| Selected explorer | IP address and the specific public item the user opens | automatic wallet history or background address queries | Implemented, warned |
+| PSBT cosigner | transaction proposed for joint authorization | another signer's private key | Implemented |
+| External wallet transport | public participant key, descriptor context, PSBT or signing transcript | Winnow seed or unrelated wallet history | Planned |
+| Professional provider | identity and account data required by its contract, proposed transactions | another provider's private key | Planned |
+| Provider directory/referral layer | choices, and possibly clicks if designed badly | recovery material or hidden behavioral tracking | Decision required |
+| Selected miner | raw transaction, connection metadata, credentials, status queries | wallet history unrelated to the submission | Planned |
+| Silent Payment tweak provider | IP address, network, fixed public block ranges | scan key, spend key, address, matched output, balance | Experimental |
+| Export recipient | exactly the bundle the user chooses to share | unredacted recovery material in logs or previews | Implemented |
 
-Multiple peers reduce dependence on a single view. Header synchronization
-tries another connected peer when one supplies stale, malformed, invalid, or
+Multiple peers reduce dependence on one view. Header synchronization tries
+another connected peer when one supplies stale, malformed, invalid, or
 nonconnecting headers. Successfully verified headers survive the retry. Local
 storage corruption is reported separately and is not treated as a peer fault.
 
-Compact-filter commitments are part of the P2P protocol, not Bitcoin's
-consensus commitment. Comparing distinct connected peers detects disagreement,
-and a downloaded matching block can be checked against its header. A fully
-eclipsed client can still be shown one coordinated view. Manual peer controls
-exist for people who want to select a node they trust.
+Compact-filter commitments are part of the P2P protocol, not Bitcoin consensus.
+Comparing peers detects disagreement, and a downloaded matching block can be
+checked against its header. A fully eclipsed client can still be shown one
+coordinated view. Manual peer controls exist for people who want to choose a
+node they trust.
 
-## 4. Learning from Bitcoin
+## 5. Learning from Bitcoin
 
 The standard read path is:
 
@@ -148,161 +227,178 @@ Bitcoin peers
     → wallet and vault state
 ```
 
-### 4.1 Headers establish the chain
+### 5.1 Headers establish the chain
 
-An 80-byte Bitcoin block header commits to the previous block and to the
-current block's transaction Merkle root. Winnow validates header linkage,
-proof of work, difficulty behavior for the selected network, and accumulated
-chainwork. Headers establish where the best known chain is before wallet data
-is considered.
+An 80-byte Bitcoin block header commits to the previous block and current
+transaction Merkle root. Winnow validates header linkage, proof of work,
+difficulty behavior for the selected network, and accumulated chainwork.
 
-This work happens in the background. A person does not need the current tip to
-generate a seed, derive a receive address, or complete backup.
+This happens in the background. The current tip is not required to generate a
+seed, derive a receive address, or complete backup.
 
-### 4.2 Compact filters invert the query
+### 5.2 Compact filters invert the query
 
 BIP37 Bloom-filter clients sent a personalized filter to a peer. BIP157/158
-invert that relationship: a node constructs a deterministic basic filter for
-each block and serves the same filter to any client. The client downloads the
-public filter and performs its wallet-specific match locally.
+invert that relationship: a node constructs one deterministic basic filter for
+each block and serves the same filter to every client. Winnow derives candidate
+scripts, downloads public filters, and performs the wallet-specific match on
+the phone. A full block is fetched only after a match and checked against the
+proof-of-work header chain.
 
-Winnow derives candidate scripts for its wallet and vault descriptors, checks
-the BIP158 filters on the phone, and fetches a full block only after a match.
-Filter hashes link into filter headers. Checkpoints and multiple peers help
-identify disagreement. A relevant block is checked against the proof-of-work
-header chain before its transactions change wallet state.
+### 5.3 The mempool is bounded
 
-### 4.3 The mempool is intentionally bounded
+Compact filters describe confirmed blocks, not the mempool. While a Receive
+screen is open, Winnow can temporarily inspect relayed transactions for the
+displayed scripts. This is an observation window, not an always-on mempool
+subscription and not confirmation. The interface distinguishes “observed,”
+“relayed,” and “seen in a block.”
 
-Compact block filters describe confirmed blocks, not the mempool. Normal
-wallet discovery therefore completes at confirmation. While a Receive screen
-is open, Winnow can temporarily inspect relayed transactions for the displayed
-scripts. This is a short-lived observation window, not an always-on mempool
-subscription and not a claim of confirmation.
+### 5.4 Explorer access is a user action
 
-The interface distinguishes “observed,” “relayed,” and “seen in a block.”
+Opening a transaction or address tells the selected explorer what was requested
+and exposes the connection. Winnow lets the user choose or configure an
+explorer, warns first, and permits cancellation. Explorer access is not a
+hidden fast path for wallet reads.
 
-### 4.4 Explorer access is a user action
+## 6. Constructing and submitting a payment
 
-A block explorer can answer quickly, but opening a transaction or address tells
-that service what was requested and exposes the network connection. Winnow lets
-the user select or configure an explorer for links, displays a warning first,
-and permits cancellation. Explorer access is not a hidden fast path for wallet
-reads.
+The shipping write path begins with local UTXOs and ends at Bitcoin peers:
 
-## 5. Constructing and sending a payment
-
-The write path begins with local UTXOs and ends at the Bitcoin P2P network.
-
-1. Coin selection chooses confirmed spendable outputs and creates Taproot
-   change when required.
-2. The review screen shows destination, amount, fee, feerate, inputs, and
-   change before signing.
-3. The authenticated key store exposes signing material only for the signing
-   operation.
+1. Coin selection chooses confirmed spendable outputs and creates change.
+2. Review shows destination, amount, fee, feerate, inputs, and change.
+3. The authenticated key store exposes signing material only while signing.
 4. The signed transaction is relayed to connected Bitcoin peers.
-5. A bounded relay window records peer echoes as evidence of propagation, not
-   confirmation.
+5. Peer echoes provide propagation evidence, not confirmation.
 6. Compact-filter sync later discovers the confirming block.
 
 Winnow does not pretend to know the whole fee market without an always-on
-mempool service. Its spends signal Replace-by-Fee. A fee bump creates a new
-transaction that spends the same inputs at a higher fee, and history retains
-the relationship between the original, intermediate replacements, and final
-confirmed transaction.
+mempool service. Its spends signal Replace-by-Fee. A fee bump spends the same
+inputs at a higher fee, and history retains the original, intermediate
+replacements, and final confirmed transaction. The Brisa Café signet story
+verified a two-step replacement chain.
 
-The Brisa Café signet story verified a two-step replacement chain. The final
-replacement confirmed and the earlier transactions remained marked as
-replaced.
+### 6.1 Coming soon: planned submission routes
 
-## 6. Taproot shared custody
+Signing and submission are separate decisions. Winnow's planned modes are:
 
-### 6.1 Script-path threshold reserve
+| Route | Behavior |
+|---|---|
+| **Bitcoin peers** | Shipping default; ordinary P2P relay. |
+| **Selected miner only** | Submit to one chosen miner; never fall back silently to peers. |
+| **Miner and peers** | Use both routes and label the broader disclosure. |
+| **Export signed transaction** | Do not submit; hand the transaction to another system. |
 
-The Rivera cold reserve uses a NUMS internal key and a Taproot script leaf
-containing a threshold multisignature policy. Funds cannot be spent through an
-unknown key path. A valid spend reveals the selected script, control block, and
-the required signatures.
+Each route needs a receipt distinct from ordinary relay state: endpoint,
+request identity, acceptance or rejection, response, and polling status. A
+selected miner receives the raw transaction and connection metadata and may
+log, reject, delay, or disclose it. Direct submission is not anonymity.
 
-PSBTv2 carries the unsigned transaction and the metadata cosigners need. Each
-participant reviews the transaction before contributing a signature. The PSBT
-is a coordination artifact, not an authorization service.
+The miner API is **coming soon · planned** in
+[issue 59](https://github.com/posix4e/winnow/issues/59). The first pilot is
+scoped around MARA Slipstream's documented beta API, whose
+published interface includes single transactions, transaction packages, status
+queries, fee requirements, and support statements for RBF and CPFP. That is
+research scope, not a partnership or endorsement.
 
-The public-signet story completed both Elena + Leo and Leo + Marina. That proves
-the normal path and recovery path were not merely drawn in a policy editor.
+## 7. Taproot shared custody
 
-### 6.2 MuSig2 joint reserve
+### 7.1 Two independent wallets
 
-MuSig2 is interactive. Participants aggregate public keys, exchange public
-nonces, create partial signatures, and aggregate them into one Schnorr
-signature. Secret nonce reuse can reveal a signing key, so Winnow treats nonce
-state as one-use secret material. It lives only in the active signing screen,
-is zeroed after the partial signature is created, and is abandoned if the
-signer leaves before round 2.
+Winnow currently implements generic Taproot script-path thresholds and a MuSig2
+key-path flow. MuSig2 participants aggregate public keys, exchange public
+nonces, create partial signatures, and aggregate one Schnorr signature. Secret
+nonce reuse can reveal a signing key, so Winnow keeps nonce material only in the
+active session, consumes it during round two, and abandons it if interrupted.
 
-Elena and Mateo's verified signet spend used the Taproot key path. Its witness
-contained one 64-byte signature and revealed no script. This provides a useful
-privacy property, but it is not a threshold recovery policy: both participants
-are required.
+Elena and Mateo's verified signet spend used Winnow-controlled story roles. Its
+witness contained one 64-byte signature and revealed no script. It proves the
+Winnow MuSig2 implementation; it does **not** prove descriptor, PSBT, transport,
+or review compatibility with another Bitcoin wallet or hardware device.
 
-## 7. Backup and replacement phones
+The planned two-wallet ceremony must generate two independent seeds, compare
+participant keys and policy on both devices, review the same transaction in
+both implementations, test backup before funding, and provide a rotation path.
+Coldcard NFC and microSD are initial research targets rather than implied
+support.
+
+### 7.2 Owner–exchange–trust threshold
+
+The Rivera cold reserve uses a NUMS internal key and Taproot script leaf with a
+threshold multisignature policy. Funds cannot be spent through an unknown key
+path. A valid spend reveals the selected script, control block, and required
+signatures.
+
+PSBTv2 carries the unsigned transaction and metadata cosigners need. Each
+participant reviews before contributing a signature. A provider integration
+must add a versioned signer package, public-key validation, safe transport,
+policy display, status, and an exit procedure without turning the coordinator
+into a hidden authorization service.
+
+The public-signet story completed Elena + Leo and Leo + Marina. This proves two
+generic signing paths. It does not prove loan servicing, identity checks,
+inheritance adjudication, or an account at a real institution.
+
+### 7.3 Market evidence is not an endorsement
+
+Existing firms show that pieces of this model have market demand, although
+their policies and control models differ. Onramp describes multi-institution
+2-of-3 custody and trust services; Debifi describes multisignature
+Bitcoin-collateralized lending; Gannett Trust describes flexible key control,
+fiduciary service, and succession planning; BTCBacked describes
+Bitcoin-backed lending. These are attributed provider claims, not audited by
+Winnow, and none is a Winnow partner or compatibility claim.
+
+A future directory should compare role, jurisdiction, regulation, key
+ownership, loan terms, rehypothecation, succession process, fees, insurance
+limits, signing method, and exit procedure. Governance, corrections, removals,
+referral disclosure, ranking independence, sponsored placement, and click
+privacy must be decided before any marketplace ships.
+
+## 8. Backup and replacement phones
 
 A BIP39 phrase recreates deterministic keys. It does not recreate the answers a
-forward-only mobile wallet has already learned: creation height, known
+forward-only mobile wallet already learned: creation height, known
 transactions, replacement relationships, spent outputs, and scan frontier.
 
-Winnow therefore exports a versioned bundle. A watch-only form can transfer
-public wallet state without spend authority. A seed-bearing form requires an
-explicit authenticated choice and keeps the on-screen preview redacted. The
-phrase itself remains copyable after authentication because a recovery secret
-that cannot be moved into a user's chosen backup process is not useful custody.
+Winnow exports a versioned bundle. A watch-only form can transfer public wallet
+state without spend authority. A seed-bearing form requires an explicit
+authenticated choice and keeps the preview redacted. The phrase remains
+copyable after authentication because recovery material must fit the owner's
+chosen backup process.
 
 On import, the replacement phone validates the bundle, reconstructs wallet
-state, and verifies forward from the recorded height. The public-signet story
-matched the source wallet's balance, UTXO count, transaction history,
-replacement links, scan height, and peer connectivity.
+state, and verifies forward. The public-signet story matched balance, UTXO
+count, history, replacement links, scan height, and peer connectivity.
 
-An export must be protected with the same care as the authority it contains.
-Winnow's public automation journal and publication pipeline exclude mnemonics,
-entropy, private keys, secret nonces, and unredacted recovery screens.
+Public automation excludes mnemonics, entropy, private keys, secret nonces, and
+unredacted recovery screens. Any export must be protected according to the
+authority it carries.
 
-## 8. Silent Payments: send works, receive is experimental
+## 9. Silent Payments: send works, receive is experimental
 
-BIP352 Silent Payments give a recipient a reusable code without placing that
-code or an obvious address reuse pattern on chain. Sending is self-contained:
-the sender uses eligible input keys and the recipient's code to derive a unique
+BIP352 Silent Payments give a recipient a reusable code without publishing
+that code or an obvious address-reuse pattern on chain. Sending is
+self-contained: eligible input keys and the recipient's code derive a unique
 Taproot output.
 
-Receiving is harder on a phone. The recipient cannot put one static output
-script into a BIP158 query because each payment output is derived from the
-sender's inputs. The phone must first obtain or calculate the transaction tweak,
-derive candidate output scripts, and only then can those candidates be tested
-against the ordinary compact filter.
+Receiving is harder on a phone. The recipient cannot query a BIP158 filter for
+one static script because each output is derived from sender inputs. The phone
+must first obtain or calculate transaction tweaks, derive candidate scripts,
+and only then test those candidates against ordinary compact filters.
 
-Downloading every full block would remove the index dependency but would also
-erase the bandwidth advantage that makes compact filters appropriate for a
-phone. The current experimental JSON tweak fixture proves the algorithmic
-boundary; it is not presented as a production privacy service.
+Downloading every block avoids an index but erases the bandwidth benefit of a
+mobile light client. The current JSON tweak fixture proves an algorithmic
+boundary, not a production privacy service. The planned block-dn-compatible
+path requests fixed public ranges, validates and caches curve points, compares
+providers when possible, derives candidates locally, and treats Winnow's
+existing filter/full-block path as authoritative for positive matches.
 
-The planned production direction is a block-dn-compatible provider interface:
+A provider sees an IP address and broad requested ranges and can omit data.
+Receive therefore remains off by default and experimental. The current story
+did not complete Silent Payment receive, export/import, and spend; that is an
+unmet acceptance criterion tracked in [issue 40](https://github.com/posix4e/winnow/issues/40).
 
-- request fixed public block ranges rather than wallet-specific data;
-- validate network, format, range, and compressed curve points;
-- cache public batches locally;
-- compare independent providers when available;
-- derive candidates on the phone;
-- use Winnow's existing BIP157/158 and full-block verification as the
-  authoritative positive path; and
-- never treat provider silence as cryptographic proof that no payment exists.
-
-A provider can see the user's IP address and broad requested ranges. It can
-also hide a payment by omitting a tweak. For those reasons receive remains off
-by default and explicitly experimental. The current public-signet story did not
-complete a Silent Payment receive, detection, export/import, and spend cycle.
-That absence is a failed acceptance criterion, not a success hidden behind a
-feature flag. The work is tracked in [issue 40](https://github.com/posix4e/winnow/issues/40).
-
-## 9. Reproducible evidence
+## 10. Reproducible evidence
 
 The checked-in `winnow-story` command creates an isolated simulator run,
 records scenario and tool versions, launches named roles, preserves protected
@@ -322,57 +418,78 @@ The August 2026 story verified these confirmed transactions:
 | Elena + Mateo | [`1b126138…dc03`](https://explorer.bc-2.jp/tx/1b1261381ae44e1d3a0d99bfbc2bb9d428223a45f2a26642b0fcf7a17c51dc03) | Key-path spend confirmed |
 
 The complete safe summary is published on the [evidence page](evidence.html).
-Media remains behind a separate human review because automated text scanning
-cannot guarantee that recovery words never appear in a video frame.
+Media stays behind human review because automated scanning cannot guarantee
+that recovery words never appear in a video frame.
 
-## 10. Limitations and non-goals
+## 11. Limitations and non-goals
 
 - **Not a full node.** Winnow does not validate every transaction and consensus
   rule in every block.
-- **Not anonymous networking.** Direct peers and optional services see an IP
-  connection unless the surrounding network supplies additional privacy.
-- **Not instant finality.** A mempool observation can be useful, but only a
-  block supplies confirmation.
-- **Not arbitrary legacy wallet recovery.** Forward-oriented import depends on
-  a Winnow bundle; broad descriptor rescans are separate work.
-- **Not a custody company.** The software expresses keys and policies. It does
-  not authenticate heirs, resolve disputes, or replace legal planning.
+- **Not anonymous networking.** Peers and optional services see a connection
+  unless the surrounding network adds privacy.
+- **Not instant finality.** A mempool observation is not confirmation.
+- **Not completed mixed-wallet onboarding.** External descriptor exchange,
+  hardware transports, dual review, ceremony backup, and key rotation are
+  planned.
+- **Not a provider marketplace.** Winnow has no provider endorsements,
+  referrals, rankings, account integrations, or production signer packages.
+- **Not a custody company or legal agreement.** Software cannot authenticate
+  heirs, resolve disputes, enforce loan repayment, or replace legal advice.
+- **Not private-miner submission today.** P2P is the shipping broadcast path;
+  selected-miner and export-only routes are planned.
 - **Not completed Silent Payment receiving.** Sending is implemented;
-  production mobile receiving remains experimental and incomplete.
-- **Not mainnet release evidence.** Signet proves integration with a public
-  Bitcoin test network, not readiness to hold valuable mainnet funds.
+  production mobile receiving remains experimental.
+- **Not mainnet release evidence.** Signet integration does not prove readiness
+  to hold valuable mainnet funds.
 
-## 11. Roadmap
+## 12. Implementation roadmap
 
-The immediate engineering priorities are:
+[Epic 60](https://github.com/posix4e/winnow/issues/60) is the canonical program.
+Each item is a public contribution surface; the external-wallet, institutional,
+and miner-API issues are explicitly labeled `help wanted`:
 
-1. finish the block-dn-compatible Silent Payment receive backend, provider
-   comparison, cache validation, reorg handling, and a fresh public-signet
-   receive-and-spend story;
-2. continue peer-pool hardening and make damaged local data distinct from
-   remote peer failure in every synchronization surface;
-3. complete mainnet-oriented security review and controlled low-value testing;
-4. expand interoperable descriptor and hardware-signer workflows without
-   weakening the review-before-sign boundary; and
-5. keep every public claim tied to reproducible evidence rather than a static
-   feature checklist.
+1. [Build the 1–2–3 custody-template UX and warnings](https://github.com/posix4e/winnow/issues/54).
+2. [Test descriptors and PSBTs across independent wallets](https://github.com/posix4e/winnow/issues/58).
+3. [Build the two-wallet setup, signing, backup, and rotation ceremony](https://github.com/posix4e/winnow/issues/50).
+4. [Research hardware transports, starting with Coldcard NFC and microSD](https://github.com/posix4e/winnow/issues/55).
+5. [Build the professional owner–exchange–trust template](https://github.com/posix4e/winnow/issues/53).
+6. [Specify a versioned provider signer package](https://github.com/posix4e/winnow/issues/49).
+7. [Decide provider-directory governance](https://github.com/posix4e/winnow/issues/52).
+8. [Decide referral disclosure, ranking, and click privacy](https://github.com/posix4e/winnow/issues/57).
+9. [Add submission modes and durable receipts](https://github.com/posix4e/winnow/issues/51).
+10. [Build the MARA Slipstream direct-miner pilot](https://github.com/posix4e/winnow/issues/59).
+11. [Extend the reproducible story](https://github.com/posix4e/winnow/issues/56).
 
-## Primary references
+No provider marketplace ships until the directory and referral decisions are
+recorded. P2P remains the default. New signet evidence must describe only the
+flows actually performed.
+
+## Protocol references
 
 - [BIP141 — Segregated Witness](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
 - [BIP157 — Client Side Block Filtering](https://github.com/bitcoin/bips/blob/master/bip-0157.mediawiki)
 - [BIP158 — Compact Block Filters for Light Clients](https://github.com/bitcoin/bips/blob/master/bip-0158.mediawiki)
 - [BIP174 — Partially Signed Bitcoin Transaction Format](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)
+- [BIP327 — MuSig2](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
 - [BIP341 — Taproot](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki)
 - [BIP342 — Validation of Taproot Scripts](https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki)
-- [BIP327 — MuSig2](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
 - [BIP352 — Silent Payments](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki)
 - [BIP370 — PSBT Version 2](https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki)
 - [Winnow source and test suite](https://github.com/posix4e/winnow)
 
+## Attributed incident and market references
+
+- [TRM Labs — Coldcard incident analysis](https://www.trmlabs.com/resources/blog/the-largest-hardware-wallet-exploit-of-2026-inside-the-usd-116-million-coldcard-hack)
+- [Onramp — multi-institution custody](https://onrampbitcoin.com/products/multi-institution-custody)
+- [Onramp — dynasty trust services](https://onrampbitcoin.com/products/dynasty-trusts)
+- [Debifi — Bitcoin-collateralized lending](https://debifi.com/lend-bitcoin)
+- [Gannett Trust — Bitcoin trust and custody](https://www.gannetttrust.com/index.html)
+- [BTCBacked — Bitcoin-backed lending](https://btcbacked.com/)
+- [MARA Slipstream — beta API documentation](https://slipstream.mara.com/docs/)
+
 ---
 
 Winnow's proposition is not that a phone can eliminate trust. It is that the
-wallet can make trust smaller, visible, and appropriate to the money: local
-keys for today's coffee, a threshold for business savings, joint authorization
-for family funds, and plain warnings wherever the phone needs outside help.
+wallet can make trust smaller, visible, and appropriate to the money: one key
+for today's liquidity, two independent wallets to contain one compromised
+implementation, and three professionally distinct roles for continuity.
