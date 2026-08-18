@@ -1,5 +1,8 @@
 # Vaults: Shared Custody That Still Fits on a Phone
 
+> **Archived technical note.** Winnow's current architecture, evidence, and
+> limitations now live in the [canonical design paper](paper.md).
+
 *Design paper for Winnow. A vault is another descriptor on the same [read](read-side.md) / [write](write-side.md) path — not a second wallet architecture. Framing: [a phone wallet](mobile.md).*
 
 ---

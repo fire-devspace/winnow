@@ -1,5 +1,8 @@
 # The Write Side: How a Phone Pays Without Asking Anyone
 
+> **Archived technical note.** Winnow's current architecture, evidence, and
+> limitations now live in the [canonical design paper](paper.md).
+
 *Design paper for Winnow. Companion to [the read side](read-side.md) — that paper ends when the UTXOs are local. This one starts there. Framing: [a phone wallet](mobile.md).*
 
 ---
@@ -75,15 +78,15 @@ Secrets:
 
 All secret-key operations go through libsecp256k1 (P256K). The sighash is BIP341 `SIGHASH_DEFAULT` — also the BIP352-safe choice for taproot inputs, which matters in §6. Auxiliary nonce randomness is 32 fresh bytes per signature.
 
-A server that lied about a UTXO *amount* on the (opt-in) esplora path produces an invalid signature, not a theft: the sighash commits to input amounts. A server that hid a payment can only hide it; it cannot spend it. The default path never asks a server.
+Wallet amounts and UTXOs come from locally verified blocks, not Esplora. BIP341 signatures commit to input amounts; explorer pages are external manual checks and never feed the signer.
 
 ---
 
-## 6. Silent payments, send-side only
+## 6. Silent payments (experimental)
 
 BIP352 `sp1…` / `tsp1…` codes are first-class destinations. The P2TR output script is not known until the input set is fixed — the shared secret is `input_hash · a · B_scan` over the selected inputs' tweaked keys — so coin selection runs against a same-size P2TR *placeholder*, then `SilentPaymentSending.outputScripts` replaces the placeholders at signing time.
 
-Receiving silent payments is out of scope. A receiver must tweak-check every output in every block, which is a different read-side (and a different battery budget) than matching a small watch list against BIP158 filters. The product does not pretend a send-only implementation is "silent payments support." Send is done and vector-tested; receive is a deliberate absence, recorded in [the read side](read-side.md) §3.
+Receiving first obtains per-transaction tweak data, derives candidate output scripts on-device, and tests those candidates against the ordinary BIP158 filter before downloading and verifying a matched block. Ordinary peers do not yet serve a standardized silent-tweak filter, so mobile receive currently needs a user-chosen tweak-data service. That dependency, forward-only scanning, and omission risk are why the entire feature is labeled experimental and receive stays off by default; see [the read side](read-side.md) §3.
 
 Inputs to a silent-payment send are this wallet's own P2TR key-path spends, which is exactly the BIP352 wallet case (the sender controls every eligible input key; shared-control inputs are excluded from derivation).
 
@@ -101,7 +104,7 @@ Inputs to a silent-payment send are this wallet's own P2TR key-path spends, whic
 
 While the Send screen is open, a [bounded mempool window](read-side.md#28-bounded-mempool-windows) watches for peers echoing our txid back. An echo is evidence the network has the bytes; it is not confirmation. The UI says "broadcast" / "relayed" / "seen in a block", never "sent" at 0-conf.
 
-The opt-in esplora path may POST the same raw transaction as a second route. That POST links the txid to the phone's IP at that server — one of the things the Settings warning names.
+Winnow does not POST transactions to Esplora. A transaction row can open the selected explorer after a warning, but P2P relay remains the broadcast path and the page's answer is not consumed by the wallet.
 
 ---
 

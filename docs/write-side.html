@@ -4,11 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winnow</title>
+
+
+
+
+
 <style>
-  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  :root { color-scheme:light dark;--bg:#fcfbf9;--fg:#17140f;--dim:#625e54;--acc:#b35f05;--card:#f4f1ea;--line:#ded9cc; }
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e8e6e3;--dim:#aaa497;--acc:#f5a94b;--card:#14171c;--line:#302b20}}
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
-  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  main { max-width:48rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
   h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
   h1 { font-size:1.7rem; margin-top:0; }
   h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
@@ -29,14 +35,20 @@
   th { color:var(--fg); background:var(--card); }
   td { color:var(--dim); }
   blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
-  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; display:flex;gap:1rem;flex-wrap:wrap; }
+  :focus-visible{outline:2px solid #f7931a;outline-offset:3px}
 </style>
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="the-write-side-how-a-phone-pays-without-asking-anyone">The Write
 Side: How a Phone Pays Without Asking Anyone</h1>
+<blockquote>
+<p><strong>Archived technical note.</strong> Winnow’s current
+architecture, evidence, and limitations now live in the <a
+href="paper.md">canonical design paper</a>.</p>
+</blockquote>
 <p><em>Design paper for Winnow. Companion to <a href="read-side.md">the
 read side</a> — that paper ends when the UTXOs are local. This one
 starts there. Framing: <a href="mobile.md">a phone wallet</a>.</em></p>
@@ -181,13 +193,12 @@ seed in <code>WalletState</code>.</li>
 sighash is BIP341 <code>SIGHASH_DEFAULT</code> — also the BIP352-safe
 choice for taproot inputs, which matters in §6. Auxiliary nonce
 randomness is 32 fresh bytes per signature.</p>
-<p>A server that lied about a UTXO <em>amount</em> on the (opt-in)
-esplora path produces an invalid signature, not a theft: the sighash
-commits to input amounts. A server that hid a payment can only hide it;
-it cannot spend it. The default path never asks a server.</p>
+<p>Wallet amounts and UTXOs come from locally verified blocks, not
+Esplora. BIP341 signatures commit to input amounts; explorer pages are
+external manual checks and never feed the signer.</p>
 <hr />
-<h2 id="silent-payments-send-side-only">6. Silent payments, send-side
-only</h2>
+<h2 id="silent-payments-experimental">6. Silent payments
+(experimental)</h2>
 <p>BIP352 <code>sp1…</code> / <code>tsp1…</code> codes are first-class
 destinations. The P2TR output script is not known until the input set is
 fixed — the shared secret is <code>input_hash · a · B_scan</code> over
@@ -195,12 +206,13 @@ the selected inputs’ tweaked keys — so coin selection runs against a
 same-size P2TR <em>placeholder</em>, then
 <code>SilentPaymentSending.outputScripts</code> replaces the
 placeholders at signing time.</p>
-<p>Receiving silent payments is out of scope. A receiver must
-tweak-check every output in every block, which is a different read-side
-(and a different battery budget) than matching a small watch list
-against BIP158 filters. The product does not pretend a send-only
-implementation is “silent payments support.” Send is done and
-vector-tested; receive is a deliberate absence, recorded in <a
+<p>Receiving first obtains per-transaction tweak data, derives candidate
+output scripts on-device, and tests those candidates against the
+ordinary BIP158 filter before downloading and verifying a matched block.
+Ordinary peers do not yet serve a standardized silent-tweak filter, so
+mobile receive currently needs a user-chosen tweak-data service. That
+dependency, forward-only scanning, and omission risk are why the entire
+feature is labeled experimental and receive stays off by default; see <a
 href="read-side.md">the read side</a> §3.</p>
 <p>Inputs to a silent-payment send are this wallet’s own P2TR key-path
 spends, which is exactly the BIP352 wallet case (the sender controls
@@ -228,9 +240,9 @@ href="read-side.md#28-bounded-mempool-windows">bounded mempool
 window</a> watches for peers echoing our txid back. An echo is evidence
 the network has the bytes; it is not confirmation. The UI says
 “broadcast” / “relayed” / “seen in a block”, never “sent” at 0-conf.</p>
-<p>The opt-in esplora path may POST the same raw transaction as a second
-route. That POST links the txid to the phone’s IP at that server — one
-of the things the Settings warning names.</p>
+<p>Winnow does not POST transactions to Esplora. A transaction row can
+open the selected explorer after a warning, but P2P relay remains the
+broadcast path and the page’s answer is not consumed by the wallet.</p>
 <hr />
 <h2 id="what-still-leaks">8. What still leaks</h2>
 <p>Filters protect the <em>read</em>. The write is a public

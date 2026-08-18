@@ -1,5 +1,8 @@
 # Import: The Bundle Is the History
 
+> **Archived technical note.** Winnow's current architecture, evidence, and
+> limitations now live in the [canonical design paper](paper.md).
+
 *Design paper for Winnow. The no-back-scan rule is stated in [the read side](read-side.md) §2.7.5 and [the phone paper](mobile.md) §4.1. This is the format, the verification algorithm, and what a lying bundle can still do.*
 
 ---
@@ -43,7 +46,8 @@ JSON, one object:
       "height": 149000,
       "received": 50000,
       "spent": 0,
-      "fee": 250
+      "fee": 250,
+      "replacedBy": "<replacement transaction id, when fee-bumped>"
     }
   ]
 }
@@ -124,7 +128,7 @@ Pending (height 0) change outputs stay in the UTXO set: they are live spendable 
 ## 6. What this is not
 
 - **Not a BIP39-only import.** A 12-word phrase without history would force a back-scan. The onboarding UI does not offer "type your words and we'll find your coins."
-- **Not an xpub watcher that asks an indexer.** Descriptor-only import is watch-only and still uses filters, from the bundle height forward. The opt-in esplora path does not get to skip the bundle.
+- **Not an xpub watcher that asks an indexer.** Descriptor-only import is watch-only and still uses filters, from the bundle height forward. External explorer links never get to skip the bundle.
 - **Not SLIP-39 / Passport / SeedQR / output descriptors of every flavor.** v1 is the everyday BIP86 wallet this app itself creates. That is the export we can specify and the import we can verify. Broader descriptor import is a format-version bump, not a silent widening of `tr(KEY)`.
 
 ---

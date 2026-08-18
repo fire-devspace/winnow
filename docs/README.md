@@ -1,7 +1,11 @@
-# Design papers
+# Winnow design paper
 
-Winnow is a private Bitcoin wallet **for a phone**. The papers are separate
-on purpose: each one owns a constraint the device cannot drop.
+The canonical paper is [Winnow: From a Phone Wallet to Family Custody](paper.md).
+It connects the mobile constraints, private read path, transaction relay,
+Taproot vaults, recovery, Silent Payment limitations, and reproducible signet
+evidence through Sofía Cruz's fictional Brisa Café story.
+
+The earlier focused papers remain as archived technical notes:
 
 | Paper | Question |
 |-------|----------|

@@ -4,11 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winnow</title>
+
+
+
+
+
 <style>
-  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  :root { color-scheme:light dark;--bg:#fcfbf9;--fg:#17140f;--dim:#625e54;--acc:#b35f05;--card:#f4f1ea;--line:#ded9cc; }
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e8e6e3;--dim:#aaa497;--acc:#f5a94b;--card:#14171c;--line:#302b20}}
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
-  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  main { max-width:48rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
   h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
   h1 { font-size:1.7rem; margin-top:0; }
   h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
@@ -29,14 +35,20 @@
   th { color:var(--fg); background:var(--card); }
   td { color:var(--dim); }
   blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
-  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; display:flex;gap:1rem;flex-wrap:wrap; }
+  :focus-visible{outline:2px solid #f7931a;outline-offset:3px}
 </style>
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="import-the-bundle-is-the-history">Import: The Bundle Is the
 History</h1>
+<blockquote>
+<p><strong>Archived technical note.</strong> Winnow’s current
+architecture, evidence, and limitations now live in the <a
+href="paper.md">canonical design paper</a>.</p>
+</blockquote>
 <p><em>Design paper for Winnow. The no-back-scan rule is stated in <a
 href="read-side.md">the read side</a> §2.7.5 and <a href="mobile.md">the
 phone paper</a> §4.1. This is the format, the verification algorithm,
@@ -83,10 +95,11 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="
 <span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span><span class="fu">,</span></span>
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;received&quot;</span><span class="fu">:</span> <span class="dv">50000</span><span class="fu">,</span></span>
 <span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;spent&quot;</span><span class="fu">:</span> <span class="dv">0</span><span class="fu">,</span></span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;fee&quot;</span><span class="fu">:</span> <span class="dv">250</span></span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;fee&quot;</span><span class="fu">:</span> <span class="dv">250</span><span class="fu">,</span></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;replacedBy&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;replacement transaction id, when fee-bumped&gt;&quot;</span></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Rules the importer enforces before any network call:</p>
 <ul>
 <li><code>version</code> is <code>1</code> or <code>2</code>. Version 1
@@ -278,7 +291,7 @@ history would force a back-scan. The onboarding UI does not offer “type
 your words and we’ll find your coins.”</li>
 <li><strong>Not an xpub watcher that asks an indexer.</strong>
 Descriptor-only import is watch-only and still uses filters, from the
-bundle height forward. The opt-in esplora path does not get to skip the
+bundle height forward. External explorer links never get to skip the
 bundle.</li>
 <li><strong>Not SLIP-39 / Passport / SeedQR / output descriptors of
 every flavor.</strong> v1 is the everyday BIP86 wallet this app itself

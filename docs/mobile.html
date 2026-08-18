@@ -4,11 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winnow</title>
+
+
+
+
+
 <style>
-  :root { --bg:#0b0d10; --fg:#e8e6e3; --dim:#9a958c; --acc:#f7931a; --card:#14171c; --line:#262b33; }
+  :root { color-scheme:light dark;--bg:#fcfbf9;--fg:#17140f;--dim:#625e54;--acc:#b35f05;--card:#f4f1ea;--line:#ded9cc; }
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e8e6e3;--dim:#aaa497;--acc:#f5a94b;--card:#14171c;--line:#302b20}}
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg); font:-apple-system/1.65 system-ui, sans-serif; line-height:1.65; }
-  main { max-width:44rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  main { max-width:48rem; margin:0 auto; padding:3rem 1.25rem 5rem; }
   h1, h2, h3 { line-height:1.25; margin:2rem 0 .6rem; letter-spacing:-.01em; }
   h1 { font-size:1.7rem; margin-top:0; }
   h2 { font-size:1.25rem; border-top:1px solid var(--line); padding-top:1.4rem; }
@@ -29,14 +35,20 @@
   th { color:var(--fg); background:var(--card); }
   td { color:var(--dim); }
   blockquote { border-left:3px solid var(--acc); padding-left:1rem; margin:1rem 0; }
-  nav.home { margin-bottom:1.5rem; font-size:.9rem; }
+  nav.home { margin-bottom:1.5rem; font-size:.9rem; display:flex;gap:1rem;flex-wrap:wrap; }
+  :focus-visible{outline:2px solid #f7931a;outline-offset:3px}
 </style>
 </head>
 <body>
 <main>
-<nav class="home"><a href="/">← Winnow</a></nav>
+<nav class="home"><a href="/">← Winnow</a><a href="/present">Presentation</a><a href="/paper">Canonical paper</a></nav>
 <h1 id="a-private-bitcoin-wallet-on-a-phone">A Private Bitcoin Wallet on
 a Phone</h1>
+<blockquote>
+<p><strong>Archived technical note.</strong> Winnow’s current
+architecture, evidence, and limitations now live in the <a
+href="paper.md">canonical design paper</a>.</p>
+</blockquote>
 <p><em>Framing paper for Winnow. The other papers — <a
 href="read-side.md">read</a>, <a href="write-side.md">write</a>, <a
 href="vaults.md">vaults</a>, <a href="import.md">import</a> — each own
@@ -56,8 +68,9 @@ privacy policy before tapping Receive.</p>
 <strong>The phone does the matching. Nobody is asked which addresses are
 yours. The chain is not stored. Work happens while the app is
 open.</strong> Everything else — Taproot-only, fresh wallets,
-import-with-history, bounded mempool windows, an esplora toggle behind a
-warning — is a consequence of that sentence, not a feature list.</p>
+import-with-history, bounded mempool windows, and warned external
+explorer links — is a consequence of that sentence, not a feature
+list.</p>
 <p>This paper states the device constraints, the architecture they
 force, and which paper answers which question. It does not re-argue
 compact filters; that is <a href="read-side.md">the read side</a>.</p>
@@ -91,7 +104,10 @@ with iCloud Keychain sync off. They are not in the app’s JSON state and
 not in iCloud backup. After the first screen the words reappear only
 behind an explicit control gated on device-owner authentication
 (Settings → Backup → Show recovery phrase, fail-closed when no passcode
-is set). Signing loads the secret for the call and drops it.</li>
+is set). Both recovery screens offer an explicit copy action; its
+pasteboard item is local-only, expires after two minutes, and warns that
+paper is more private. Signing loads the secret for the call and drops
+it.</li>
 <li><strong>One runtime dependency.</strong> <a
 href="https://github.com/21-DOT-DEV/swift-secp256k1"><code>swift-secp256k1</code></a>
 — Bitcoin Core’s libsecp256k1. Swift never does raw curve math on
@@ -167,22 +183,23 @@ no server</td>
 </tr>
 </tbody>
 </table>
-<p>One opt-in crosses several rows: an esplora backend, off by default,
-named in Settings with exactly what it learns. It is a user-initiated
-exception, never the default path.</p>
+<p>One user-controlled escape hatch crosses several rows: a selected
+external explorer website. Opening an exact address or transaction
+requires a warning; its response never becomes wallet state.</p>
 <hr />
 <h2 id="what-the-device-forces-onto-the-wallet">4. What the device
 forces onto the wallet</h2>
 <h3 id="fresh-and-forward-only">4.1 Fresh, and forward-only</h3>
-<p>A new wallet is created in the app. It has no history, so scanning
-starts at the tip (or the height at creation) and runs forward.
-Recovering an old wallet <em>privately from the chain</em> would mean
-gigabytes of historical filters on a radio the user pays for. The
-product does not do that. Import requires the previous wallet’s answers
-to come along — descriptor, UTXOs, history, a last-known height — and
-the phone verifies them by scanning <em>forward</em> from that height.
-The argument and the bundle format are <a
-href="import.md">import</a>.</p>
+<p>A new wallet and its recovery phrase are created immediately,
+offline. Header synchronization continues while the user secures the
+phrase; the wallet starts scanning from the last already-validated
+height so the interval cannot be missed. Recovering an old wallet
+<em>privately from the chain</em> would mean gigabytes of historical
+filters on a radio the user pays for. The product does not do that.
+Import requires the previous wallet’s answers to come along —
+descriptor, UTXOs, history, a last-known height — and the phone verifies
+them by scanning <em>forward</em> from that height. The argument and the
+bundle format are <a href="import.md">import</a>.</p>
 <p>This is the constraint that makes the rest cheap. It is not a v1
 shortcut.</p>
 <h3 id="taproot-only">4.2 Taproot only</h3>
@@ -192,14 +209,16 @@ shape, one sighash, one witness size for fee math (66 bytes for a
 key-path spend), and no “which address type did this contact use?”
 branch in the UI.</p>
 <p>The phone can <em>pay</em> any standard address (bech32/bech32m,
-base58 P2PKH/P2SH) and can send to or receive BIP352 silent payments
-(<code>sp1…</code> / <code>tsp1…</code>). Receive is opt-in because it
-follows a per-block tweak index; candidate scripts are still matched
-locally against the same compact-filter stream, and full blocks still
-come from P2P peers (<a href="read-side.md">read-side</a> §3). The
-warning is explicit: the index operator learns that an IP follows
-silent-payment data, and payments received while the option is off are
-not detected.</p>
+base58 P2PKH/P2SH). BIP352 silent payments (<code>sp1…</code> /
+<code>tsp1…</code>) are explicitly <strong>experimental</strong>.
+Sending is self-contained. Receiving is off by default because ordinary
+compact-filter peers do not yet supply the transaction tweaks needed to
+derive filter candidates; the current implementation follows a
+user-chosen per-block tweak source, then matches locally against the
+normal filters and verifies full blocks from P2P peers (<a
+href="read-side.md">read-side</a> §3). The warning names IP disclosure,
+forward-only detection, and the risk that omitted tweak data can hide a
+payment.</p>
 <h3 id="two-modern-multisig-flavors-same-read-path">4.3 Two modern
 multisig flavors, same read path</h3>
 <p>A vault is another descriptor and another watch list. The phone does
