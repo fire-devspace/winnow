@@ -32,7 +32,7 @@ jobs:
         run: swift test
 
       - name: Install signing identity
-        run: Scripts/ci-sign.sh
+        run: scripts/ci-sign.sh
 
       - name: Archive
         run: >-
@@ -78,10 +78,10 @@ jobs:
         env:
           ASC_KEY_PATH: ${{ runner.temp }}/winnow-signing/AuthKey.p8
         run: |
-          chmod +x Scripts/testflight.sh
-          Scripts/testflight.sh wait-processing
-          Scripts/testflight.sh internal
-          Scripts/testflight.sh external
+          chmod +x scripts/testflight.sh
+          scripts/testflight.sh wait-processing
+          scripts/testflight.sh internal
+          scripts/testflight.sh external
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
