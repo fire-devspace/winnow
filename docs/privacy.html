@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Winnow Privacy Policy &mdash; Winnow</title>
+<meta name="description" content="Winnow collects nothing. No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.">
+<link rel="canonical" href="https://winnowwallet.com/privacy">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://winnowwallet.com/privacy">
+<meta property="og:title" content="Winnow Privacy Policy &mdash; Winnow">
+<meta property="og:description" content="Winnow collects nothing. No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.">
+<meta property="og:image" content="https://winnowwallet.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Winnow Privacy Policy &mdash; Winnow">
+<meta name="twitter:description" content="Winnow collects nothing. No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.">
+<meta name="twitter:image" content="https://winnowwallet.com/og.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="bar">
+    <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
+    <nav class="links">
+      <a href="/custody">How you hold it</a>
+      <a href="/present">Talk</a>
+      <a href="/architecture">Architecture</a>
+      <a href="/paper.md">Paper</a>
+      <a href="https://github.com/posix4e/winnow">Source</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <h1 id="winnow-privacy-policy">Winnow Privacy Policy</h1>
+  <p><strong>Winnow collects nothing.</strong> No accounts, no analytics, no crash-reporting beacons, no advertising SDKs, no server of ours exists to collect anything with.</p>
+  <h2 id="what-the-app-does-with-your-data">What the app does with your data</h2>
+  <ul>
+  <li><strong>Keys never leave your device.</strong> Seed material is generated on-device and stored in the iOS Keychain (this-device-only, never synced).</li>
+  <li><strong>No address leakage by default.</strong> The wallet learns its own transaction history by downloading compact block filters (BIP157/158) from random Bitcoin full-node peers and matching them <em>on your device</em>. Your addresses are never transmitted. As with any direct network connection, peers see your IP address; the app deliberately rotates and holds no fixed relationship with any peer.</li>
+  <li><strong>Mempool windows.</strong> While the Receive screen is open, the app subscribes to ordinary transaction-relay traffic and matches it locally — the same data every full node sees. Nothing about you is queried or revealed.</li>
+  <li><strong>Broadcasting.</strong> Signed transactions are relayed directly to P2P peers.</li>
+  <li><strong>External explorer links.</strong> Settings lets you choose mempool.space or a custom Esplora-compatible website. Winnow never queries it automatically. If you tap an address or transaction link, a warning identifies that the selected service will learn your IP and the exact item before iOS opens it.</li>
+  <li><strong>Experimental silent-payment receiving.</strong> If explicitly enabled, Winnow requests block-wide tweak data from the service you choose. The service sees your IP following silent-payment blocks but is not given your address or balance. Matching stays on-device; an incomplete service can cause a missed payment.</li>
+  <li><strong>Third-party code.</strong> One dependency: libsecp256k1 (via the P256K Swift package). It makes no network calls.</li>
+  </ul>
+  <h2 id="contact">Contact</h2>
+  <p>a@wuli.nu · Source code: https://github.com/posix4e/winnow</p>
+</main>
+<footer>
+  <div class="bar">
+    Winnow &mdash; <a href="/">the wallet</a> &middot; <a href="/custody">how you hold it</a>
+    &middot; <a href="/present">the talk</a> &middot; <a href="/paper.md">the paper</a>
+    &middot; <a href="/evidence">the evidence</a> &middot; <a href="/privacy">privacy</a>
+    &middot; <a href="https://github.com/posix4e/winnow">source</a>
+  </div>
+</footer>
+</body>
+</html>

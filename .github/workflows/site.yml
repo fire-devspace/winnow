@@ -1,6 +1,7 @@
 name: Site
 
 # Deploys docs/ to Cloudflare Pages on every push to main.
+# docs/ is hand-written HTML with no build step. Do not add one.
 # Requires repo secrets: CF_API_TOKEN (Account → Cloudflare Pages: Edit),
 # CF_ACCOUNT_ID. Project name: winnow. Custom domain: winnowwallet.com.
 on:
@@ -17,11 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Render markdown pages to HTML (pandoc)
-        run: |
-          sudo apt-get install -y pandoc
-          cd docs
-          for f in *.md; do pandoc "$f" -s --template=_template.html -o "${f%.md}.html"; done
       - name: Deploy docs/ to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:

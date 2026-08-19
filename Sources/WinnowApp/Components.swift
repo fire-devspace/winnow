@@ -2,6 +2,7 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import WebKit
 
 /// An explicit, short-lived clipboard handoff for recovery words. Clipboard
 /// access is inherently less private than paper, so the item stays on-device
@@ -101,32 +102,57 @@ struct CopyableTextBlock: View {
     }
 }
 
-/// A bundled design paper, rendered as plain text so Settings can open it offline.
+/// The bundled design papers are the same HTML the website serves. Loading the
+/// file from the bundle keeps them readable with no network, and lets the page
+/// bring its own typography instead of being flattened into one Text view.
+private struct BundledPageView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        // site.css hides the site's own nav and footer under .embedded; the
+        // sheet supplies that chrome already.
+        config.userContentController.addUserScript(
+            WKUserScript(source: "document.body.classList.add('embedded')",
+                         injectionTime: .atDocumentEnd,
+                         forMainFrameOnly: true))
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.isOpaque = false
+        view.backgroundColor = .systemBackground
+        // read access to the whole bundle directory so the page can pull site.css
+        view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {}
+}
+
+/// A bundled design paper, rendered from the page the site serves so Settings
+/// can open it offline.
 struct DesignPaperView: View {
     let resource: String
     let title: String
 
-    private var text: String {
-        guard let url = Bundle.main.url(forResource: resource, withExtension: "md"),
-              let text = try? String(contentsOf: url, encoding: .utf8)
-        else { return "The bundled copy of docs/\(resource).md could not be loaded." }
-        return text
-    }
-
     var body: some View {
-        ScrollView {
-            Text(text)
-                .font(.footnote)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
+        Group {
+            if let url = Bundle.main.url(forResource: resource, withExtension: "html") {
+                BundledPageView(url: url)
+            } else {
+                ScrollView {
+                    Text("The bundled copy of docs/\(resource).html could not be loaded.")
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            }
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-/// The bundled design paper (docs/read-side.md), rendered as plain text so
-/// the esplora opt-in warning can link to it offline.
+/// The bundled design paper (docs/read-side.html) so the esplora opt-in
+/// warning can link to it offline.
 struct ReadSideDocumentView: View {
     var body: some View {
         NavigationStack {

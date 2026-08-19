@@ -23,16 +23,19 @@ targets:
     sources:
       - path: Sources/WinnowApp
       # Design papers, bundled so Settings can render them offline (the
-      # esplora opt-in warning links the read-side paper).
-      - path: docs/mobile.md
+      # esplora opt-in warning links the read-side paper). These are the same
+      # files the website serves; site.css rides along so they keep their type.
+      - path: docs/site.css
         buildPhase: resources
-      - path: docs/read-side.md
+      - path: docs/mobile.html
         buildPhase: resources
-      - path: docs/write-side.md
+      - path: docs/read-side.html
         buildPhase: resources
-      - path: docs/vaults.md
+      - path: docs/write-side.html
         buildPhase: resources
-      - path: docs/import.md
+      - path: docs/vaults.html
+        buildPhase: resources
+      - path: docs/import.html
         buildPhase: resources
     dependencies:
       - package: btc-swift

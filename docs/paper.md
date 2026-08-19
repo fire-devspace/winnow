@@ -1,9 +1,3 @@
----
-title: "Winnow: One Wallet, Two Signers, Three Roles"
-description: "A mobile-first Bitcoin custody ladder for personal liquidity, independent verification, professional continuity, and private peer-based discovery."
-url: "https://winnowwallet.com/paper"
----
-
 # Winnow: One Wallet, Two Signers, Three Roles
 
 *A canonical design paper for Winnow, August 2026.*

@@ -21,14 +21,3 @@ xcuserdata/
 *.p12
 *.cer
 *.certSigningRequest
-
-# docs/*.html is built by .github/workflows/site.yml (pandoc + _template.html)
-# from the matching .md on every deploy. Committing the output means carrying a
-# copy that goes stale the next time the template changes. The pages below have
-# no .md source — they are written by hand and must stay tracked.
-docs/*.html
-!docs/_template.html
-!docs/architecture.html
-!docs/index.html
-!docs/papers.html
-!docs/present.html
