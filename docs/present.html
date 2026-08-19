@@ -3,277 +3,244 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Winnow — one key, two keys, three</title>
-<meta name="description" content="A 15-minute talk on Winnow: start with one key, add independent ones as the money grows, and never ask a server which addresses are yours.">
+<title>Winnow — walkthrough</title>
+<meta name="description" content="Intro map for a live walkthrough of winnowwallet.com — front page, custody, architecture, and what I learned.">
 <link rel="canonical" href="https://winnowwallet.com/present">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://winnowwallet.com/present">
-<meta property="og:title" content="Winnow — one key, two keys, three">
-<meta property="og:description" content="A 15-minute talk on holding Bitcoin on a phone: one key for spending, two when a stolen phone shouldn't be enough, three when losing one shouldn't lock you out.">
+<meta property="og:title" content="Winnow — walkthrough">
+<meta property="og:description" content="We’ll walk the live site, not the slides.">
 <meta property="og:image" content="https://winnowwallet.com/og.png">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Winnow — one key, two keys, three">
-<meta name="twitter:description" content="A 15-minute talk on holding Bitcoin on a phone: one key for spending, two when a stolen phone shouldn't be enough, three when losing one shouldn't lock you out.">
-<meta name="twitter:image" content="https://winnowwallet.com/og.png">
 <style>
 :root{
-  --paper:#fbfaf7;--card:#fff;--ink:#17140f;--ink2:#625e54;--line:#ded9cc;
-  --orange:#f7931a;--amber:#e59b3a;--violet:#6f5bd3;--blue:#315a8a;
-  --cobalt:#356fc4;--sage:#62896b;--teal:#2e8b88;--night:#100e0a;
-  --good:#1f7a4d;
-  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
-  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --paper:#ffffff;--paper-2:#f7f4ee;--ink:#14130e;--ink-2:#585549;--ink-3:#8a8577;
+  --rule:#e8e0d0;--rule-2:#d6d1c2;--seed:#b35f05;--mark:#f7931a;--good:#1f7a4d;--card:#fff;
+  --night:#100e0a;--night-2:#1b1811;--night-ink:#f2eee4;--night-ink-2:#a8a294;--night-rule:#2d281d;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
 }
-@media(prefers-color-scheme:dark){:root{--paper:#0d0c09;--card:#17140f;--ink:#f3efe6;--ink2:#aaa497;--line:#302b20;--good:#4fb37c}}
-*{box-sizing:border-box}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--paper:#0d0c09;--paper-2:#151309;--ink:#f3efe6;--ink-2:#a9a496;--ink-3:#807b6d;--rule:#272319;--rule-2:#332e21;--seed:#f5a94b;--card:#181510;--good:#4fc389}
+}
+*{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:18px;line-height:1.5;-webkit-font-smoothing:antialiased}
-a{color:#b35f05;text-underline-offset:3px}@media(prefers-color-scheme:dark){a{color:#f5a94b}}
-button{font:inherit}
-img{max-width:100%;height:auto;display:block}
-:focus-visible{outline:3px solid var(--orange);outline-offset:4px}
-.topbar{position:fixed;z-index:100;inset:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(18px);border-bottom:1px solid var(--line)}
-.brand{font-weight:750;letter-spacing:-.02em}.brand b{color:var(--orange)}
-.actions{display:flex;align-items:center;gap:.7rem}
-.present-btn{border:1px solid var(--orange);border-radius:2rem;padding:.48rem .9rem;background:var(--orange);color:#17140f;font-weight:650;cursor:pointer}
-.home-link{font-size:.82rem;color:var(--ink2);text-decoration:none}
-.scene{min-height:100svh;padding:clamp(6rem,10vw,8rem) clamp(1.2rem,5vw,5rem) clamp(4rem,7vw,6rem);display:grid;align-items:center;border-bottom:1px solid var(--line)}
-.scene-inner{width:min(72rem,100%);margin:auto}
-.grid{display:grid;gap:clamp(1.8rem,4vw,4rem);align-items:center}
-@media(min-width:52rem){.grid{grid-template-columns:1.04fr .96fr}.grid.flip{grid-template-columns:.96fr 1.04fr}.grid.flip .visual{order:2}}
-.kicker{font:700 .72rem var(--mono);text-transform:uppercase;letter-spacing:.13em;color:#b35f05;margin:0 0 .9rem}@media(prefers-color-scheme:dark){.kicker{color:#f5a94b}}
-h1,h2{font-weight:720;line-height:1.04;letter-spacing:-.035em;text-wrap:balance;margin:0}
-h1{font-size:clamp(2.4rem,4.2vw,3.6rem)}h2{font-size:clamp(2rem,3.4vw,3rem)}
-.lead{font-size:clamp(1.05rem,1.55vw,1.3rem);line-height:1.45;color:var(--ink2);max-width:34rem;margin:1.2rem 0 0}
-.lead+.lead{margin-top:.8rem}
-.lead b{color:var(--ink);font-weight:650}
-.soft{color:var(--ink2)}
-.fiction{font-size:.76rem;color:var(--ink2);margin-top:1.5rem;max-width:34rem}
-.visual{min-width:0;display:grid;justify-items:center;gap:.7rem}
-/* cap the phone by viewport height so a slide never overflows a short projector */
-.phone{width:min(16rem,70vw,calc((100svh - 15rem)/2.173));margin:0;border-radius:2.4rem;padding:.45rem;background:#19191b;box-shadow:0 26px 60px rgba(0,0,0,.22)}
-.phone img{display:block;width:100%;height:auto;border-radius:2rem}
-.caption{font-size:.78rem;color:var(--ink2);margin:0;text-align:center;max-width:22rem}
-.ladder{display:grid;gap:.7rem;width:100%}
-.level{border:1px solid var(--line);border-left:6px solid var(--tone);border-radius:1rem;background:var(--card);padding:.95rem 1.15rem;box-shadow:0 12px 35px rgba(0,0,0,.055)}
-.level small{font:650 .66rem var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
-.level strong{display:block;font-size:1.12rem;margin:.15rem 0}.level span{font-size:.87rem;color:var(--ink2)}
-.network{position:relative;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:1rem;width:100%}
-.nodes{display:grid;gap:.7rem}.node,.device-box{border:1px solid var(--line);background:var(--card);border-radius:1rem;padding:.9rem;text-align:center;font-size:.84rem;box-shadow:0 10px 30px rgba(0,0,0,.05)}
-.node b,.device-box b{display:block;font-size:.98rem}.node span,.device-box span{color:var(--ink2)}
-.stream{width:clamp(3rem,7vw,6rem);height:2px;background:var(--line);position:relative}
-.stream::after{content:"";position:absolute;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--orange);animation:flow 2.2s linear infinite}
-@keyframes flow{from{left:0}to{left:calc(100% - 10px)}}
-.device-box{border-color:var(--orange);padding:1.25rem}
-.zero{font:700 .72rem var(--mono);color:var(--good);margin-top:.6rem}
-.branches{display:grid;gap:.7rem;width:100%}
-.branch{border:1px solid var(--line);border-radius:1rem;background:var(--card);padding:.95rem 1.1rem}
-.branch b{display:block;font-size:1.02rem}.branch p{font-size:.86rem;color:var(--ink2);margin:.3rem 0 0}
-.planned{font:650 .72rem var(--mono);color:var(--ink2);border-top:1px solid var(--line);margin-top:1.1rem;padding-top:.8rem;max-width:34rem;line-height:1.6}
-.planned b{color:var(--ink);font-weight:700}
-details{border-top:1px solid var(--line);margin-top:1.2rem;padding-top:.9rem;max-width:36rem}
-summary{cursor:pointer;font-weight:650;color:var(--ink2);font-size:.86rem}
-details p{font-size:.85rem;color:var(--ink2)}
-.final{background:var(--night);color:#f3efe6}
-.final .lead,.final .fiction,.final .planned{color:#aaa497}.final .kicker{color:var(--orange)}
-.final .planned{border-color:#3b3427}.final .planned b{color:#f3efe6}
-.final-actions{display:flex;flex-wrap:wrap;gap:.7rem;margin-top:1.6rem}
-.cta{display:inline-flex;padding:.7rem 1.05rem;border:1px solid #3b3427;border-radius:2rem;color:#f3efe6;text-decoration:none;font-weight:650}
-.cta.primary{background:var(--orange);border-color:var(--orange);color:#17140f}
-.qr img{width:min(13rem,50vw);background:#fff;padding:.7rem;border-radius:1rem}
-.qr span{font:650 .74rem var(--mono);color:#aaa497}
-.controls{display:none;position:fixed;z-index:110;inset:auto 0 0;padding:.6rem 1rem;background:color-mix(in srgb,var(--night) 92%,transparent);color:#eee8dc;align-items:center;justify-content:space-between;gap:1rem}
-.counter{font:650 .75rem var(--mono);min-width:4rem}
-.dots{display:flex;gap:.38rem}
-.dots button{width:.58rem;height:.58rem;border:0;border-radius:50%;padding:0;background:#625b4d;cursor:pointer}
-.dots button[aria-current="true"]{background:var(--orange);transform:scale(1.25)}
-.hint{font-size:.7rem;color:#aaa497}
-body.presenting{overflow:hidden;background:var(--night)}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.58;letter-spacing:-.011em;-webkit-font-smoothing:antialiased}
+a{color:var(--seed);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--mark);outline-offset:3px;border-radius:6px}
+.wrap{width:min(64rem,100%);margin:0 auto;padding:0 clamp(1.1rem,4vw,2rem)}
+.eyebrow{font-family:var(--mono);font-size:.68rem;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--seed);margin-bottom:.85rem}
+
+/* topbar */
+.topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:saturate(180%) blur(16px);border-bottom:1px solid var(--rule)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:1rem;height:46px}
+.brand{font-weight:680;letter-spacing:-.02em;display:flex;align-items:center;gap:.5rem}
+.brand b{color:var(--mark)}
+.links{display:flex;gap:1.2rem;font-size:.86rem}
+.links a{color:var(--ink-2)}
+.links a:hover{color:var(--ink);text-decoration:none}
+@media(max-width:28rem){.links a.hide-sm{display:none}}
+
+/* deck */
+.deck{padding:clamp(3.5rem,7vw,5.5rem) 0 clamp(3rem,6vw,4rem)}
+.hero-grid{display:grid;gap:clamp(2.2rem,5vw,3.8rem);align-items:start}
+@media(min-width:56rem){.hero-grid{grid-template-columns:1.15fr .85fr}}
+h1{font-size:clamp(2.3rem,5vw,3.45rem);line-height:.98;letter-spacing:-.035em;font-weight:720;text-wrap:balance}
+h1 .soft{display:block;color:var(--ink-2);font-weight:520;font-size:.92em;margin-top:.15rem}
+.lead{font-size:clamp(1.0rem,1.6vw,1.15rem);color:var(--ink-2);line-height:1.5;margin-top:1.05rem;max-width:33rem}
+.note{font-size:.82rem;color:var(--ink-3);margin-top:1rem;max-width:33rem;line-height:1.5}
+.note b{color:var(--ink);font-weight:620}
+
+/* subtle divider under headline */
+.rule{height:1px;background:var(--rule);margin:1.4rem 0 0;max-width:33rem}
+
+/* agenda */
+.agenda{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:14px;overflow:hidden;margin-top:1.5rem}
+.agenda a.stop{text-decoration:none}
+@media(min-width:48rem){.agenda{grid-template-columns:1fr 1fr}}
+.agenda .stop:last-child{grid-column:1 / -1}
+.stop{background:var(--card);padding:1.15rem 1.1rem;display:flex;gap:.85rem;align-items:flex-start;transition:background .15s ease}
+.stop:hover{background:color-mix(in srgb,var(--card) 92%,var(--paper-2))}
+.stop-num{font-family:var(--mono);font-size:.68rem;font-weight:600;letter-spacing:.07em;color:var(--ink-3);border:1px solid var(--rule-2);border-radius:999px;padding:.28rem .52rem;flex:none;margin-top:.12rem;background:var(--paper)}
+.stop h3{font-size:.97rem;letter-spacing:-.015em;margin:0;line-height:1.25}
+.stop p{font-size:.86rem;color:var(--ink-2);line-height:1.45;margin:.28rem 0 0}
+.stop .meta{font-family:var(--mono);font-size:.67rem;color:var(--ink-3);letter-spacing:.05em;margin-top:.45rem}
+.stop.learn{background:var(--paper-2)}
+.stop.learn .stop-num{border-color:var(--mark);color:var(--seed);background:#fff}
+.stop.learn:hover{background:color-mix(in srgb,var(--paper-2) 88%,white)}
+
+/* ctas */
+.cta{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1.5rem}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.62rem 1.05rem;border-radius:999px;font-size:.92rem;font-weight:560;border:1px solid var(--mark);background:var(--mark);color:#17140f;transition:filter .15s ease}
+.btn:hover{filter:brightness(1.05);text-decoration:none}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--rule-2)}
+.btn.ghost:hover{border-color:var(--ink-3);filter:none}
+
+/* right column cards */
+.card{border:1px solid var(--rule);background:var(--card);border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.06)}
+.card-head{padding:1.1rem 1.2rem 0}
+.card-head .label{font:600 .68rem var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.card-body{padding:.9rem 1.2rem 1.2rem}
+.takeaway{ display:grid;gap:.85rem }
+.takeaway .row{ display:grid;grid-template-columns:16px 1fr;gap:.6rem;align-items:start }
+.takeaway .tick{ width:16px;height:16px;border-radius:999px;background:color-mix(in srgb,var(--mark) 14%,transparent);border:1px solid color-mix(in srgb,var(--mark) 30%,transparent);display:grid;place-items:center;margin-top:.15rem }
+.takeaway .tick svg{ width:8px;height:8px;display:block }
+.takeaway p{ font-size:.89rem;color:var(--ink-2);line-height:1.5;margin:0 }
+.takeaway b{ color:var(--ink);font-weight:630 }
+.card-foot{border-top:1px solid var(--rule);padding:.85rem 1.2rem;background:color-mix(in srgb,var(--paper-2) 55%,transparent);font-size:.8rem;color:var(--ink-3);line-height:1.45}
+.qr-card{margin-top:1rem;border:1px dashed var(--rule-2);border-radius:14px;padding:1rem;text-align:center;background:var(--paper)}
+.qr-card .label{font:600 .68rem var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.qr-card img{width:8.2rem;height:8.2rem;margin:.7rem auto 0;background:#fff;padding:.35rem;border-radius:10px;border:1px solid var(--rule);display:block}
+.qr-card .url{font:600 .7rem var(--mono);color:var(--ink-3);margin-top:.5rem;letter-spacing:.02em}
+
+/* footer */
+.foot{border-top:1px solid var(--rule);padding:1.35rem 0 2rem;margin-top:2.8rem;font-size:.82rem;color:var(--ink-3);display:flex;flex-wrap:wrap;gap:.8rem 1.2rem;justify-content:space-between}
+.foot a{color:var(--ink-2)}
+
+/* present mode */
+.scene{display:none}
+.scene.active{display:block}
+body.presenting{overflow:hidden}
 body.presenting .topbar{display:none}
-body.presenting .scene{display:none;border:0;padding:clamp(1.5rem,4vw,3.5rem) clamp(1.5rem,5vw,5rem) 3.5rem;min-height:100vh}
+body.presenting .scene{display:none;min-height:100svh;padding:clamp(2rem,6vw,3.5rem) clamp(1.1rem,4vw,2rem) 3.5rem;align-items:center}
 body.presenting .scene.active{display:grid}
+.controls{display:none;position:fixed;inset:auto 0 0;padding:.55rem 1rem;background:var(--night);color:#f2eee4;align-items:center;justify-content:space-between;gap:1rem;z-index:30;border-top:1px solid var(--night-rule)}
 body.presenting .controls{display:flex}
-body.presenting .scene:not(.final){background:var(--paper)}
-@media(max-width:40rem){
-  .hint{display:none}.dots{gap:.3rem}.actions .home-link{display:none}
-  .network{grid-template-columns:1fr}
-  .stream{width:2px;height:3rem;margin:auto}
-  .stream::after{left:-4px;animation:flow-down 2.2s linear infinite}
-  @keyframes flow-down{from{top:0}to{top:calc(100% - 10px)}}
-  .phone{width:min(16rem,62vw)}
-}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.stream::after{animation:none;left:calc(50% - 5px)}*{transition:none!important}}
-@media print{.topbar,.controls,details{display:none!important}.scene{min-height:auto;break-after:page}.scene-inner{padding:1cm}}
+.counter{font:600 .74rem var(--mono)}
+.dots{display:flex;gap:.34rem}
+.dots button{width:.52rem;height:.52rem;border:0;border-radius:50%;background:#4a4438;cursor:pointer;padding:0}
+.dots button[aria-current="true"]{background:var(--mark)}
+.hint{font-size:.7rem;color:#a8a294}
+@media(max-width:40rem){.hint{display:none}}
 </style>
 </head>
 <body>
+
 <header class="topbar">
-  <a class="home-link" href="/">← Winnow</a>
-  <span class="brand"><b>₿</b> Winnow</span>
-  <div class="actions"><a class="home-link" href="/custody">How you hold it</a><a class="home-link" href="/paper.md">Paper</a><button class="present-btn" id="presentButton" type="button">Present</button></div>
+  <div class="wrap bar">
+    <a class="brand" href="/"><span><b>₿</b> Winnow</span></a>
+    <nav class="links">
+      <a href="/">Front page</a>
+      <a href="/custody">Custody</a>
+      <a href="/architecture" class="hide-sm">Architecture</a>
+      <a href="/paper.md" class="hide-sm">Paper</a>
+    </nav>
+  </div>
 </header>
 
-<main class="deck" id="deck">
-  <section class="scene active" data-title="One key, two keys, three">
-    <div class="scene-inner grid">
+<main class="deck wrap" id="deck">
+
+  <!-- Slide 1: intro map -->
+  <section class="scene active" data-title="Walkthrough">
+    <div class="hero-grid">
       <div>
-        <p class="kicker">Winnow · Puerto Rico · 15 minutes</p>
-        <h1>One&nbsp;key. <span class="soft">Two&nbsp;keys. Three.</span></h1>
-        <p class="lead">Bitcoin on an iPhone, with no server anywhere in it. Your keys are made on the device, and nothing is ever asked which addresses are yours.</p>
-        <p class="lead">The rule underneath the whole talk: <b>use the smallest policy that fits the money.</b> A wallet you find annoying is a wallet you will empty into a worse one.</p>
+        <p class="eyebrow">Present · live walkthrough · 10 min</p>
+        <h1>We’ll walk the site, <span class="soft">not the slides.</span></h1>
+        <p class="lead">This page is just the map. The story is already on the site — we’ll open it live and talk through it in order.</p>
+        <div class="rule"></div>
+        <p class="note">Most of what we’ll cover has a page. <b>“What I learned”</b> is the only stop that lives here — the rest are existing pages we’ll jump to.</p>
+
+        <div class="agenda" role="list">
+          <a class="stop" href="/" role="listitem">
+            <span class="stop-num">01</span>
+            <div>
+              <h3>Front webpage <span style="color:var(--ink-3);font-weight:400">→ /</span></h3>
+              <p>One line: a Bitcoin wallet that runs on your phone. Hero, “start with one,” and the winnowing animation.</p>
+              <div class="meta">Existing page · 2 min</div>
+            </div>
+          </a>
+          <a class="stop" href="/custody" role="listitem">
+            <span class="stop-num">02</span>
+            <div>
+              <h3>How you hold it <span style="color:var(--ink-3);font-weight:400">→ /custody</span></h3>
+              <p>One key → two keys (maker diversity, MuSig2 single sig) → three keys (2-of-3 continuity).</p>
+              <div class="meta">Existing page · 3 min</div>
+            </div>
+          </a>
+          <a class="stop" href="/architecture" role="listitem">
+            <span class="stop-num">03</span>
+            <div>
+              <h3>Architecture <span style="color:var(--ink-3);font-weight:400">→ /architecture</span></h3>
+              <p>How the phone learns what’s its own — compact filters, bounded mempool window, forward-only scan.</p>
+              <div class="meta">Existing page · 3 min</div>
+            </div>
+          </a>
+          <div class="stop learn" role="listitem">
+            <span class="stop-num">04</span>
+            <div>
+              <h3>What I learned</h3>
+              <p>BIPs, silent-payment limits, why most multisig is still legacy, custody ladder, peer diversity — and why I changed my mind on pure models.</p>
+              <div class="meta">Lives on this page · 4 min</div>
+            </div>
+          </div>
+          <a class="stop" href="/paper.md#12-implementation-roadmap" role="listitem">
+            <span class="stop-num">05</span>
+            <div>
+              <h3>Roadmap <span style="color:var(--ink-3);font-weight:400">→ /paper.md#12</span></h3>
+              <p>What’s next — 2-wallet ceremony, hardware transports, provider packages, miner pilot. Tracked in epic #60.</p>
+              <div class="meta">Existing page · 1 min · github.com/posix4e/winnow/issues/60</div>
+            </div>
+          </a>
+        </div>
+
+        <div class="cta">
+          <button class="btn" id="presentButton" type="button">Present this map</button>
+          <a class="btn ghost" href="/">Open the front page →</a>
+        </div>
+        <p class="note">Flow: <b>present.html (here, 30s)</b> → <b>/</b> → <b>/custody</b> → <b>/architecture</b> → back here for “what I learned” → <b>Roadmap</b> → Q&A.</p>
       </div>
-      <div class="visual">
-        <div class="ladder" role="group" aria-label="Winnow's three custody levels">
-          <div class="level" style="--tone:var(--amber)"><small>one key</small><strong>Everything on the phone</strong><span>Money you actually spend. One point of failure.</span></div>
-          <div class="level" style="--tone:var(--teal)"><small>two keys</small><strong>Both have to agree</strong><span>A stolen phone cannot spend. The chain sees one signature.</span></div>
-          <div class="level" style="--tone:var(--blue)"><small>three keys</small><strong>Any two of the three</strong><span>Losing one is an inconvenience, not a catastrophe.</span></div>
+
+      <div>
+        <div class="card">
+          <div class="card-head"><p class="label">What I learned — lives here</p></div>
+          <div class="card-body">
+            <div class="takeaway">
+              <div class="row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.2 2.2L9.5 3.6" stroke="#b35f05" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><p><b>BIPs that actually run the wallet.</b> <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">BIP39/32/86</span> keys, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">340/341/342</span> Schnorr/Taproot, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">327</span> MuSig2, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">370/371/373</span> PSBTv2, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">387/388/390</span> descriptors, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">157/158</span> filters, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">352</span> Silent Payments, <span style="font-family:var(--mono);font-size:.78em;color:var(--ink-3)">125</span> RBF. Bitcoin is a BIP stack — Winnow just picks the modern ones.</p></div>
+              <div class="row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.2 2.2L9.5 3.6" stroke="#b35f05" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><p><b>Silent Payments — send works, receive is still hard.</b> Sending is self-contained; receiving needs a per-block tweak source, then local candidate derivation + filter match + block check. Needs IP/timing disclosure, forward-only, and a provider can omit tweaks and hide a payment — so off by default, experimental.</p></div>
+              <div class="row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.2 2.2L9.5 3.6" stroke="#b35f05" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><p><b>Most multisig is still legacy.</b> Many wallets are still <span style="font-family:var(--mono);font-size:.78em">OP_CHECKMULTISIG</span>/P2WSH/P2SH with ECDSA, coordinator servers, and mixed address types. The chain sees the policy, fees are larger, review is weaker. <b>Nunchuk and Core are the exceptions</b> — descriptor + PSBT + Taproot-aware, good covenant hygiene — they showed what modern actually looks like.</p></div>
+              <div class="row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.2 2.2L9.5 3.6" stroke="#b35f05" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><p><b>I changed my mind on custody.</b> No pure model. Ladder: 1 key for spending, 2 independent makers that hide as one sig, 3 (2-of-3) for continuity — annoying wallets get emptied into worse ones, so use the smallest policy that fits the money.</p></div>
+              <div class="row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.2 2.2L9.5 3.6" stroke="#b35f05" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><p><b>Peer diversity is hard.</b> 3 peers by default, headers retry on another peer, filters compared, blocks checked against headers — yet a fully eclipsed light client can still be shown one view. Usually you don’t care about privacy, but it’s good to be private by default and warn when you give it up to make things easier — manual peers / private Esplora are good for testing or if you already have one running for extra privacy, not an escape hatch.</p></div>
+            </div>
+          </div>
+          <div class="card-foot">Flow: <b>this map → / → /custody → /architecture → back here</b> for the five points above, then Roadmap.</div>
+        </div>
+        <div class="qr-card">
+          <p class="label">Take the map with you</p>
+          <img src="present-qr.png" alt="QR to winnowwallet.com/present" width="160" height="160">
+          <p class="url">winnowwallet.com/present</p>
         </div>
       </div>
     </div>
-  </section>
 
-  <section class="scene" data-title="One key">
-    <div class="scene-inner grid flip">
-      <div>
-        <p class="kicker">01 · one key</p>
-        <h2>Open first. Synchronize behind it.</h2>
-        <p class="lead">The wallet and its first address exist the moment you open the app, so writing down the recovery phrase never waits on the network. A fresh address can receive straight away.</p>
-        <p class="lead">This is the right shape for money you spend and the wrong shape for money you cannot afford to lose — one key is one point of failure, and no amount of care changes that.</p>
-        <details><summary>For Q&amp;A: what happens at payment time?</summary><p>The receive screen watches a bounded relay window for an early observation. Confirmation still comes from a block. Spending shows the destination, amount, fee, inputs and change before signing, and spends opt into RBF.</p></details>
-      </div>
-      <div class="visual">
-        <div class="phone"><img src="screenshots/03-receive.png" width="1320" height="2868" alt="Winnow's receive screen: a QR code and a fresh Taproot address."></div>
-        <p class="caption">A fresh address, seconds after setup. Nothing was asked of a server.</p>
-      </div>
+    <div class="foot">
+      <span>Present map — links are existing pages; only “What I learned” lives here.</span>
+      <span><a href="/paper.md">Paper</a> · <a href="/evidence">Evidence</a> · <a href="https://github.com/posix4e/winnow">Source</a></span>
     </div>
   </section>
 
-  <section class="scene" data-title="Private reading">
-    <div class="scene-inner grid">
-      <div>
-        <p class="kicker">02 · the read path</p>
-        <h2>Bring Bitcoin to the phone.</h2>
-        <p class="lead">Peers serve public headers and compact block filters. The phone checks those summaries against your own scripts, on the device. It never asks a wallet server for your balance, because there is no wallet server.</p>
-        <details><summary>For Q&amp;A: what does a peer still learn?</summary><p>A peer sees a connection and public chain ranges. A matched full-block request can add a correlation clue, so Winnow can separate peers. A full eclipse remains a real threat; this is a light client, not a validating full node.</p></details>
+  <!-- Slide 2: focus view for projector -->
+  <section class="scene" data-title="What I learned">
+    <div style="max-width:46rem;margin:0 auto">
+      <p class="eyebrow" style="text-align:center">04 · lives on this page — 5 points</p>
+      <h1 style="font-size:clamp(2rem,4.5vw,2.9rem);text-align:center;text-wrap:balance">What I learned</h1>
+      <div style="margin-top:1.4rem;display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:14px;overflow:hidden">
+        <div style="background:var(--card);padding:1.15rem 1.2rem"><p style="font-weight:650;font-size:.96rem">1 · The BIP stack</p><p style="color:var(--ink-2);font-size:.88rem;margin-top:.3rem;line-height:1.5"><span style="font-family:var(--mono)">39</span> mnemonic / <span style="font-family:var(--mono)">32</span> HD / <span style="font-family:var(--mono)">86</span> Taproot derivation · <span style="font-family:var(--mono)">340/341/342</span> Schnorr/Taproot · <span style="font-family:var(--mono)">327</span> MuSig2 · <span style="font-family:var(--mono)">370/371/373</span> PSBTv2 · <span style="font-family:var(--mono)">387/388/390</span> descriptors · <span style="font-family:var(--mono)">157/158</span> compact filters · <span style="font-family:var(--mono)">352</span> Silent Payments · <span style="font-family:var(--mono)">125</span> RBF / <span style="font-family:var(--mono)">133</span> feefilter</p></div>
+        <div style="background:var(--card);padding:1.15rem 1.2rem"><p style="font-weight:650;font-size:.96rem">2 · Silent Payments limits</p><p style="color:var(--ink-2);font-size:.88rem;margin-top:.3rem;line-height:1.5">Send is self-contained (placeholder → <span style="font-family:var(--mono)">outputScripts</span>). Receive needs a chosen per-block tweak source → local candidate derivation → filter match → block check. Leaks IP/timing, forward-only, provider can omit and hide a payment — why it’s off by default and experimental.</p></div>
+        <div style="background:var(--card);padding:1.15rem 1.2rem"><p style="font-weight:650;font-size:.96rem">3 · Why most multisig still feels old</p><p style="color:var(--ink-2);font-size:.88rem;margin-top:.3rem;line-height:1.5">Many wallets still ship <span style="font-family:var(--mono)">OP_CHECKMULTISIG</span> / P2WSH / P2SH + ECDSA, coordinator servers, and mixed address types — visible policy, larger witness, weaker review. <b style="color:var(--ink)">Nunchuk and Core are the exceptions</b> — descriptors, PSBT, Taproot, clean coordination — and they reset my bar for “good.”</p></div>
+        <div style="background:var(--card);padding:1.15rem 1.2rem"><p style="font-weight:650;font-size:.96rem">4 · Custody: no pure model</p><p style="color:var(--ink-2);font-size:.88rem;margin-top:.3rem;line-height:1.5">I’m not using a pure model. 1 key for spending, 2 independent makers (one 64-byte sig, no policy leaked), 2-of-3 for continuity/loss/inheritance — the smallest policy that fits the money, because annoying wallets get emptied into worse ones.</p></div>
+        <div style="background:var(--card);padding:1.15rem 1.2rem"><p style="font-weight:650;font-size:.96rem">5 · Peer diversity is hard</p><p style="color:var(--ink-2);font-size:.88rem;margin-top:.3rem;line-height:1.5">Default 3 peers, headers retry on another peer, filters compared, blocks checked against headers — yet eclipse remains real. Usually you don’t care about privacy, but it’s good to be private by default and warn when you give it up to make things easier — manual peers / private Esplora are good for testing or if you already have one running for extra privacy, not an escape hatch.</p></div>
       </div>
-      <div class="visual">
-        <div class="network" role="group" aria-label="Three Bitcoin peers send public filters to a phone that matches privately">
-          <div class="nodes"><div class="node"><b>Peer A</b><span>headers</span></div><div class="node"><b>Peer B</b><span>filter headers</span></div><div class="node"><b>Peer C</b><span>compact filters</span></div></div>
-          <div class="stream" aria-hidden="true"></div>
-          <div class="device-box"><b>Your phone</b><span>matches wallet scripts here</span><div class="zero">addresses sent: 0</div></div>
-        </div>
-      </div>
+      <p class="note" style="margin:1.3rem auto 0;text-align:center">Then Roadmap (epic #60) → Q&A — paper, evidence, and source are one tap away.</p>
     </div>
   </section>
 
-  <section class="scene" data-title="Two keys">
-    <div class="scene-inner grid flip">
-      <div>
-        <p class="kicker">03 · two keys</p>
-        <h2>Two&nbsp;devices, and both have to&nbsp;agree.</h2>
-        <p class="lead">Nothing moves unless both sign. Someone who takes one phone, or finds one recovery phrase, has nothing they can spend.</p>
-        <p class="lead">But the reason to reach for two keys is narrower than theft: <b>it is the people who built your wallet.</b> Hardware has shipped with keys an attacker could guess. Software has shipped with signing bugs. Either takes everything behind it at once, and you cannot audit your way out. Two devices from two different makers means one of them can be wrong and your money survives it.</p>
-        <p class="lead">And nobody has to know. Combined the aggregated way, two keys publish one 64-byte signature — no policy, no key count, no hint that a second device exists.</p>
-        <details><summary>For Q&amp;A: would this contain a weak-entropy hardware incident?</summary><p>Yes, if only one independently generated key were affected. That key stays compromised, but the missing second signature stops the spend. Shared seeds, two affected devices, or a common implementation failure defeat the benefit — and losing either unbacked-up key locks a 2-of-2 for good.</p></details>
-      </div>
-      <div class="visual">
-        <div class="phone"><img src="screenshots/15-vault-cosign.png" width="1320" height="2868" alt="Winnow's cosigning screen, showing the amount, destination and fee the second device is being asked to approve."></div>
-        <p class="caption">The second device sees what it is approving. Neither can spend alone.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene" data-title="Three keys">
-    <div class="scene-inner grid">
-      <div>
-        <p class="kicker">04 · three keys</p>
-        <h2>Two of&nbsp;three, so losing one is&nbsp;survivable.</h2>
-        <p class="lead">You choose how many keys exist and how many must agree. Hold two yourself and place the third with someone else — a family member, or a company whose business is holding one.</p>
-        <p class="lead">It also changes what you can be made to do. Someone standing over you cannot get the money out of you, because you genuinely cannot send it alone. And it outlives you: if you can no longer sign, the other two still can, after whatever real-world checks you set.</p>
-        <p class="lead">The trade is visibility. Spending this way publishes the policy — anyone reading the chain sees it took two signatures out of three. For the coercion case, that is the point.</p>
-        <details><summary>For Q&amp;A: what is not built yet?</summary><p>Winnow constructs and spends the generic policy today, and two paths were verified on signet. What does not exist yet: packaged offerings from professional key holders, account handoffs, a provider directory, and production integrations with institutions.</p></details>
-      </div>
-      <div class="visual">
-        <div class="phone"><img src="screenshots/10-vault-create.png" width="1320" height="2868" alt="Winnow's vault creation screen, choosing how many keys exist and how many must sign."></div>
-        <p class="caption">Choosing how many keys exist, and how many a payment needs.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene" data-title="More than one at once">
-    <div class="scene-inner grid flip">
-      <div>
-        <p class="kicker">05 · match the policy to the money</p>
-        <h2>Tomorrow's cash stays hot.</h2>
-        <p class="lead">These are not three products you pick between once. One person runs more than one wallet: the till on the phone, the reserve behind two or three keys, and money moved up as it accumulates.</p>
-        <p class="lead">The mistake is not choosing wrong. It is leaving everything behind the one key you set up first because moving it felt like work.</p>
-      </div>
-      <div class="visual">
-        <div class="ladder">
-          <div class="level" style="--tone:var(--amber)"><small>spending</small><strong>One key on the phone</strong><span>Fast, simple, small.</span></div>
-          <div style="text-align:center;color:var(--orange);font-size:1.8rem;line-height:1" aria-hidden="true">↓</div>
-          <div class="level" style="--tone:var(--blue)"><small>reserve</small><strong>Two of three</strong><span>Slower on purpose. Survives a loss.</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene" data-title="What the chain knows">
-    <div class="scene-inner grid">
-      <div>
-        <p class="kicker">06 · what the chain knows</p>
-        <h2>Bitcoin counts signatures. <span class="soft">Not reasons.</span></h2>
-        <p class="lead">Winnow shows every valid pair that could move the money. Bitcoin does not know which one happened, or why — whether a loan was repaid, an owner died, a beneficiary qualified, or a court acted.</p>
-        <p class="lead">That gap is not a flaw to engineer away. It is the reason the real-world agreement has to be written down somewhere other than the script.</p>
-      </div>
-      <div class="visual">
-        <div class="branches">
-          <div class="branch"><b style="color:var(--cobalt)">You + the second holder</b><p>Ordinary spending, and anything you can arrange directly.</p></div>
-          <div class="branch"><b style="color:var(--blue)">You + the third holder</b><p>Recovery, or migration once an obligation clears.</p></div>
-          <div class="branch"><b style="color:var(--sage)">The other two, without you</b><p>Inheritance when you cannot sign — and the collusion risk you accept by choosing who holds what.</p></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene" data-title="Recovery">
-    <div class="scene-inner grid flip">
-      <div>
-        <p class="kicker">07 · recovery, and one honest gap</p>
-        <h2>A backup is more than twelve words.</h2>
-        <p class="lead">Winnow's export carries your public history and scan state as well as your keys, so a replacement phone opens with your balance and past payments already in place instead of spending a long time rediscovering them. A phone swap was verified end to end on signet: balance, UTXOs, history, RBF links and scan height all matched.</p>
-        <p class="lead">The gap worth saying out loud: Silent Payment <b>sending</b> works. <b>Receiving</b> is off by default, because the mobile tweak-data backend it needs is still experimental.</p>
-        <details><summary>For Q&amp;A: why not compact filters alone for silent receive?</summary><p>A Silent Payment output is not recognizable from the recipient's static code. The phone first needs a per-transaction tweak derived from sender inputs; only then can it derive candidate scripts and query the ordinary block filter. A provider could still observe timing or omit data.</p></details>
-      </div>
-      <div class="visual">
-        <div class="phone"><img src="screenshots/14-import-report.png" width="1320" height="2868" alt="Winnow's import report on a replacement phone, listing the verified wallet data."></div>
-        <p class="caption">A new phone, picking up where the old one left off.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="scene final" data-title="Try Winnow">
-    <div class="scene-inner grid">
-      <div>
-        <p class="kicker">08 · public beta, open source</p>
-        <h2>Start with one. Grow deliberately.</h2>
-        <p class="lead">Winnow defaults to public signet, so you can put the whole thing through its paces with money that costs nothing. Test it, read the source, or take an open issue.</p>
-        <div class="final-actions"><a class="cta primary" href="https://testflight.apple.com/join/83djpNE7">Join TestFlight</a><a class="cta" href="https://github.com/posix4e/winnow">Read the source</a><a class="cta" href="/custody">How you hold it</a><a class="cta" href="/paper.md">Read the paper</a></div>
-        <p class="planned"><b>On the roadmap, not yet built:</b> pairing a second key with another maker's wallet · packaged offerings from professional key holders · submitting a signed transaction to a selected miner instead of the peer network · Silent Payment receive. Tracked in <a href="https://github.com/posix4e/winnow/issues/60">issue #60</a>.</p>
-        <p class="fiction">winnowwallet.com/present</p>
-      </div>
-      <div class="visual qr">
-        <img src="present-qr.png" width="248" height="248" alt="QR code for winnowwallet.com/present">
-        <span>Take the talk with you</span>
-      </div>
-    </div>
-  </section>
 </main>
 
 <div class="controls" role="group" aria-label="Presentation controls">
-  <span class="counter" id="counter" aria-live="polite">1 / 9</span>
-  <div class="dots" id="dots" role="navigation" aria-label="Choose scene"></div>
-  <span class="hint">← → · Page Up/Down · Home/End · Esc</span>
+  <span class="counter" id="counter">1 / 2</span>
+  <div class="dots" id="dots" role="navigation" aria-label="Choose slide"></div>
+  <span class="hint">← → · Esc to exit · <a href="/" style="color:#f5a94b">open front page →</a></span>
 </div>
 
 <script>
@@ -283,38 +250,31 @@ body.presenting .scene:not(.final){background:var(--paper)}
   var counter=document.getElementById('counter');
   var dots=document.getElementById('dots');
   var index=0;
-  scenes.forEach(function(scene,i){
-    var dot=document.createElement('button');
-    dot.type='button';dot.setAttribute('aria-label','Scene '+(i+1)+': '+scene.dataset.title);
-    dot.addEventListener('click',function(){show(i)});dots.appendChild(dot);
+  scenes.forEach(function(s,i){
+    var d=document.createElement('button');
+    d.type='button';d.setAttribute('aria-label','Slide '+(i+1)+': '+s.dataset.title);
+    d.addEventListener('click',function(){show(i)});dots.appendChild(d);
   });
-  function show(next){
-    index=Math.max(0,Math.min(scenes.length-1,next));
-    scenes.forEach(function(scene,i){scene.classList.toggle('active',i===index);scene.setAttribute('aria-hidden',document.body.classList.contains('presenting')&&i!==index?'true':'false')});
-    Array.from(dots.children).forEach(function(dot,i){dot.setAttribute('aria-current',i===index?'true':'false')});
+  function show(n){
+    index=Math.max(0,Math.min(scenes.length-1,n));
+    scenes.forEach(function(s,i){s.classList.toggle('active',i===index);s.setAttribute('aria-hidden',document.body.classList.contains('presenting')&&i!==index?'true':'false')});
+    Array.from(dots.children).forEach(function(b,i){b.setAttribute('aria-current',i===index?'true':'false')});
     counter.textContent=(index+1)+' / '+scenes.length;
   }
-  function start(){
-    document.body.classList.add('presenting');show(index);
-    if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(function(){})}
-  }
-  function stop(){
-    document.body.classList.remove('presenting');scenes.forEach(function(scene){scene.removeAttribute('aria-hidden')});
-    scenes[index].scrollIntoView({block:'start'});
-    if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen().catch(function(){})}
-  }
-  button.addEventListener('click',start);
-  document.addEventListener('keydown',function(event){
-    if(!document.body.classList.contains('presenting'))return;
-    if(['ArrowRight','ArrowDown','PageDown',' '].includes(event.key)){event.preventDefault();show(index+1)}
-    else if(['ArrowLeft','ArrowUp','PageUp'].includes(event.key)){event.preventDefault();show(index-1)}
-    else if(event.key==='Home'){event.preventDefault();show(0)}
-    else if(event.key==='End'){event.preventDefault();show(scenes.length-1)}
-    else if(event.key==='Escape'){stop()}
+  function start(){document.body.classList.add('presenting');show(index);if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(function(){})}}
+  function stop(){document.body.classList.remove('presenting');scenes.forEach(function(s){s.removeAttribute('aria-hidden')});scenes[index].scrollIntoView({block:'start'});if(document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen().catch(function(){})}}
+  if(button) button.addEventListener('click',start);
+  document.addEventListener('keydown',function(e){
+    if(!document.body.classList.contains('presenting')) return;
+    if(['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){e.preventDefault();show(index+1)}
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();show(index-1)}
+    else if(e.key==='Home'){e.preventDefault();show(0)}
+    else if(e.key==='End'){e.preventDefault();show(scenes.length-1)}
+    else if(e.key==='Escape'){stop()}
   });
   document.addEventListener('fullscreenchange',function(){if(!document.fullscreenElement&&document.body.classList.contains('presenting'))stop()});
   show(0);
-  if(new URLSearchParams(location.search).get('mode')==='present')start();
+  if(new URLSearchParams(location.search).get('mode')==='present') start();
 })();
 </script>
 </body>
