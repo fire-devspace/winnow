@@ -94,8 +94,12 @@ public enum SilentPaymentSending {
             // finds the compressed key even in malleated scriptSigs (BIP352).
             let hash = script.subdata(in: script.startIndex + 3 ..< script.startIndex + 23)
             guard scriptSig.count >= 33 else { return nil }
-            for end in stride(from: scriptSig.count, through: 33, by: -1) {
-                let candidate = scriptSig.subdata(in: end - 33 ..< end)
+            // Count is not a 0-based index — Data slices may have startIndex != 0.
+            let sigStart = scriptSig.startIndex
+            for endOffset in stride(from: scriptSig.count, through: 33, by: -1) {
+                let end = scriptSig.index(sigStart, offsetBy: endOffset)
+                let begin = scriptSig.index(end, offsetBy: -33)
+                let candidate = scriptSig.subdata(in: begin ..< end)
                 guard hash160(candidate) == hash,
                       (try? P256K.Signing.PublicKey(dataRepresentation: candidate, format: .compressed)) != nil
                 else { continue }

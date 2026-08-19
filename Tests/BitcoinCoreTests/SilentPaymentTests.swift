@@ -292,4 +292,25 @@ struct SilentPaymentTests {
             privateKey: Data(repeating: 0, count: 31) + Data([0x01]))
         #expect(SilentPaymentSending.eligiblePublicKey(of: future) == nil)
     }
+
+    @Test("P2PKH scriptSig window finds the key on a nonzero-startIndex slice")
+    func p2pkhScriptSigSlice() throws {
+        let pubkey = try SilentPaymentSending.publicKeyPoint(
+            Data(repeating: 0, count: 31) + Data([0x01]))
+        let hash = SilentPaymentSending.hash160(pubkey)
+        var script = Data([0x76, 0xA9, 0x14])
+        script.append(hash)
+        script.append(contentsOf: [0x88, 0xAC])
+        // Canonical P2PKH scriptSig: <push dummy-sig> <push compressed-key>.
+        var scriptSig = Data([0x47]) + Data(repeating: 0x30, count: 71) + Data([0x21]) + pubkey
+        #expect(SilentPaymentSending.eligiblePublicKey(
+            prevoutScriptPubKey: script, scriptSig: scriptSig, witness: []) == pubkey)
+
+        let padded = Data([0xAA, 0xBB]) + scriptSig + Data([0xCC])
+        let sliced = padded.dropFirst(2).dropLast()
+        #expect(sliced.startIndex != 0)
+        #expect(sliced.count == scriptSig.count)
+        #expect(SilentPaymentSending.eligiblePublicKey(
+            prevoutScriptPubKey: script, scriptSig: sliced, witness: []) == pubkey)
+    }
 }
