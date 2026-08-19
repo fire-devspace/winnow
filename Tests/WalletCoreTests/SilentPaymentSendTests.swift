@@ -22,6 +22,7 @@ struct SilentPaymentSendTests {
             Transaction.Output(value: amount, scriptPubKey: script),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         return funding
     }
 

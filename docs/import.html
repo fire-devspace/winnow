@@ -61,7 +61,8 @@
   <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;chain&quot;</span><span class="fu">:</span> <span class="dv">0</span><span class="fu">,</span></span>
   <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;index&quot;</span><span class="fu">:</span> <span class="dv">3</span><span class="fu">,</span></span>
   <span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;height&quot;</span><span class="fu">:</span> <span class="dv">149000</span><span class="fu">,</span></span>
-  <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;silentPaymentTweak&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;32-byte scalar hex; silent-payment outputs only&gt;&quot;</span></span>
+  <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;silentPaymentTweak&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;32-byte scalar hex; silent-payment outputs only&gt;&quot;</span><span class="fu">,</span></span>
+  <span id="cb1-16a"><a href="#cb1-16a" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;isCoinbase&quot;</span><span class="fu">:</span> <span class="kw">true</span></span>
   <span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
   <span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span><span class="fu">,</span></span>
   <span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;transactions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
@@ -85,6 +86,7 @@
   <li>Descriptor-only: watch-only. The descriptor must be that same single-sig shape. Signing is impossible until a secret is supplied by some later path (there is none today — watch-only stays watch-only).</li>
   <li>For an ordinary UTXO, <code>silentPaymentTweak</code> is absent and <code>scriptPubKey</code> must be exactly what the descriptor derives at <code>(chain, index)</code>. A bundle cannot attach an arbitrary output to this wallet by lying about coordinates.</li>
   <li>For a BIP352 UTXO, version 2 carries <code>silentPaymentTweak</code>: the 32-byte scalar added to the wallet’s silent-payment spend key. The mnemonic is required because a BIP86 descriptor does not contain that key. The importer derives <code>b_spend + tweak</code>, checks the resulting output script, and persists the tweak for signing. Bad scalars, descriptor-only silent-payment claims, and script mismatches fail closed.</li>
+  <li><code>isCoinbase</code> is emitted only when true. It preserves the consensus 100-confirmation maturity rule across export and restore; older bundles omit it and are treated as false.</li>
   <li><code>txid</code> values are display (big-endian) hex on the wire and in the file; internally they are reversed to Bitcoin’s byte order, same as the rest of the stack.</li>
   <li><code>chain</code> is <code>0</code> receive / <code>1</code> change (BIP44 external/internal, matching the multipath descriptor).</li>
   <li>Scanning resumes at <code>lastKnownHeight + 1</code>. <code>creationHeight</code> of the new wallet state <em>is</em> <code>lastKnownHeight</code>.</li>

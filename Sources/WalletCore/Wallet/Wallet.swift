@@ -101,10 +101,14 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
     /// spent. nil for descriptor outputs; when set, `chain`/`index` carry no
     /// meaning.
     public var silentPaymentTweak: Data?
+    /// Set when this output was created by a coinbase. Consensus forbids
+    /// spending it until `Wallet.coinbaseMaturity` confirmations; the flag is
+    /// absent from older state files and treated as false.
+    public var isCoinbase: Bool
 
     public init(txid: Data, vout: UInt32, amount: Int64, scriptPubKey: Data,
                 chain: AddressChain, index: UInt32, height: UInt32,
-                silentPaymentTweak: Data? = nil) {
+                silentPaymentTweak: Data? = nil, isCoinbase: Bool = false) {
         self.txid = txid
         self.vout = vout
         self.amount = amount
@@ -113,6 +117,7 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
         self.index = index
         self.height = height
         self.silentPaymentTweak = silentPaymentTweak
+        self.isCoinbase = isCoinbase
     }
 
     public var outpoint: Transaction.Outpoint {
@@ -125,7 +130,7 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
 
     // JSON: txid display hex, scriptPubKey hex (human-inspectable state file).
     private enum CodingKeys: String, CodingKey {
-        case txid, vout, amount, scriptPubKey, chain, index, height, silentPaymentTweak
+        case txid, vout, amount, scriptPubKey, chain, index, height, silentPaymentTweak, isCoinbase
     }
 
     public init(from decoder: any Decoder) throws {
@@ -153,7 +158,8 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
                   chain: try container.decode(AddressChain.self, forKey: .chain),
                   index: try container.decode(UInt32.self, forKey: .index),
                   height: try container.decode(UInt32.self, forKey: .height),
-                  silentPaymentTweak: tweak)
+                  silentPaymentTweak: tweak,
+                  isCoinbase: try container.decodeIfPresent(Bool.self, forKey: .isCoinbase) ?? false)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -167,6 +173,7 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
         try container.encode(height, forKey: .height)
         // Absent for descriptor outputs, so pre-SP state files stay identical.
         try container.encodeIfPresent(silentPaymentTweak?.hex, forKey: .silentPaymentTweak)
+        if isCoinbase { try container.encode(true, forKey: .isCoinbase) }
     }
 }
 
@@ -416,6 +423,8 @@ public actor Wallet {
     /// BIP44-style gap limit: how many unused addresses past the last used one
     /// stay on the filter watch list.
     public static let gapLimit: UInt32 = 20
+    /// Consensus coinbase maturity (Bitcoin Core `COINBASE_MATURITY`).
+    public static let coinbaseMaturity: UInt32 = 100
 
     public let id: String
     public let network: BitcoinNetwork
@@ -533,6 +542,18 @@ public actor Wallet {
     public var nextChangeIndex: UInt32 { state.nextChangeIndex }
     public var balance: Int64 { state.utxos.reduce(0) { $0 + $1.amount } }
     public var utxos: [WalletUTXO] { state.utxos }
+    /// UTXOs consensus allows spending at the last scanned height.
+    public var spendableUtxos: [WalletUTXO] { state.utxos.filter(isMature) }
+
+    /// Coinbase outputs need 100 confirmations (`COINBASE_MATURITY`). Tip is
+    /// the last fully-scanned height (`nextScanHeight - 1`).
+    func isMature(_ utxo: WalletUTXO) -> Bool {
+        guard utxo.isCoinbase else { return true }
+        let tip = state.nextScanHeight == 0 ? 0 : state.nextScanHeight - 1
+        // Subtract only after ordering so a malformed near-UInt32.max height
+        // cannot overflow while checking the maturity boundary.
+        return tip >= utxo.height && tip - utxo.height >= Self.coinbaseMaturity - 1
+    }
     public var history: [HistoryEntry] { state.history }
     public var observedFeeRates: [Double] { state.observedFeeRates }
     /// Locally-created pending sends with persisted metadata and unspent
@@ -727,7 +748,8 @@ public actor Wallet {
                 }
                 let utxo = WalletUTXO(txid: txid, vout: UInt32(vout), amount: output.value,
                                       scriptPubKey: output.scriptPubKey, chain: chain,
-                                      index: index, height: match.height)
+                                      index: index, height: match.height,
+                                      isCoinbase: isCoinbase)
                 state.utxos.append(utxo)
                 receivedAmount += output.value
                 effect.received.append(utxo)
@@ -873,7 +895,7 @@ public actor Wallet {
         let sizingPayments = payments + silentPayments.map {
             Payment(amount: $0.amount, scriptPubKey: SilentPayment.sizingScriptPubKey)
         }
-        let selection = try CoinSelection.select(utxos: state.utxos, payments: sizingPayments,
+        let selection = try CoinSelection.select(utxos: spendableUtxos, payments: sizingPayments,
                                                  changeScriptPubKey: changeScript,
                                                  feeRateSatPerVByte: feeRateSatPerVByte)
         // Resolve silent payment outputs: the shared secrets commit to the

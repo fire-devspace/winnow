@@ -746,7 +746,7 @@ final class AppModel {
             payments.append(try Payment(amount: amount, address: trimmed, network: network))
         }
         let sizingPayments = payments + silentPayments.map { Payment(amount: $0.amount, scriptPubKey: sizing) }
-        let utxos = await wallet.utxos
+        let utxos = await wallet.spendableUtxos
         let changeScript = try await wallet.scriptPubKey(chain: .change, index: wallet.nextChangeIndex)
         let selection = try CoinSelection.select(utxos: utxos, payments: sizingPayments,
                                                  changeScriptPubKey: changeScript,

@@ -35,13 +35,14 @@ struct FullLoopDiffTests {
         _ = try await wallet.freshReceiveAddress()
         let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
 
-        // 2. Mine the funding block, then 100 maturity blocks (coinbase
-        //    maturity is 100): our coinbase becomes spendable at tip+101.
+        // 2. Mine the funding block, then 99 more blocks. The funding block
+        //    itself is confirmation one, so the coinbase is now at the exact
+        //    100-confirmation consensus maturity boundary.
         let burnScript = try BIP86.scriptPubKey(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/1")))
         let fundingHash = try await SignetMiner.mineOntoTip(payingTo: fundingScript)
         trace("funding block \(fundingHash.prefix(16))…")
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 99 {
             _ = try await SignetMiner.mineOntoTip(payingTo: burnScript)
         }
         let fundingBlock = try BitcoinCLI.runObject(["getblock", fundingHash])

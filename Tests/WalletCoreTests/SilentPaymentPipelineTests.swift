@@ -30,6 +30,7 @@ struct SilentPaymentPipelineTests {
             Transaction.Output(value: amounts.reduce(50_000, +), scriptPubKey: senderScript),
         ], locktime: 0)
         try await sender.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(sender, height: 100)
 
         let receiver = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
                                                entropy: testEntropy, creationHeight: 100)

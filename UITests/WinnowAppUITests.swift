@@ -192,8 +192,8 @@ final class WinnowAppUITests: XCTestCase {
             return
         }
 
-        // Fund it from the host: 101 blocks paying the receive address, so the
-        // first coinbase is spendable by the time the send test runs.
+        // Fund it from the host: 100 blocks total. The funding block is
+        // confirmation one, so 99 more reach the exact consensus boundary.
         let script = try AddressDecoder.scriptPubKey(for: address, network: .signet)
         let mineStart = Date()
         let firstHash = try await SignetMiner.mineOntoTip(payingTo: script)
@@ -206,10 +206,10 @@ final class WinnowAppUITests: XCTestCase {
                                      scriptPubKey: output.scriptPubKey,
                                      height: try BitcoinCLI.blockHeight(of: firstHash),
                                      index: fundingIndex))
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 99 {
             try await SignetMiner.mineOntoTip(payingTo: script)
         }
-        Timings.record("funding", step: "mine-101-blocks", from: mineStart)
+        Timings.record("funding", step: "mine-100-blocks", from: mineStart)
 
         // Filters see blocks, not the mempool: poll (nudging "Sync now")
         // until the confirmed balance shows.

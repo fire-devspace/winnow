@@ -1,6 +1,7 @@
 import BitcoinCore
 import BitcoinP2P
 import Foundation
+@testable import WalletCore
 
 /// Test doubles shared across WalletCoreTests.
 
@@ -38,6 +39,12 @@ func coinbaseInput() -> Transaction.Input {
     Transaction.Input(previousOutput: Transaction.Outpoint(txid: Data(repeating: 0, count: 32),
                                                            vout: 0xFFFF_FFFF),
                       scriptSig: Data([0x01]), sequence: 0xFFFF_FFFF)
+}
+
+/// After applying a coinbase at `height`, record a scan frontier that makes it
+/// consensus-mature (`Wallet.coinbaseMaturity` confirmations).
+func matureCoinbase(_ wallet: Wallet, height: UInt32) async throws {
+    try await wallet.recordScanHeight(height + Wallet.coinbaseMaturity)
 }
 
 /// A match carrying `transactions` at `height`, wrapped in a fake block.

@@ -149,6 +149,7 @@ struct WalletTests {
         }
         #expect(await wallet.balance == 230_000)
         #expect(await wallet.nextChangeIndex == 1) // funding to change 0 advanced it
+        try await matureCoinbase(wallet, height: 101)
 
         let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
         let built = try await wallet.send(payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -189,6 +190,41 @@ struct WalletTests {
         #expect(await wallet.utxos.allSatisfy { $0.height > 0 })
     }
 
+    @Test("coinbase outputs are credited immediately but not spendable until 100 confirmations")
+    func coinbaseMaturity() async throws {
+        let wallet = try await makeWallet()
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 150_000, scriptPubKey: script),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        #expect(await wallet.utxos.first?.isCoinbase == true)
+        #expect(await wallet.spendableUtxos.isEmpty)
+        #expect(await wallet.balance == 150_000)
+
+        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        await #expect(throws: CoinSelectionError.noUTXOs) {
+            try await wallet.buildSend(
+                payments: [Payment(amount: 100_000, scriptPubKey: destination)],
+                feeRateSatPerVByte: 2)
+        }
+
+        // 99 confirmations: still immature (tip 198 → 198-100+1 = 99).
+        try await wallet.recordScanHeight(199)
+        #expect(await wallet.spendableUtxos.isEmpty)
+        await #expect(throws: CoinSelectionError.noUTXOs) {
+            try await wallet.buildSend(
+                payments: [Payment(amount: 100_000, scriptPubKey: destination)],
+                feeRateSatPerVByte: 2)
+        }
+
+        try await matureCoinbase(wallet, height: 100)
+        #expect(await wallet.spendableUtxos.count == 1)
+        let built = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
+        #expect(built.built.transaction.inputs.count == 1)
+    }
+
     @Test("buildSend leaves wallet state untouched until commit (rollback safety)")
     func buildSendDefersCommit() async throws {
         let wallet = try await makeWallet()
@@ -197,6 +233,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: script),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let utxosBefore = await wallet.utxos.count
         let changeIndexBefore = await wallet.nextChangeIndex
 
@@ -227,6 +264,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
 
         let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
         let original = try await wallet.buildSend(
@@ -296,6 +334,7 @@ struct WalletTests {
             Transaction.Output(value: 100_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x88, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 99_778, scriptPubKey: destination)], feeRateSatPerVByte: 2)
@@ -319,6 +358,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x55, count: 32))
         let parent = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
@@ -353,6 +393,7 @@ struct WalletTests {
             Transaction.Output(value: 101_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -381,6 +422,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
@@ -413,6 +455,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2)
@@ -448,6 +491,7 @@ struct WalletTests {
             Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x44, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -485,6 +529,7 @@ struct WalletTests {
             Transaction.Output(value: 80_000, scriptPubKey: fundingScript),
         ], locktime: 0)
         try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await matureCoinbase(wallet, height: 100)
         let destination = Data([0x51, 0x20] + repeatElement(0x33, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 120_000, scriptPubKey: destination)],

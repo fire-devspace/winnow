@@ -484,6 +484,11 @@ struct ImportBundleTests {
     @Test("export refuses a pending send — parent inputs would vanish from a restore")
     func exportRefusesPendingSend() async throws {
         let wallet = try await fundedWallet()
+        try await matureCoinbase(wallet, height: 100)
+        let matureBundle = try await wallet.exportBundle()
+        #expect(matureBundle.utxos.first?.isCoinbase == true)
+        let restored = try Wallet.importing(matureBundle, keyStore: InMemoryKeyStore())
+        #expect(await restored.utxos.first?.isCoinbase == true)
         let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
         let built = try await wallet.send(
             payments: [Payment(amount: 50_000, scriptPubKey: destination)],

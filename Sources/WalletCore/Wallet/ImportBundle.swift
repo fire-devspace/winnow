@@ -55,6 +55,8 @@ private final class EffectCollector: @unchecked Sendable {
 /// the bundle must also contain the mnemonic: a BIP86 descriptor has no BIP352
 /// spend key with which to validate or spend that output. Version 1 remains
 /// readable for ordinary descriptor UTXOs; writers always emit version 2.
+/// `isCoinbase` is emitted only when true so maturity survives export/import;
+/// older bundles omit it and decode it as false.
 ///
 /// With both descriptor and mnemonic present they must agree; with only a
 /// descriptor the import is watch-only (signing needs the secret). Scanning
@@ -74,10 +76,13 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         /// BIP352 t_k (with any label tweak folded in), encoded as 32-byte
         /// scalar hex. nil for descriptor-derived UTXOs and every v1 bundle.
         public var silentPaymentTweak: String?
+        /// True only for an output created by a coinbase transaction. Optional
+        /// so older bundles remain readable; absence means false.
+        public var isCoinbase: Bool?
 
         public init(txid: String, vout: UInt32, amount: Int64, scriptPubKey: String,
                     chain: Int, index: UInt32, height: UInt32,
-                    silentPaymentTweak: String? = nil) {
+                    silentPaymentTweak: String? = nil, isCoinbase: Bool? = nil) {
             self.txid = txid
             self.vout = vout
             self.amount = amount
@@ -86,6 +91,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             self.index = index
             self.height = height
             self.silentPaymentTweak = silentPaymentTweak
+            self.isCoinbase = isCoinbase
         }
     }
 
@@ -173,7 +179,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
                 UTXO(txid: utxo.txid.displayHex, vout: utxo.vout, amount: utxo.amount,
                      scriptPubKey: utxo.scriptPubKey.hex, chain: utxo.chain.rawValue,
                      index: utxo.index, height: utxo.height,
-                     silentPaymentTweak: utxo.silentPaymentTweak?.hex)
+                     silentPaymentTweak: utxo.silentPaymentTweak?.hex,
+                     isCoinbase: utxo.isCoinbase ? true : nil)
             },
             transactions: history.map { entry in
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
@@ -255,7 +262,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             }
             return WalletUTXO(txid: Data(txid.reversed()), vout: utxo.vout, amount: utxo.amount,
                               scriptPubKey: scriptPubKey, chain: chain, index: utxo.index,
-                              height: utxo.height, silentPaymentTweak: silentPaymentTweak)
+                              height: utxo.height, silentPaymentTweak: silentPaymentTweak,
+                              isCoinbase: utxo.isCoinbase ?? false)
         }
     }
 }
