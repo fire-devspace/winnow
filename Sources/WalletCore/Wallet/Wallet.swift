@@ -20,6 +20,11 @@ public enum WalletError: Error, Equatable, LocalizedError {
     /// validating and spending them requires the BIP352 key derived from the
     /// mnemonic, which the BIP86 descriptor does not contain.
     case silentPaymentExportRequiresMnemonic
+    /// A pending send has already removed the parent inputs from the UTXO
+    /// set. Exporting now would ship only the unconfirmed change — if the
+    /// send never confirms, a forward-only restore cannot see the original
+    /// coins (their confirmation height is behind `lastKnownHeight`).
+    case exportWhilePending
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +42,8 @@ public enum WalletError: Error, Equatable, LocalizedError {
             "This wallet has no recovery phrase to export — it was imported from an extended key, not a BIP39 mnemonic."
         case .silentPaymentExportRequiresMnemonic:
             "This wallet contains silent-payment funds. Include the recovery phrase so the exported bundle can validate and spend them."
+        case .exportWhilePending:
+            "Wait for pending transactions to confirm before exporting. A mid-send backup would drop the coins being spent."
         }
     }
 }
@@ -1286,6 +1293,13 @@ public actor Wallet {
     /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``
     /// rather than silently exporting a non-spendable "backup".
     public func exportBundle(includeMnemonic: Bool = false) throws -> ImportBundle {
+        // Commit already pulled the parent inputs out of `utxos`. A bundle
+        // written now would carry only height-0 change; a restore that
+        // scans forward from lastKnownHeight can never put those inputs
+        // back if the send fails to confirm.
+        if !state.pendingSends.isEmpty || state.utxos.contains(where: { $0.height == 0 }) {
+            throw WalletError.exportWhilePending
+        }
         if !includeMnemonic, state.utxos.contains(where: { $0.silentPaymentTweak != nil }) {
             throw WalletError.silentPaymentExportRequiresMnemonic
         }
@@ -1317,6 +1331,8 @@ public actor Wallet {
             lastKnownHeight: lastKnownHeight,
             utxos: state.utxos,
             history: state.history,
+            nextReceiveIndex: state.nextReceiveIndex,
+            nextChangeIndex: state.nextChangeIndex,
             mnemonic: mnemonic
         )
     }

@@ -559,7 +559,7 @@ final class AppModel {
         return report
     }
 
-    /// Live wallet as a v2 import-bundle JSON string (docs/import.md).
+    /// Live wallet as a v2 import-bundle JSON string (docs/import.html).
     /// Watch-only unless `includeMnemonic` is set; an xprv-only wallet
     /// throws ``WalletError/mnemonicUnavailable`` rather than a fake seed.
     func exportWalletBundle(includeMnemonic: Bool) async throws -> String {

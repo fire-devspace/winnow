@@ -34,6 +34,8 @@ private final class EffectCollector: @unchecked Sendable {
 ///       "descriptor": "tr([fp/86'/1'/0']tpub…/<0;1>/*)#checksum",  // optional w/ mnemonic
 ///       "mnemonic": "word …",                 // optional w/ descriptor; enables spending
 ///       "lastKnownHeight": 150000,            // state below is claimed as of this height
+///       "nextReceiveIndex": 4,                // optional; next unused BIP86 receive index
+///       "nextChangeIndex": 2,                 // optional; next unused BIP86 change index
 ///       "utxos": [{ "txid": "<display hex>", "vout": 0, "amount": 50000,
 ///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000,
 ///                   "silentPaymentTweak": "<32-byte scalar hex>" }],
@@ -131,10 +133,17 @@ public struct ImportBundle: Codable, Equatable, Sendable {
     public var lastKnownHeight: UInt32
     public var utxos: [UTXO]
     public var transactions: [KnownTransaction]
+    /// Next unused BIP86 receive index. Absent from v1 files and from
+    /// writers that only knew UTXO-derived maxima; the importer then
+    /// falls back to `max(receive UTXO index) + 1`.
+    public var nextReceiveIndex: UInt32?
+    /// Next unused BIP86 change index. Same fallback as `nextReceiveIndex`.
+    public var nextChangeIndex: UInt32?
 
     public init(version: Int = ImportBundle.currentVersion, network: String,
                 descriptor: String? = nil, mnemonic: String? = nil,
-                lastKnownHeight: UInt32, utxos: [UTXO] = [], transactions: [KnownTransaction] = []) {
+                lastKnownHeight: UInt32, utxos: [UTXO] = [], transactions: [KnownTransaction] = [],
+                nextReceiveIndex: UInt32? = nil, nextChangeIndex: UInt32? = nil) {
         self.version = version
         self.network = network
         self.descriptor = descriptor
@@ -142,12 +151,15 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         self.lastKnownHeight = lastKnownHeight
         self.utxos = utxos
         self.transactions = transactions
+        self.nextReceiveIndex = nextReceiveIndex
+        self.nextChangeIndex = nextChangeIndex
     }
 
     /// Writer for the documented v2 schema. Txids go out as display hex —
     /// the same convention `claimedUTXOs()` reverses on the way back in.
     public static func export(descriptor: String, network: String, lastKnownHeight: UInt32,
                               utxos: [WalletUTXO], history: [HistoryEntry],
+                              nextReceiveIndex: UInt32, nextChangeIndex: UInt32,
                               mnemonic: String? = nil) throws -> ImportBundle {
         if mnemonic == nil, utxos.contains(where: { $0.silentPaymentTweak != nil }) {
             throw WalletError.silentPaymentExportRequiresMnemonic
@@ -167,7 +179,9 @@ public struct ImportBundle: Codable, Equatable, Sendable {
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
                                  received: entry.received, spent: entry.spent, fee: entry.fee,
                                  replacedBy: entry.replacedBy?.displayHex)
-            }
+            },
+            nextReceiveIndex: nextReceiveIndex,
+            nextChangeIndex: nextChangeIndex
         )
     }
 
@@ -197,6 +211,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, network, descriptor, mnemonic, lastKnownHeight, utxos, transactions
+        case nextReceiveIndex, nextChangeIndex
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -208,6 +223,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         try container.encode(lastKnownHeight, forKey: .lastKnownHeight)
         try container.encode(utxos, forKey: .utxos)
         try container.encode(transactions, forKey: .transactions)
+        try container.encodeIfPresent(nextReceiveIndex, forKey: .nextReceiveIndex)
+        try container.encodeIfPresent(nextChangeIndex, forKey: .nextChangeIndex)
     }
 
     /// The bundle's claimed UTXOs in wallet form.
@@ -417,16 +434,21 @@ extension Wallet {
                                 replacedBy: replacedBy)
         }
 
+        let fromReceiveUTXOs = (utxos.filter {
+            $0.silentPaymentTweak == nil && $0.chain == .receive
+        }.map(\.index).max().map { $0 + 1 }) ?? 0
+        let fromChangeUTXOs = (utxos.filter {
+            $0.silentPaymentTweak == nil && $0.chain == .change
+        }.map(\.index).max().map { $0 + 1 }) ?? 0
+        // Prefer the exported cursor so a spent-out restore does not
+        // reissue address 0. Never go below the UTXO-derived floor — a
+        // tampered-low cursor would otherwise reuse a live coin's address.
         let state = WalletState(
             descriptor: descriptor.serialized(),
             network: network.rawValue,
             creationHeight: bundle.lastKnownHeight,
-            nextReceiveIndex: (utxos.filter {
-                $0.silentPaymentTweak == nil && $0.chain == .receive
-            }.map(\.index).max().map { $0 + 1 }) ?? 0,
-            nextChangeIndex: (utxos.filter {
-                $0.silentPaymentTweak == nil && $0.chain == .change
-            }.map(\.index).max().map { $0 + 1 }) ?? 0,
+            nextReceiveIndex: max(bundle.nextReceiveIndex ?? 0, fromReceiveUTXOs),
+            nextChangeIndex: max(bundle.nextChangeIndex ?? 0, fromChangeUTXOs),
             nextScanHeight: bundle.lastKnownHeight + 1,
             utxos: utxos,
             history: history

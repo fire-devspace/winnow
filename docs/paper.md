@@ -363,6 +363,10 @@ chosen backup process.
 On import, the replacement phone validates the bundle, reconstructs wallet
 state, and verifies forward. The public-signet story matched balance, UTXO
 count, history, replacement links, scan height, and peer connectivity.
+Export is refused while a send is still pending: the parent inputs have
+already left the UTXO set, and a forward-only restore cannot recover them
+if the send never confirms. The bundle records the next unused receive and
+change indices so a spent-out restore does not reissue address zero.
 
 Public automation excludes mnemonics, entropy, private keys, secret nonces, and
 unredacted recovery screens. Any export must be protected according to the

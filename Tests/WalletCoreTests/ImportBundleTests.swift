@@ -215,6 +215,8 @@ struct ImportBundleTests {
         #expect(await restored.history[0].received == 200_000)
         #expect(await restored.nextScanHeight == 100)
         #expect(await restored.creationHeight == 99)
+        #expect(bundle.nextReceiveIndex == 1)
+        #expect(await restored.nextReceiveIndex == 1)
         // Watch-only import must not invent a seed.
         let emptyStore = InMemoryKeyStore()
         _ = try Wallet.importing(parsed, keyStore: emptyStore)
@@ -477,5 +479,53 @@ struct ImportBundleTests {
         // Watch-only JSON is unchanged (no mnemonic key to redact).
         let watch = try await original.exportBundle().serialized()
         #expect(ImportBundle.redactedPreview(watch) == watch)
+    }
+
+    @Test("export refuses a pending send — parent inputs would vanish from a restore")
+    func exportRefusesPendingSend() async throws {
+        let wallet = try await fundedWallet()
+        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let built = try await wallet.send(
+            payments: [Payment(amount: 50_000, scriptPubKey: destination)],
+            feeRateSatPerVByte: 2)
+        #expect(await wallet.utxos.contains(where: { $0.height == 0 }))
+        do {
+            _ = try await wallet.exportBundle()
+            Issue.record("expected WalletError.exportWhilePending")
+        } catch let error as WalletError {
+            #expect(error == .exportWhilePending)
+        }
+        try await wallet.apply(match: fakeMatch(height: 101, transactions: [built.transaction]))
+        let bundle = try await wallet.exportBundle()
+        #expect(bundle.utxos.allSatisfy { $0.height > 0 })
+        #expect(bundle.nextChangeIndex == 1)
+    }
+
+    @Test("export carries derivation indices so a spent-out restore does not reuse addresses")
+    func exportPreservesDerivationIndices() async throws {
+        let original = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
+                                               entropy: testEntropy, creationHeight: 100)
+        _ = try await original.freshReceiveAddress()
+        _ = try await original.freshReceiveAddress()
+        #expect(await original.nextReceiveIndex == 2)
+        #expect(await original.utxos.isEmpty)
+
+        let bundle = try await original.exportBundle()
+        #expect(bundle.nextReceiveIndex == 2)
+        #expect(bundle.nextChangeIndex == 0)
+        #expect(bundle.utxos.isEmpty)
+
+        let restored = try Wallet.importing(bundle, keyStore: InMemoryKeyStore())
+        #expect(await restored.nextReceiveIndex == 2)
+        #expect(try await restored.address(chain: .receive, index: 2)
+                    == (try await original.address(chain: .receive, index: 2)))
+
+        // Older files without the keys still decode; the importer then uses
+        // the UTXO-derived floor (0 here — nothing claimed).
+        var legacy = bundle
+        legacy.nextReceiveIndex = nil
+        legacy.nextChangeIndex = nil
+        let old = try Wallet.importing(legacy, keyStore: InMemoryKeyStore())
+        #expect(await old.nextReceiveIndex == 0)
     }
 }

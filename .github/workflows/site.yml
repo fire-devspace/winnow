@@ -1,9 +1,11 @@
 name: Site
 
-# Deploys docs/ to Cloudflare Pages. No build step — docs/ is hand-written HTML.
-#   push to main / workflow_dispatch → production (winnowwallet.com)
-#   pull request                     → per-PR preview, never the live domain
-# Requires repo secrets: CF_API_TOKEN (Account → Cloudflare Pages: Edit),
+# Deploys docs/ to Cloudflare Pages.
+#   push to main  -> production (winnowwallet.com)
+#   pull request  -> a per-PR preview URL, commented on the PR
+#
+# docs/ is hand-written HTML with no build step. Do not add one.
+# Requires repo secrets: CF_API_TOKEN (Account -> Cloudflare Pages: Edit),
 # CF_ACCOUNT_ID. Project name: winnow. Custom domain: winnowwallet.com.
 on:
   workflow_dispatch:
@@ -16,22 +18,21 @@ on:
 permissions:
   contents: read
 
-# A second push to the same PR supersedes the previous preview.
+# Serialise deploys. Without this, merging several PRs in a row races their
+# deploys and the last one to *finish* wins even if it carries an older tree --
+# which is how production silently lost a paragraph on 2026-08-19.
 concurrency:
   group: site-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # -- production ----------------------------------------------
   deploy:
+    # Never on pull_request: this job publishes to the live domain.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: docs
       - name: Deploy docs/ to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -39,25 +40,21 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: pages deploy docs --project-name=winnow --branch=main
 
+  # -- per-PR preview ------------------------------------------
   preview:
-    # Fork PRs cannot read CF_API_TOKEN; skip instead of failing opaquely.
+    # Fork PRs cannot read CF_API_TOKEN, so skip instead of failing opaquely.
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: docs
 
-      # Any --branch other than main is a Cloudflare preview: it never
-      # touches the production domain.
+      # Any --branch other than main is a Cloudflare *preview* deployment:
+      # it never touches the production domain.
       - name: Deploy preview to Cloudflare Pages
         id: cf
         uses: cloudflare/wrangler-action@v3
@@ -77,17 +74,17 @@ jobs:
         with:
           script: |
             const marker = '<!-- site-preview -->';
-            // Derive the Pages apex from the deployment URL. The project
-            // subdomain is winnow-avs, not winnow, so a guessed
-            // "<pr>.winnow.pages.dev" 404s.
+            // Derive the branch alias from the deployment URL rather than
+            // hardcoding it: the Pages subdomain is winnow-avs, not winnow,
+            // so a guessed "<pr>.winnow.pages.dev" 404s.
             const url = process.env.URL || '';
             const apex = (url.match(/^https:\/\/[^.]+\.(.+)$/) || [])[1] || 'winnow-avs.pages.dev';
             const alias = `https://pr-${process.env.PR}.${apex}`;
-            const pages = ['/', '/architecture', '/present', '/paper.md', '/evidence', '/custody']
+            const pages = ['/', '/custody', '/architecture', '/present', '/paper.md', '/evidence']
               .map(p => `[\`${p}\`](${alias}${p})`).join(' · ');
             const body = [
               marker,
-              `### Site preview for \`${context.sha.slice(0, 7)}\``,
+              `### 🔎 Site preview for \`${context.sha.slice(0,7)}\``,
               '',
               `**Stable alias:** ${alias} — always the newest build of this PR.`,
               `**This build:** ${process.env.URL}`,
