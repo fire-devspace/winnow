@@ -170,6 +170,37 @@ struct SilentPaymentReceiveFlowTests {
             .isValid(signature, for: &message))
     }
 
+    @Test("known silent-payment UTXOs join the filter watch list so spends are fetched")
+    func silentPaymentUTXOIsWatchedForSpends() async throws {
+        let (wallet, script, _, storageURL) =
+            try await walletHoldingSilentPaymentUTXO(amount: 150_000, storagePrefix: "sp-watch")
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let watched = try await wallet.watchScripts()
+        #expect(watched.contains(script),
+                "BIP158 basic filters match prevout scripts; an unwatched SP output is a ghost UTXO")
+
+        // Same list after import: verifyImport / live sync both call watchScripts().
+        let bundle = try await wallet.exportBundle(includeMnemonic: true)
+        let imported = try Wallet.importing(bundle, keyStore: InMemoryKeyStore())
+        #expect(try await imported.watchScripts().contains(script))
+
+        // If the block *is* fetched, apply already drops the spent output.
+        // The watch-list bug is failing to fetch; this pins the second half.
+        let steal = Transaction(version: 2, inputs: [
+            Transaction.Input(previousOutput: Transaction.Outpoint(
+                txid: Data(repeating: 0xD2, count: 32), vout: 0),
+                              scriptSig: Data(), sequence: 0xFFFF_FFFD),
+        ], outputs: [
+            Transaction.Output(value: 149_000,
+                               scriptPubKey: Data([0x51, 0x20]) + Data(repeating: 0x11, count: 32)),
+        ], locktime: 0)
+        let effect = try await wallet.apply(match: fakeMatch(height: 102, transactions: [steal]))
+        #expect(effect.spent.count == 1)
+        #expect(await wallet.balance == 0)
+        #expect(await wallet.utxos.isEmpty)
+    }
+
     @Test("a silent-payment UTXO correctly keys a further silent-payment send")
     func silentPaymentInputFundsSilentPaymentSend() async throws {
         // Fabricate a matched output for the receiver: pick a tweak, then the

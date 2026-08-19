@@ -384,7 +384,10 @@ Taproot output.
 Receiving is harder on a phone. The recipient cannot query a BIP158 filter for
 one static script because each output is derived from sender inputs. The phone
 must first obtain or calculate transaction tweaks, derive candidate scripts,
-and only then test those candidates against ordinary compact filters.
+and only then test those candidates against ordinary compact filters. Once a
+match is credited, that output's script stays on the watch list: later spends
+appear in the same basic filter as the prevout scriptPubKey, and omitting it
+would leave a ghost UTXO that import verification also could not disprove.
 
 Downloading every block avoids an index but erases the bandwidth benefit of a
 mobile light client. The current JSON tweak fixture proves an algorithmic

@@ -558,9 +558,22 @@ public actor Wallet {
     }
 
     /// All watched scriptPubKeys: used indices plus the gap-limit lookahead
-    /// on both chains.
+    /// on both descriptor chains, unioned with every known UTXO script.
+    ///
+    /// Descriptor lookahead finds new BIP86 payments. Known UTXO scripts find
+    /// *spends* of coins we already hold — BIP158 basic filters include the
+    /// prevout scriptPubKey. Silent-payment outputs are not on the descriptor
+    /// chains, so omitting them lets a third-party spend (or a no-change send
+    /// that never confirms locally) pass the filter unnoticed: `apply` would
+    /// have removed the UTXO if the block had been fetched. Import
+    /// verification (`docs/import.md` §3) relies on this same list to put
+    /// claimed scripts in the filter stream.
     public func watchScripts() throws -> [Data] {
-        Array(try watchMap().keys)
+        var scripts = Set(try watchMap().keys)
+        for utxo in state.utxos {
+            scripts.insert(utxo.scriptPubKey)
+        }
+        return Array(scripts)
     }
 
     /// Watched scriptPubKey → owning (chain, index).

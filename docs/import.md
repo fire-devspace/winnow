@@ -76,7 +76,7 @@ Vaults are not in this bundle. A vault is a separate descriptor the user adds in
 
 ## 3. Verification
 
-`Wallet.importing` seeds state *exactly as the bundle claims*. That is intentional: the phone must be able to watch the claimed scripts in order to check them. `Wallet.verifyImport` then runs `FilterSync` from `lastKnownHeight + 1` and builds an `ImportReport`:
+`Wallet.importing` seeds state *exactly as the bundle claims*. That is intentional: the phone must be able to watch the claimed scripts in order to check them. Claimed silent-payment UTXOs are not BIP86 addresses, so `watchScripts()` unions every known UTXO script onto the descriptor gap window — BIP158 basic filters include the prevout scriptPubKey, and without that union a later spend would never fetch the block. `Wallet.verifyImport` then runs `FilterSync` from `lastKnownHeight + 1` and builds an `ImportReport`:
 
 | Field | Meaning |
 |-------|---------|
