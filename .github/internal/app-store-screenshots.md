@@ -1,6 +1,6 @@
 # App Store screenshot candidates
 
-The canonical UI suite was last captured on 2026-08-17 using an iPhone 17 Pro Max simulator. Every PNG in `screenshots/` is 1320 × 2868 pixels, the 6.9-inch portrait size.
+The canonical UI suite was last captured on 2026-08-17 using an iPhone 17 Pro Max simulator. Every PNG in `docs/screenshots/` is 1320 × 2868 pixels, the 6.9-inch portrait size.
 
 Use these six files, in this order, as the composition candidates for the final recapture:
 
@@ -21,4 +21,4 @@ Validation command:
 sips -g pixelWidth -g pixelHeight docs/screenshots/*.png
 ```
 
-The producing run executed 10 tests with zero failures. Its measured scenario timings are in `screenshots/timings.json`.
+The producing run executed 10 tests with zero failures. Its measured scenario timings are in [`docs/screenshots/timings.json`](../../docs/screenshots/timings.json).

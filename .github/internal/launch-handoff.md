@@ -6,7 +6,7 @@ Status recorded 2026-08-17. This is a handoff checkpoint, not authorization to s
 
 - PR #36 is merged. Push and pull-request CI now runs only the package and app-build suites; both passed on the PR and again on `main`. Node-backed differential/UI E2E is manual-only and requires a dedicated `node-e2e` runner label, so it cannot fall back to a developer workstation. The former local custom-signet services and repository RPC credential were removed. Issue #35 is closed.
 - PR #37 is merged. Bundle v2 carries validated `silentPaymentTweak` recovery metadata, ordinary v1 bundles remain readable, and watch-only export refuses to create an incomplete backup when silent-payment funds are present. The rebased package suite passed 263 tests, app-build CI passed, and the recovery test signs and independently Schnorr-verifies a restored spend. Issue #19 is closed.
-- The 2026-08-17 iPhone 17 Pro Max / iOS 26.5 signet run passed all 10 UI tests and produced 22 screenshots at 1320 × 2868. The six composition candidates were visually inspected; none contains a mnemonic or development endpoint. See `app-store-screenshots.md`.
+- The 2026-08-17 iPhone 17 Pro Max / iOS 26.5 signet run passed all 10 UI tests and produced 22 screenshots at 1320 × 2868. The six composition candidates were visually inspected; none contains a mnemonic or development endpoint. See [`app-store-screenshots.md`](app-store-screenshots.md).
 - The uncontended UI mining sample completed 102 first-attempt tip wins with zero lost races. This supports the low-contention observation for #28 but does not replace the deliberately contended measurement required to close it.
 
 ## Optional node-backed CI

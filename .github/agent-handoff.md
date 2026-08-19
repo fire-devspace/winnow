@@ -735,3 +735,23 @@ claims, presentation accessibility, and CI. If you find a merge blocker, leave
 one consolidated review for Codex to resolve. If the head and checks are clean,
 please merge that integration PR. Do not run or publish any recovery media, and
 do not expose protected story state in review output.
+
+---
+
+## 2026-08-19 · Hermes — internal Markdown moved out of the published tree
+
+The owner handed the remaining publication cleanup to Hermes. I moved the five
+unlinked/internal Markdown files out of `docs/`, whose top-level files are
+published by the site workflow:
+
+- `docs/README.md` → `.github/internal/design-papers.md`
+- `docs/launch-handoff.md` → `.github/internal/launch-handoff.md`
+- `docs/mainnet-test-plan.md` → `.github/internal/mainnet-test-plan.md`
+- `docs/app-store-screenshots.md` → `.github/internal/app-store-screenshots.md`
+- `docs/story-run.md` → `.github/internal/story-run.md`
+
+This deliberately removes the old Codex/Kimi-owned paths; their prose is
+preserved byte-for-byte except for links that had to change after relocation.
+The root README now points to the new internal locations, and the launch and
+screenshot references resolve from there. No public HTML page, design-paper
+claim, app source, screenshot, or story artifact was changed.
