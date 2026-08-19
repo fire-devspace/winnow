@@ -97,8 +97,42 @@ public struct GCSFilter: Sendable, Equatable {
         return false
     }
 
+    /// BIP158 `MatchAny`: hash every query into the filter's range, sort once,
+    /// then walk the decoded set and the sorted queries together in a single
+    /// pass.
+    ///
+    /// The obvious spelling — `items.contains(where: contains)` — re-decodes
+    /// the whole Golomb-Rice stream from the first bit for *every* item. A
+    /// wallet watches its gap-limit lookahead on both chains plus every known
+    /// UTXO script, so that was tens of full decodes per block (#84). The
+    /// filter is delta-encoded in sorted order precisely so one pass suffices.
+    public func matchAny(_ items: [Data]) -> Bool {
+        guard n > 0, !items.isEmpty else { return false }
+
+        var targets = items.map(hashedValue)
+        targets.sort()
+
+        var reader = BitReader(encoded)
+        var value: UInt64 = 0
+        var index = 0
+        for _ in 0 ..< n {
+            var quotient: UInt64 = 0
+            while reader.read() == true { quotient += 1 }
+            var remainder: UInt64 = 0
+            for _ in 0 ..< p { remainder = (remainder << 1) | UInt64(reader.read() ? 1 : 0) }
+            value += (quotient << p) + remainder
+
+            // Advance past queries this set element has already overtaken;
+            // duplicates in `targets` collapse here for free.
+            while index < targets.count, targets[index] < value { index += 1 }
+            if index == targets.count { return false }
+            if targets[index] == value { return true }
+        }
+        return false
+    }
+
     public func containsAny(_ items: [Data]) -> Bool {
-        items.contains(where: contains)
+        matchAny(items)
     }
 
     /// BIP158 filter header chain: SHA256d(SHA256d(filter) || previousHeader).

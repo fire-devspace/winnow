@@ -474,15 +474,39 @@ final class AppModel {
 
     // MARK: - Wallet creation / import (onboarding)
 
-    /// Creates a fresh wallet immediately at the last locally validated header.
+    /// A fresh wallet has no history, so its birthday is "now" — there is
+    /// nothing to find before it exists. Anchoring to the *peer* tip rather
+    /// than the local header height is what makes that true in practice: on a
+    /// first launch headers have not synced yet, so `chain.height` is genesis,
+    /// and a birthday of 0 sends filter scanning through the entire chain
+    /// looking for a descriptor generated seconds ago.
+    ///
+    /// Scanning still starts at or below the tip, so a payment made while the
+    /// user is writing down the phrase is covered.
+    private func creationHeightForNewWallet() async -> UInt32 {
+        guard let stack else { return 0 }
+        let local = await stack.chain.height
+        var advertised: UInt32 = 0
+        for peer in await stack.pool.connectedPeers() {
+            let height = await peer.peerStartHeight
+            if height > 0, UInt32(height) > advertised { advertised = UInt32(height) }
+        }
+        // Back off a little: peers can advertise a tip we would reorg away
+        // from, and rescanning a few hundred blocks is cheap insurance.
+        let margin: UInt32 = 500
+        let peerBirthday = advertised > margin ? advertised - margin : 0
+        // Never go backwards from what we have already validated locally, and
+        // fall back to it entirely when no peer has advertised a height yet.
+        return max(local, peerBirthday)
+    }
+
+    /// Creates a fresh wallet immediately, dated at the current chain tip.
     /// Peer/header catch-up continues through the regular sync loop while the
-    /// user backs up the phrase. Starting at the known height (rather than
-    /// jumping to the eventual peer tip) keeps the race safe: any payment made
-    /// while onboarding is visible will still be covered by filter scanning.
+    /// user backs up the phrase.
     func createWallet() async throws -> String {
         await buildStackIfNeeded()
         guard let stack else { throw AppError.noStack }
-        let knownHeight = await stack.chain.height
+        let knownHeight = await creationHeightForNewWallet()
         guard let walletURL = walletURL() else { throw AppError.noWallet }
         let wallet = try Wallet.create(network: network, keyStore: keyStore,
                                        storageURL: walletURL, entropy: e2e?.entropy,

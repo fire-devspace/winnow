@@ -79,3 +79,67 @@ struct BIP158Tests {
         #expect(!filter.contains(Data([0x51])))
     }
 }
+
+/// `matchAny` replaced a per-item full decode with a single sorted merge pass
+/// (#84). The algorithms must agree exactly, including on the awkward cases:
+/// duplicates, queries either side of every set element, and empty inputs.
+@Suite("GCS matchAny agrees with per-item contains")
+struct GCSMatchAnyTests {
+    /// Deterministic pseudo-random bytes so a failure is reproducible.
+    private func bytes(_ seed: inout UInt64, count: Int) -> Data {
+        var out = Data(capacity: count)
+        for _ in 0 ..< count {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            out.append(UInt8((seed >> 33) & 0xFF))
+        }
+        return out
+    }
+
+    @Test("matches per-item contains across filter and query sizes")
+    func agreesWithContains() throws {
+        var seed: UInt64 = 0x5EED_1158
+        let key = Data((0 ..< 16).map { UInt8($0) })
+
+        for setSize in [1, 2, 7, 64, 400] {
+            let members = (0 ..< setSize).map { _ in bytes(&seed, count: 32) }
+            let filter = try GCSFilter(items: members, key: key)
+
+            for querySize in [0, 1, 3, 40] {
+                // A mix of real members and values that are not in the set.
+                var queries = (0 ..< querySize).map { _ in bytes(&seed, count: 32) }
+                let expectedMiss = filter.matchAny(queries)
+                #expect(expectedMiss == queries.contains(where: filter.contains),
+                        "miss case disagreed: set=\(setSize) queries=\(querySize)")
+
+                if let member = members.first, querySize > 0 {
+                    queries[querySize / 2] = member
+                    #expect(filter.matchAny(queries) == true)
+                    #expect(filter.matchAny(queries) == queries.contains(where: filter.contains))
+                }
+            }
+
+            // Every member individually, and all members at once.
+            for member in members {
+                #expect(filter.matchAny([member]) == true)
+                #expect(filter.matchAny([member]) == filter.contains(member))
+            }
+            #expect(filter.matchAny(members) == true)
+
+            // Duplicates must not change the answer.
+            if let member = members.first {
+                #expect(filter.matchAny([member, member, member]) == true)
+            }
+        }
+    }
+
+    @Test("empty query and empty filter both answer false")
+    func emptyEdges() throws {
+        let key = Data((0 ..< 16).map { UInt8($0) })
+        let empty = try GCSFilter(items: [], key: key)
+        #expect(empty.matchAny([Data([1, 2, 3])]) == false)
+
+        let populated = try GCSFilter(items: [Data([9, 9, 9])], key: key)
+        #expect(populated.matchAny([]) == false)
+        #expect(populated.matchAny([Data([9, 9, 9])]) == true)
+    }
+}

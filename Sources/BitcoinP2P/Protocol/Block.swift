@@ -4,12 +4,21 @@ import Foundation
 public struct BlockHeader: Equatable, Sendable {
     public static let serializedSize = 80
 
-    public var version: Int32
-    public var previousHash: Data // 32 bytes, internal order
-    public var merkleRoot: Data // 32 bytes, internal order
-    public var time: UInt32
-    public var bits: UInt32
-    public var nonce: UInt32
+    public let version: Int32
+    public let previousHash: Data // 32 bytes, internal order
+    public let merkleRoot: Data // 32 bytes, internal order
+    public let time: UInt32
+    public let bits: UInt32
+    public let nonce: UInt32
+
+    /// Block hash (SHA256d of the 80-byte header), internal byte order.
+    ///
+    /// Stored rather than computed. A header never changes after construction,
+    /// and `hash` sits in the hottest loops in the client: proof-of-work
+    /// checks, chain indexing and block locators all ask for it repeatedly.
+    /// Recomputing it there meant hundreds of millions of double-SHA256s over
+    /// a mainnet sync (#86).
+    public let hash: Data
 
     public init(version: Int32, previousHash: Data, merkleRoot: Data, time: UInt32, bits: UInt32, nonce: UInt32) {
         precondition(previousHash.count == 32 && merkleRoot.count == 32)
@@ -19,6 +28,15 @@ public struct BlockHeader: Equatable, Sendable {
         self.time = time
         self.bits = bits
         self.nonce = nonce
+        var serialized = Data()
+        serialized.reserveCapacity(Self.serializedSize)
+        serialized.appendInt32(version)
+        serialized.append(previousHash)
+        serialized.append(merkleRoot)
+        serialized.appendUInt32(time)
+        serialized.appendUInt32(bits)
+        serialized.appendUInt32(nonce)
+        hash = SHA256d.hash(serialized)
     }
 
     public var serialized: Data {
@@ -32,9 +50,6 @@ public struct BlockHeader: Equatable, Sendable {
         data.appendUInt32(nonce)
         return data
     }
-
-    /// Block hash (SHA256d of the 80-byte header), internal byte order.
-    public var hash: Data { SHA256d.hash(serialized) }
 
     public static func decode(from reader: inout ByteReader) throws -> BlockHeader {
         BlockHeader(version: try reader.readInt32(),

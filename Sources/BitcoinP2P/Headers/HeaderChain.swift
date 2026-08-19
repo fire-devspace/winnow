@@ -153,6 +153,38 @@ public actor HeaderChain {
             throw HeaderChainError.doesNotConnect
         }
 
+        // Fast path: extending the tip, which is every batch of an ordinary
+        // sync. The staged path below copies both arrays and rebuilds the
+        // whole hash index, so its cost grows with the chain — 460 batches
+        // against mainnet meant hundreds of millions of redundant operations
+        // (#86). An append touches only the new headers.
+        if Int(forkHeight) == headers.count - 1 {
+            var previousHash = headers[headers.count - 1].hash
+            var work = chainwork[chainwork.count - 1]
+            var appended: [BlockHeader] = []
+            var appendedWork: [UInt256] = []
+            appended.reserveCapacity(newHeaders.count)
+            appendedWork.reserveCapacity(newHeaders.count)
+            for header in newHeaders {
+                let height = UInt32(headers.count + appended.count)
+                guard header.previousHash == previousHash else {
+                    throw HeaderChainError.doesNotConnect
+                }
+                work = work + (try Self.checkedWork(for: header, params: params, height: height))
+                appended.append(header)
+                appendedWork.append(work)
+                previousHash = header.hash
+            }
+            let base = headers.count
+            headers.append(contentsOf: appended)
+            chainwork.append(contentsOf: appendedWork)
+            for (offset, header) in appended.enumerated() {
+                heightByHash[header.hash] = UInt32(base + offset)
+            }
+            try persist()
+            return newHeaders.count
+        }
+
         var stagedHeaders = Array(headers[...Int(forkHeight)])
         var stagedWork = Array(chainwork[...Int(forkHeight)])
         for header in newHeaders {
