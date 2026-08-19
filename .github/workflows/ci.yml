@@ -1,9 +1,19 @@
 name: CI
 
+# Webpage-only changes (docs/**) skip this workflow. They run Site instead:
+# .github/workflows/site.yml — checkout + Cloudflare Pages, no Swift/Xcode.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - ".github/workflows/site.yml"
+      - ".github/agent-handoff.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - ".github/workflows/site.yml"
+      - ".github/agent-handoff.md"
 
 jobs:
   package-tests:
