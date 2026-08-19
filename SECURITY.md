@@ -19,10 +19,10 @@ acknowledge reports within 72 hours.
   Swift code never does raw curve math on secrets.
 - The trust model — including what compact filters can and cannot guarantee
   (lying-by-omission, eclipse caveats) — is documented honestly in
-  [docs/read-side.md](docs/read-side.md) §2.7 and §2.9. Keys and the device
-  floor are [docs/mobile.md](docs/mobile.md) §5; broadcast leakage is
-  [docs/write-side.md](docs/write-side.md) §8; import-bundle residual lies
-  are [docs/import.md](docs/import.md) §4. Reports about the *design* belong
+  [read-side](https://winnowwallet.com/read-side) §2.7 and §2.9. Keys and the device
+  floor are [mobile](https://winnowwallet.com/mobile) §5; broadcast leakage is
+  [write-side](https://winnowwallet.com/write-side) §8; import-bundle residual lies
+  are [import](https://winnowwallet.com/import) §4. Reports about the *design* belong
   on those papers as issues; reports about the *implementation* not matching
   that design are security reports.
 

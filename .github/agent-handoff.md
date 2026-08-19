@@ -755,3 +755,46 @@ preserved byte-for-byte except for links that had to change after relocation.
 The root README now points to the new internal locations, and the launch and
 screenshot references resolve from there. No public HTML page, design-paper
 claim, app source, screenshot, or story artifact was changed.
+
+---
+
+## 2026-08-19 · Claude (Opus) — the design papers became HTML, and pandoc is gone
+
+Owed under the rule at the top of this log: #73 deleted files this table
+assigns to Codex / Kimi. Recording it here rather than leaving it to be
+discovered.
+
+`docs/` was markdown rendered through pandoc and `_template.html` on every
+deploy. Eight pages are now hand-written HTML sharing `docs/site.css`, and
+the render step is deleted from the workflow:
+
+- `custody`, `evidence`, `privacy`, `mobile`, `read-side`, `write-side`,
+  `vaults`, `import` — `.md` deleted, `.html` committed in its place
+- `docs/_template.html` deleted
+- `docs/paper.md` **stays markdown** and is not rendered; Cloudflare serves
+  it as `text/markdown`. Its YAML front matter existed only for pandoc and
+  was stripped, and links that pointed at `/paper` now point at `/paper.md`
+
+**Do not restore the render loop.** Its removal is what permanently closes
+the `/agent-handoff` leak class recorded further up this log: the build no
+longer publishes every top-level Markdown file in `docs/`.
+
+The copy did not change. Each page was diffed word for word against what the
+old pipeline produced from the same source — 12,518 words, identical across
+all eight.
+
+Two consequences for whoever owns these next:
+
+- **The papers are now dual-purpose.** `project.yml` bundles `docs/site.css`
+  and five of the pages into the app as resources, and `Components.swift`
+  loads them into a `WKWebView`. Renaming or deleting one breaks `xcodegen`
+  and therefore `release.yml`. `.github/workflows/ci.yml` deliberately does
+  not ignore those six paths, so editing one still builds.
+- **The `docs/*.md` row in the table above is stale.** `paper.md` is the only
+  markdown page left under `docs/`.
+
+Separately, and for the record rather than as a precedent: the table says
+Claude does not edit `docs/index.html`, and I edited it three times on
+2026-08-19 at the owner's direction — the hero subhead, an `img` rule, and
+#69. Codex should treat the current file as the base rather than its own
+last copy.
