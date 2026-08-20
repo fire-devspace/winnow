@@ -22,6 +22,12 @@ PUBLIC_LINK_ID="${TESTFLIGHT_PUBLIC_LINK_ID:-83djpNE7}"
 WHATS_NEW_FILE="${TESTFLIGHT_WHATS_NEW_FILE:-docs/testflight-what-to-test.txt}"
 EXPECTED_BUILD_NUMBER="${TESTFLIGHT_BUILD_NUMBER:-}"
 EXPECTED_MARKETING_VERSION="${TESTFLIGHT_MARKETING_VERSION:-}"
+# How long to wait for an uploaded build to become visible in App Store
+# Connect. This is Apple's ingest queue, not our processing wait, and it is
+# routinely slower than the five minutes this used to allow — v0.2.0's upload
+# succeeded and the release still failed here. Default: 30 minutes.
+BUILD_WAIT_ATTEMPTS="${TESTFLIGHT_BUILD_WAIT_ATTEMPTS:-90}"
+BUILD_WAIT_SECONDS="${TESTFLIGHT_BUILD_WAIT_SECONDS:-20}"
 
 jwt() { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift scripts/asc-jwt.swift "$KEY_PATH" "$KEY_ID" "$ISSUER"; }
 asc() { # asc <METHOD> <path> [json-body]
@@ -62,7 +68,7 @@ build_id() {
   if [ -n "$EXPECTED_BUILD_NUMBER" ] && [ -n "$EXPECTED_MARKETING_VERSION" ]; then
     local aid response id
     aid=$(app_id)
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 "$BUILD_WAIT_ATTEMPTS"); do
       response=$(asc GET "/builds?filter[app]=$aid&filter[version]=$EXPECTED_BUILD_NUMBER&filter[preReleaseVersion.version]=$EXPECTED_MARKETING_VERSION&limit=2")
       id=$(printf '%s' "$response" | python3 -c '
 import json, sys
@@ -75,8 +81,8 @@ print(rows[0]["id"] if rows else "")
         printf '%s\n' "$id"
         return
       fi
-      echo "waiting for uploaded version $EXPECTED_MARKETING_VERSION build $EXPECTED_BUILD_NUMBER to appear (attempt $attempt/30)" >&2
-      sleep 10
+      echo "waiting for uploaded version $EXPECTED_MARKETING_VERSION build $EXPECTED_BUILD_NUMBER to appear (attempt $attempt/$BUILD_WAIT_ATTEMPTS)" >&2
+      sleep "$BUILD_WAIT_SECONDS"
     done
     echo "uploaded version $EXPECTED_MARKETING_VERSION build $EXPECTED_BUILD_NUMBER never appeared" >&2
     return 1
