@@ -137,6 +137,10 @@ final class AppModel {
     private(set) var esploraURLString: String
     private(set) var spReceiveEnabled: Bool
     private(set) var spIndexURLString: String
+    /// Off by default: a fresh chain starts from the shipped checkpoint (#89).
+    /// On means re-derive every block's work from block 0, which is what the
+    /// app did before the checkpoint existed.
+    private(set) var verifyFromGenesis: Bool
 
     private var syncTask: Task<Void, Never>?
     private var phaseTask: Task<Void, Never>?
@@ -153,6 +157,7 @@ final class AppModel {
         static let esploraURL = "esploraURL"
         static let spReceiveEnabled = "spReceiveEnabled"
         static let spIndexURL = "spIndexURL"
+        static let verifyFromGenesis = "verifyFromGenesis"
         /// Set at wallet creation, cleared only by the backup sheet's
         /// confirmed Done — a relaunch in between resumes the backup.
         static func backupPending(_ walletID: String) -> String { "backupPending.\(walletID)" }
@@ -175,6 +180,7 @@ final class AppModel {
         manualPeers = defaults.stringArray(forKey: DefaultsKey.manualPeers) ?? []
         esploraURLString = defaults.string(forKey: DefaultsKey.esploraURL) ?? ""
         spReceiveEnabled = defaults.bool(forKey: DefaultsKey.spReceiveEnabled)
+        verifyFromGenesis = defaults.bool(forKey: DefaultsKey.verifyFromGenesis)
         spIndexURLString = defaults.string(forKey: DefaultsKey.spIndexURL) ?? ""
         // Test mode preconfigures the local node as the (only) manual peer;
         // custom signets have no DNS seeds.
@@ -349,8 +355,19 @@ final class AppModel {
             // header's linkage/work is intentionally CPU-heavy. Keep that
             // validation intact but off the MainActor so relaunching during
             // backup never freezes the onboarding sheet.
+            let start = await chainStart()
             let chain = try await Task.detached(priority: .userInitiated) {
-                try HeaderChain(params: params, storageURL: headersURL)
+                do {
+                    return try HeaderChain(params: params, storageURL: headersURL, start: start)
+                } catch let error as HeaderChainError {
+                    // The stored chain starts somewhere this setting does not
+                    // ask for — the user just changed the setting. The file is
+                    // not damaged, it simply answers the other question, so
+                    // rebuild rather than try to reconcile the two.
+                    guard case .startMismatch = error else { throw error }
+                    try? FileManager.default.removeItem(at: headersURL)
+                    return try HeaderChain(params: params, storageURL: headersURL, start: start)
+                }
             }.value
             let broadcaster = TxBroadcaster(pool: pool, storageURL: dir.appending(path: "broadcast.json"))
             var newStack = SyncStack(pool: pool, chain: chain, filters: nil, broadcaster: broadcaster)
@@ -362,6 +379,17 @@ final class AppModel {
         } catch {
             status.lastSyncError = error.localizedDescription
         }
+    }
+
+    /// Where the header chain should begin for the wallet we actually have.
+    /// The rule itself lives in `HeaderChain.Start.forWallet` so it can be
+    /// tested; this only supplies the wallet's birthday.
+    private func chainStart() async -> HeaderChain.Start {
+        var birthday: UInt32?
+        if let wallet { birthday = min(await wallet.creationHeight, await wallet.nextScanHeight) }
+        return .forWallet(birthday: birthday,
+                          checkpoint: NetworkParams.params(for: network).checkpoint,
+                          verifyFromGenesis: verifyFromGenesis)
     }
 
     private func makeFilterSync(pool: PeerPool, chain: HeaderChain, startHeight: UInt32) throws -> FilterSync {
@@ -622,9 +650,22 @@ final class AppModel {
         walletID = await wallet.id
         walletDescriptor = await wallet.descriptor
         if var stack {
-            stack.filters = try await makeFilterSync(pool: stack.pool, chain: stack.chain,
-                                                     startHeight: wallet.nextScanHeight)
-            self.stack = stack
+            // An imported wallet can be older than the chain we are holding —
+            // its filters live in blocks a checkpoint start skipped, and those
+            // filters are fetched by block hash, so they are simply not
+            // reachable. Drop the stack and rebuild from genesis rather than
+            // scan a range that cannot answer.
+            if await stack.chain.startHeight > (await wallet.nextScanHeight) {
+                syncTask?.cancel()
+                syncTask = nil
+                await stack.pool.stop()
+                self.stack = nil
+                await buildStackIfNeeded()
+            } else {
+                stack.filters = try await makeFilterSync(pool: stack.pool, chain: stack.chain,
+                                                         startHeight: wallet.nextScanHeight)
+                self.stack = stack
+            }
         }
         await refresh()
         if startSync, isActive { startSyncLoop() }
@@ -1038,6 +1079,19 @@ final class AppModel {
         stack = nil
         await activate()
         await refresh()
+    }
+
+    /// Switching where the chain starts cannot be applied to a chain already
+    /// on disk, so this tears the stack down and rebuilds it. Turning the
+    /// setting on discards the stored headers and re-derives from block 0,
+    /// which takes minutes; turning it off keeps them, since a chain validated
+    /// from genesis already satisfies anything a checkpoint start would claim.
+    func setVerifyFromGenesis(_ enabled: Bool) async {
+        guard enabled != verifyFromGenesis else { return }
+        verifyFromGenesis = enabled
+        defaults.set(enabled, forKey: DefaultsKey.verifyFromGenesis)
+        e2e?.journal("setting.verifyFromGenesis", fields: ["enabled": String(enabled)])
+        await reconnect()
     }
 
     func setSilentPaymentsEnabled(_ enabled: Bool) {

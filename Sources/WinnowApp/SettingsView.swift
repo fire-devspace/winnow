@@ -140,6 +140,23 @@ struct SettingsView: View {
                     Text("Experimental and off by default. Sending works without a service. Receiving currently needs per-block tweak data from a service you choose; ordinary Bitcoin compact-filter peers do not yet serve it. Matching and block verification remain on this device, but omitted tweak data can make Winnow miss a payment.")
                 }
 
+                Section {
+                    Toggle("Verify the chain from genesis", isOn: Binding(
+                        get: { model.verifyFromGenesis },
+                        set: { enabled in Task { await model.setVerifyFromGenesis(enabled) } }
+                    ))
+                    .accessibilityIdentifier("verifyFromGenesisToggle")
+                    if model.verifyFromGenesis {
+                        Text("Turning this off later keeps the chain you already verified.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Chain verification")
+                } footer: {
+                    Text("Winnow normally starts from a block header built into the app, then verifies every block after it. That header was produced by syncing this same code from block 0, and anyone can reproduce it — but on your phone it begins as a value you are taking from us rather than one you computed. Turn this on to skip it and re-derive the entire chain from block 0 instead. It downloads and proof-of-work-checks every header ever mined, which takes several minutes and discards the headers already stored.")
+                }
+
                 Section("Connected peers") {
                     ForEach(connectedPeers) { peer in
                         VStack(alignment: .leading, spacing: 2) {

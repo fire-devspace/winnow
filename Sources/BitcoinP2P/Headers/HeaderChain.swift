@@ -9,11 +9,18 @@ public enum HeaderChainError: LocalizedError, Equatable {
     case storageCorrupt(String)
     case storageUnavailable(String)
     case badPeerResponse(String)
+    /// The stored chain starts somewhere the caller did not ask for — turning
+    /// "verify from genesis" on with a checkpoint-rooted file, or the reverse.
+    /// The chain is not corrupt, it just answers a different question, so the
+    /// fix is to rebuild rather than to repair.
+    case startMismatch(stored: UInt32, wanted: UInt32)
 
     public var errorDescription: String? {
         switch self {
         case .doesNotConnect:
             "A peer sent block headers that do not connect to the known Bitcoin chain."
+        case let .startMismatch(stored, wanted):
+            "The stored chain starts at block \(stored) but this setting needs one starting at \(wanted)."
         case let .invalidTarget(height):
             "A peer sent an invalid proof-of-work target at block \(height)."
         case let .targetAbovePowLimit(height):
@@ -65,35 +72,101 @@ public actor HeaderChain {
     /// this type goes through it.
     private let baseHeight: UInt32
 
-    public init(params: NetworkParams, storageURL: URL? = nil) throws {
+    /// Where a fresh chain begins.
+    ///
+    /// `.genesis` re-derives every block's work from block 0, which is the
+    /// wallet's original guarantee and takes minutes on first launch.
+    /// `.checkpoint` starts from the constant in `NetworkParams`, which is
+    /// derived from a genesis sync and reproducible (#89) — but is, in the end,
+    /// a value shipped with the app rather than one the phone computed.
+    public enum Start: Sendable, Equatable {
+        case genesis
+        case checkpoint
+
+        /// Chooses where the chain should start for a given wallet.
+        ///
+        /// The checkpoint is a speed decision and must never become a
+        /// correctness one. Compact filters are fetched by block hash, so a
+        /// chain starting at the checkpoint cannot scan blocks below it — and a
+        /// wallet whose history begins earlier would report a balance missing
+        /// whatever it holds down there. Anything older than the checkpoint
+        /// therefore starts at genesis regardless of the setting.
+        ///
+        /// - Parameters:
+        ///   - walletBirthday: the lowest height whose filters the wallet still
+        ///     needs; nil when there is no wallet yet.
+        ///   - checkpoint: the network's checkpoint, if it ships one.
+        ///   - verifyFromGenesis: the user's setting.
+        public static func forWallet(birthday walletBirthday: UInt32?,
+                                     checkpoint: NetworkParams.Checkpoint?,
+                                     verifyFromGenesis: Bool) -> Start {
+            if verifyFromGenesis { return .genesis }
+            guard let checkpoint else { return .genesis }
+            guard let walletBirthday else { return .checkpoint }
+            return walletBirthday >= checkpoint.height ? .checkpoint : .genesis
+        }
+    }
+
+    public init(params: NetworkParams, storageURL: URL? = nil, start: Start = .genesis) throws {
         self.params = params
         self.storageURL = storageURL
-        let genesis = HeaderChain.genesisHeader(for: params)
-        headers = [genesis]
-        chainwork = [UInt256()]
-        heightByHash = [genesis.hash: 0]
-        baseHeight = 0
+        // A network without a checkpoint (signet, whose whole chain is small)
+        // starts at genesis whatever the setting says.
+        let checkpoint = start == .checkpoint ? params.checkpoint : nil
+
         if let storageURL, FileManager.default.fileExists(atPath: storageURL.path) {
+            let loaded: (headers: [BlockHeader], chainwork: [UInt256],
+                         heightByHash: [Data: UInt32], baseHeight: UInt32)
             do {
-                let loaded = try Self.load(from: storageURL, params: params)
-                guard loaded.baseHeight == 0 else {
-                    // Phase 1 only reads chains that start at genesis; a
-                    // checkpoint-based file is from a build this one cannot
-                    // interpret, and silently treating it as genesis-rooted
-                    // would corrupt every height.
-                    throw HeaderChainError.storageCorrupt(
-                        "header file starts at height \(loaded.baseHeight), which this build cannot read")
-                }
-                (headers, chainwork, heightByHash) = (loaded.headers, loaded.chainwork, loaded.heightByHash)
+                loaded = try Self.load(from: storageURL, params: params)
             } catch let error as HeaderChainError {
                 throw error
             } catch {
                 throw HeaderChainError.storageUnavailable(
                     "could not read the header file: \(error.localizedDescription)")
             }
+            try Self.checkStoredStart(loaded.baseHeight, headers: loaded.headers, wanted: checkpoint)
+            headers = loaded.headers
+            chainwork = loaded.chainwork
+            heightByHash = loaded.heightByHash
+            baseHeight = loaded.baseHeight
+        } else if let checkpoint {
+            let header = try BlockHeader.decode(checkpoint.header)
+            // PoW-check it like any other header. A checkpoint is a starting
+            // point, not an exemption.
+            _ = try Self.checkedWork(for: header, params: params, height: checkpoint.height)
+            headers = [header]
+            chainwork = [UInt256(bigEndian: checkpoint.chainwork)]
+            heightByHash = [header.hash: checkpoint.height]
+            baseHeight = checkpoint.height
         } else {
+            let genesis = HeaderChain.genesisHeader(for: params)
+            headers = [genesis]
             // Seed cumulative work for genesis.
             chainwork = [try Self.checkedWork(for: genesis, params: params, height: 0)]
+            heightByHash = [genesis.hash: 0]
+            baseHeight = 0
+        }
+    }
+
+    /// A stored chain answers exactly one question — "starting where?" — and
+    /// mixing the answers silently would misplace every height. Rather than
+    /// repair a file that is not damaged, say which start it holds and let the
+    /// caller rebuild.
+    ///
+    /// A genesis-rooted file is always accepted: it is strictly more validated
+    /// than a checkpoint start asks for, so a user who already synced from
+    /// genesis keeps their chain when the checkpoint default arrives.
+    private static func checkStoredStart(_ storedBase: UInt32, headers: [BlockHeader],
+                                         wanted: NetworkParams.Checkpoint?) throws {
+        if storedBase == 0 { return }
+        guard let wanted else {
+            throw HeaderChainError.startMismatch(stored: storedBase, wanted: 0)
+        }
+        guard storedBase == wanted.height, headers.first?.serialized == wanted.header else {
+            // Same height, different header means the file was written against
+            // a different checkpoint constant than this build ships.
+            throw HeaderChainError.startMismatch(stored: storedBase, wanted: wanted.height)
         }
     }
 
@@ -124,7 +197,8 @@ public actor HeaderChain {
     }
 
     /// Standard getheaders locator: the last 10 heights step 1, then
-    /// exponentially larger steps back, always ending at genesis.
+    /// exponentially larger steps back, ending at the first block this chain
+    /// holds — genesis, or the checkpoint when started from one.
     public func blockLocator() -> [Data] {
         var locator: [Data] = []
         var step = 1

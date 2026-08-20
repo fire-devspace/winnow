@@ -243,3 +243,162 @@ struct MainnetCheckpointTests {
         #expect(cp.height == 900_000)
     }
 }
+
+
+/// Starting the chain somewhere other than block 0, end to end (#89 phase 3).
+///
+/// These run everywhere: the only fixture is block 900,001's header, 80 bytes,
+/// which is enough to make a checkpoint-rooted chain do real work and write a
+/// real file. The full genesis-vs-checkpoint comparison needs a mainnet header
+/// file and lives in CheckpointAgreementTests.
+@Suite("Checkpoint start")
+struct CheckpointStartTests {
+    /// The block right after the shipped mainnet checkpoint.
+    /// 00000000000000000001a8ff030609a6248e0f6e77f9f141aeb21e4eac4f83fc
+    static let block900_001 = Data(hex:
+        "00e000208a96960d6d1ca4ee4a283fd83da309b8d5d2bfed380501000000000000000000"
+        + "371c9ffd63d75fb36c57d58eb842d23c0e7ec049daf16d94cc38805c346e9d52"
+        + "e880426874370217973dc83b")!
+
+    private func tempURL(_ name: String) -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "winnow-\(name).bin")
+        try? FileManager.default.removeItem(at: url)
+        return url
+    }
+
+    @Test("a fresh checkpoint-started chain begins at the checkpoint, not at zero")
+    func startsAtCheckpoint() async throws {
+        let params = NetworkParams.params(for: .mainnet)
+        let cp = try #require(params.checkpoint)
+        let chain = try HeaderChain(params: params, storageURL: nil, start: .checkpoint)
+        #expect(await chain.startHeight == cp.height)
+        #expect(await chain.height == cp.height)
+        #expect(await chain.tip.serialized == cp.header)
+        #expect(await chain.tipWork == cp.chainwork)
+        // It genuinely does not hold what it skipped — no silent zero-filling.
+        #expect(await chain.header(at: cp.height - 1) == nil)
+        #expect(await chain.header(at: 0) == nil)
+    }
+
+    @Test("the default is still genesis, so existing callers are unchanged")
+    func defaultIsGenesis() async throws {
+        let chain = try HeaderChain(params: .mainnet, storageURL: nil)
+        #expect(await chain.startHeight == 0)
+        #expect(await chain.height == 0)
+    }
+
+    @Test("a network with no checkpoint starts at genesis whatever the setting says")
+    func signetIgnoresTheSetting() async throws {
+        let chain = try HeaderChain(params: .signet, storageURL: nil, start: .checkpoint)
+        #expect(await chain.startHeight == 0)
+        #expect(await chain.tip == HeaderChain.genesisHeader(for: .signet))
+    }
+
+    @Test("a checkpoint-rooted chain connects real headers and reloads from its own file")
+    func roundTrip() async throws {
+        let params = NetworkParams.params(for: .mainnet)
+        let cp = try #require(params.checkpoint)
+        let url = tempURL("checkpoint-roundtrip")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let chain = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
+        let next = try BlockHeader.decode(Self.block900_001)
+        #expect(try await chain.connect([next]) == 1)
+        #expect(await chain.height == cp.height + 1)
+        let workAfter = await chain.tipWork
+
+        // Reopening must land on exactly the same chain — this is the format
+        // phase 1 added, now written and read by the same build.
+        let reopened = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
+        #expect(await reopened.startHeight == cp.height)
+        #expect(await reopened.height == cp.height + 1)
+        #expect(await reopened.tipHash == next.hash)
+        #expect(await reopened.tipWork == workAfter)
+        #expect(await reopened.blockHash(at: cp.height) == (await chain.blockHash(at: cp.height)))
+    }
+
+    @Test("turning verification on refuses the checkpoint-rooted file instead of misreading it")
+    func genesisRefusesCheckpointFile() async throws {
+        let params = NetworkParams.params(for: .mainnet)
+        let cp = try #require(params.checkpoint)
+        let url = tempURL("checkpoint-then-genesis")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let chain = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
+        #expect(try await chain.connect([try BlockHeader.decode(Self.block900_001)]) == 1)
+
+        // The file is not damaged; it just answers a different question. Saying
+        // so lets the app rebuild rather than treat block 900,000 as block 0.
+        #expect(throws: HeaderChainError.startMismatch(stored: cp.height, wanted: 0)) {
+            _ = try HeaderChain(params: params, storageURL: url, start: .genesis)
+        }
+    }
+
+    @Test("turning verification off keeps a chain that was already verified from genesis")
+    func checkpointAcceptsGenesisFile() async throws {
+        let params = NetworkParams.params(for: .signet)
+        let url = tempURL("genesis-then-checkpoint")
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Any genesis-rooted file will do; signet's is cheap to make.
+        let chain = try HeaderChain(params: params, storageURL: url, start: .genesis)
+        #expect(await chain.startHeight == 0)
+
+        // A chain validated from block 0 already satisfies everything a
+        // checkpoint start claims, so switching the setting must not throw it
+        // away and re-sync.
+        let reopened = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
+        #expect(await reopened.startHeight == 0)
+    }
+}
+
+
+/// Choosing where to start for a given wallet (#89 phase 3).
+///
+/// This is the rule that keeps a speed optimisation from becoming a wrong
+/// balance, so it is worth stating case by case.
+@Suite("Checkpoint start policy")
+struct CheckpointStartPolicyTests {
+    private let mainnet = NetworkParams.params(for: .mainnet).checkpoint
+    private var cpHeight: UInt32 { mainnet?.height ?? 0 }
+
+    @Test("no wallet yet: the checkpoint is free to use")
+    func noWallet() {
+        #expect(HeaderChain.Start.forWallet(birthday: nil, checkpoint: mainnet,
+                                            verifyFromGenesis: false) == .checkpoint)
+    }
+
+    @Test("a wallet born at or after the checkpoint keeps the fast path")
+    func modernWallet() {
+        #expect(HeaderChain.Start.forWallet(birthday: cpHeight, checkpoint: mainnet,
+                                            verifyFromGenesis: false) == .checkpoint)
+        #expect(HeaderChain.Start.forWallet(birthday: cpHeight + 50_000, checkpoint: mainnet,
+                                            verifyFromGenesis: false) == .checkpoint)
+    }
+
+    @Test("a wallet older than the checkpoint gets the whole chain, setting or not")
+    func olderWalletOverridesTheDefault() {
+        // The blocks holding its coins are below the checkpoint, and filters
+        // are fetched by block hash — a checkpoint-rooted chain simply cannot
+        // ask about them. Reporting a balance short by whatever is down there
+        // would be worse than a slow first launch.
+        #expect(HeaderChain.Start.forWallet(birthday: 0, checkpoint: mainnet,
+                                            verifyFromGenesis: false) == .genesis)
+        #expect(HeaderChain.Start.forWallet(birthday: cpHeight - 1, checkpoint: mainnet,
+                                            verifyFromGenesis: false) == .genesis)
+    }
+
+    @Test("the setting always wins toward more verification, never toward less")
+    func settingOnlyAddsWork() {
+        for birthday: UInt32? in [nil, 0, cpHeight, cpHeight + 1] {
+            #expect(HeaderChain.Start.forWallet(birthday: birthday, checkpoint: mainnet,
+                                                verifyFromGenesis: true) == .genesis)
+        }
+    }
+
+    @Test("a network with no checkpoint always starts at genesis")
+    func noCheckpoint() {
+        #expect(NetworkParams.params(for: .signet).checkpoint == nil)
+        #expect(HeaderChain.Start.forWallet(birthday: 900_000, checkpoint: nil,
+                                            verifyFromGenesis: false) == .genesis)
+    }
+}

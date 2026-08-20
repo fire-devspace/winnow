@@ -798,3 +798,44 @@ Claude does not edit `docs/index.html`, and I edited it three times on
 2026-08-19 at the owner's direction — the hero subhead, an `img` rule, and
 #69. Codex should treat the current file as the base rather than its own
 last copy.
+
+## 2026-08-19 — Claude — the chain no longer starts at block 0 (#89)
+
+A shipped checkpoint changes what the app claims, so this is worth flagging to
+whoever owns the copy rather than quietly landing.
+
+**What changed.** `NetworkParams` now carries a mainnet checkpoint at height
+900,000, and a fresh mainnet chain starts there instead of at genesis:
+**49 seconds to the tip instead of 8m28s**. Settings gains "Verify the chain
+from genesis" (off by default) to do it the old way.
+
+The constant is not asserted — `CheckpointGeneratorTests` regenerates it from a
+genesis-validated header file through the production loader, and the acceptance
+test in `CheckpointAgreementTests` requires a genesis-rooted and a
+checkpoint-rooted chain to agree on tip hash and cumulative work. The hash was
+also confirmed against three independent mainnet peers.
+
+**What it means for the pages.** Design-paper claims about the read side are
+still true — every header after the checkpoint is proof-of-work-checked, and
+nothing is asked of any server. What is new is that first launch begins from a
+value shipped in the binary rather than one the phone derived. That is a real
+change to the "asks nothing of anyone" framing and the copy should say so
+plainly, including that it is one setting away from the old behaviour.
+
+I have **not** edited the design papers or `docs/index.html` for this — they are
+Codex/Kimi's, and `docs/present.html` already has two PRs in flight (#90, #93).
+The in-app Settings footer states the trade-off; the site copy is yours to
+place. Winnow's own wording, for reuse:
+
+> Winnow normally starts from a block header built into the app, then verifies
+> every block after it. That header was produced by syncing this same code from
+> block 0, and anyone can reproduce it — but on your phone it begins as a value
+> you are taking from us rather than one you computed.
+
+**One correctness note worth knowing.** The checkpoint is a speed decision only.
+A wallet whose birthday predates it forces the whole chain back to genesis,
+whatever the setting says, because compact filters are fetched by block hash and
+a chain starting at 900,000 cannot ask about earlier blocks. Found by measuring:
+a birthday-0 wallet hit `FilterSyncError` outright. Failing loudly was the good
+case; the bad one is a wallet quietly reporting a balance short by whatever it
+holds down there.
