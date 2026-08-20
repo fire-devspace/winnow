@@ -29,11 +29,37 @@ public struct NetworkParams: Sendable, Equatable {
     /// see the per-network value's comment). Dialed alongside the DNS-seed
     /// results so a fresh launch works even when seed results are dead.
     public let fallbackPeers: [PeerEndpoint]
+    /// Optional trusted start for header sync (#89). Present only where
+    /// syncing from genesis is slow enough to matter, which today is mainnet.
+    public let checkpoint: Checkpoint?
+
+    /// A header far enough back to be settled, with the cumulative work of
+    /// everything before it — the one number that cannot be recomputed from a
+    /// chain that does not contain those headers.
+    ///
+    /// Starting here means trusting these bytes instead of deriving them.
+    /// Everything after the checkpoint is validated exactly as before, and the
+    /// constant is auditable: sync from genesis and compare.
+    public struct Checkpoint: Sendable, Equatable {
+        public let height: UInt32
+        /// The 80-byte header, serialized.
+        public let header: Data
+        /// Cumulative chainwork through `height`, big-endian.
+        public let chainwork: Data
+
+        public init(height: UInt32, header: Data, chainwork: Data) {
+            precondition(header.count == 80 && chainwork.count == 32)
+            self.height = height
+            self.header = header
+            self.chainwork = chainwork
+        }
+    }
 
     public init(network: BitcoinNetwork, magic: Data, defaultPort: UInt16,
                 genesisTime: UInt32, genesisBits: UInt32, genesisNonce: UInt32,
                 genesisMerkleRoot: Data, genesisHash: Data, powLimit: Data,
-                dnsSeeds: [String], fallbackPeers: [PeerEndpoint] = []) {
+                dnsSeeds: [String], fallbackPeers: [PeerEndpoint] = [],
+                checkpoint: Checkpoint? = nil) {
         self.network = network
         self.magic = magic
         self.defaultPort = defaultPort
@@ -44,6 +70,7 @@ public struct NetworkParams: Sendable, Equatable {
         self.genesisHash = genesisHash
         self.powLimit = powLimit
         self.dnsSeeds = dnsSeeds
+        self.checkpoint = checkpoint
         self.fallbackPeers = fallbackPeers
     }
 
@@ -149,7 +176,38 @@ public struct NetworkParams: Sendable, Equatable {
             PeerEndpoint(host: "65.109.145.24", port: 8_333),   // /Satoshi:23.0.0/
             PeerEndpoint(host: "46.126.48.170", port: 8_333),   // /Satoshi:29.2.0/
             PeerEndpoint(host: "168.119.10.30", port: 8_333),   // /Satoshi:29.0.0/
-        ]
+        ],
+        // Derived, not asserted. Winnow synced mainnet from genesis on
+        // 2026-08-19, proof-of-work-checking every one of the 900,001 headers
+        // up to this height, and emitted the three values below. The block hash
+        // was then confirmed against three independent mainnet peers, which all
+        // returned the same header for height 900,000.
+        //
+        // Taken from a chain of 963,233 headers whose tip was height 963,232,
+        // 000000000000000000016813353d83651497417cc705d1e2caf46a541e81deef.
+        //
+        // To reproduce, point the generator at a genesis-validated header file
+        // and it recomputes all three through the same loading path the app
+        // uses (`swift test --filter CheckpointGenerator`, with
+        // WINNOW_HEADERS_BIN set — see the test for what it does).
+        //
+        // Block 900,000 hash, display order:
+        //   000000000000000000010538edbfd2d5b809a33dd83f284aeea41c6d0d96968a
+        //
+        // Note the two hex spellings below are not interchangeable:
+        // `Data(hex:)` keeps byte order, `Data(displayHex:)` reverses it. The
+        // header is wire bytes and the chainwork is big-endian, so both take
+        // `hex:`; using `displayHex:` for the work would store it backwards and
+        // every fork-choice comparison against it would be meaningless.
+        checkpoint: Checkpoint(
+            height: 900_000,
+            header: Data(hex:
+                "00a0ab20247d4d9f582f9750344cdf62c46d81d046be9603409601000000000000000000"
+                + "70f96945530651135839d8adc3f40e595118ec74c7ad81a3d17bb022e554fb0c"
+                + "937f4268743702177ad05f92")!,
+            chainwork: Data(hex:
+                "0000000000000000000000000000000000000000c8bbeae4127a204b0317861c")!
+        )
     )
 
     public static let signet = NetworkParams(

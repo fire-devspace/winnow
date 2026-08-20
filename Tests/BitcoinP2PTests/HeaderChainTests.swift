@@ -181,3 +181,65 @@ struct HeaderChainTests {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
 }
+
+/// A shipped checkpoint is a constant someone has to trust, so it should be
+/// impossible to get wrong quietly. These are the checks that can run without
+/// the 900,000 headers it was derived from (#89).
+@Suite("Mainnet checkpoint")
+struct MainnetCheckpointTests {
+    private var checkpoint: NetworkParams.Checkpoint {
+        get throws {
+            guard let cp = NetworkParams.params(for: .mainnet).checkpoint else {
+                throw HeaderChainError.storageCorrupt("mainnet has no checkpoint")
+            }
+            return cp
+        }
+    }
+
+    @Test("the header is well formed and satisfies its own proof of work")
+    func headerIsValid() throws {
+        let cp = try checkpoint
+        let header = try BlockHeader.decode(cp.header)
+        #expect(cp.header.count == 80)
+        #expect(cp.chainwork.count == 32)
+
+        // The hash must clear the target the header itself claims. A typo in
+        // the bytes fails here rather than 900,000 blocks later.
+        let target = try #require(UInt256.target(compact: header.bits))
+        #expect(UInt256(littleEndian: header.hash) <= target)
+        #expect(target <= UInt256(littleEndian: NetworkParams.params(for: .mainnet).powLimit))
+    }
+
+    @Test("the hash matches the block recorded in the source comment")
+    func hashMatchesRecordedValue() throws {
+        let header = try BlockHeader.decode(try checkpoint.header)
+        // Display order is the reverse of internal order.
+        let display = Data(header.hash.reversed()).map { String(format: "%02x", $0) }.joined()
+        #expect(display == "000000000000000000010538edbfd2d5b809a33dd83f284aeea41c6d0d96968a")
+    }
+
+    @Test("cumulative work is plausible for the height and below the total supply of work")
+    func chainworkSane() throws {
+        let cp = try checkpoint
+        // Orientation first. `Data(hex:)` keeps byte order and
+        // `Data(displayHex:)` reverses it, and a reversed 32-byte chainwork is
+        // still enormous and still non-zero — so every plausibility check below
+        // passes just as happily on garbage. Pin the actual bytes: leading
+        // zeros at the front, the low-order byte at the end.
+        #expect(cp.chainwork.prefix(20).allSatisfy { $0 == 0 })
+        #expect(cp.chainwork.last == 0x1c)
+        #expect(cp.chainwork.map { String(format: "%02x", $0) }.joined()
+            == "0000000000000000000000000000000000000000c8bbeae4127a204b0317861c")
+
+        let work = UInt256(bigEndian: cp.chainwork)
+        // Non-zero, and far above the work of any single block: a checkpoint
+        // whose chainwork was left at zero or copied from one header would
+        // lose every fork-choice comparison against a genesis-rooted peer.
+        #expect(!work.isZero)
+        let header = try BlockHeader.decode(cp.header)
+        let target = try #require(UInt256.target(compact: header.bits))
+        let single = try #require(UInt256.blockWork(target: target))
+        #expect(work > single)
+        #expect(cp.height == 900_000)
+    }
+}
