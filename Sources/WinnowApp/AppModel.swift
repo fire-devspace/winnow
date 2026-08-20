@@ -730,6 +730,67 @@ final class AppModel {
         return words
     }
 
+    /// Settings → irreversibly deletes this network's wallet so another can be
+    /// created or imported. Behind device-owner authentication, like the
+    /// phrase reveal: this destroys the key, and without a backup the money
+    /// goes with it.
+    ///
+    /// Deleted: the Keychain secret, the wallet and vault files, and the
+    /// filter scan progress. **The scan progress must go** — `FilterSync`
+    /// prefers stored progress over the start height it is constructed with,
+    /// so leaving it would make the next wallet inherit this one's scan
+    /// position and silently skip its own history.
+    ///
+    /// Kept: headers and known peers. Those describe the chain, not the
+    /// wallet, so a re-import does not pay for a fresh header sync.
+    func destroyWallet() async throws {
+        guard let walletID else { throw AppError.noWallet }
+        if e2e == nil || e2e?.requireDeviceAuthentication == true {
+            let context = LAContext()
+            var unavailable: NSError?
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {
+                throw AppError.deviceAuthUnavailable
+            }
+            let passed = try await context.evaluatePolicy(
+                .deviceOwnerAuthentication,
+                localizedReason: "Delete this wallet from this device")
+            guard passed else { throw AppError.deviceAuthFailed }
+        }
+
+        syncTask?.cancel()
+        syncTask = nil
+        await stack?.pool.stop()
+        stack = nil
+
+        // Key first: a throw after this must not leave a wallet file whose
+        // secret is already gone, which would look like a wallet and be
+        // unusable. Deleting an absent ID is a no-op, so retrying is safe.
+        try keyStore.delete(walletID: walletID)
+
+        // Same per-wallet set `adopt(wallet:)` clears when taking a wallet on,
+        // plus the wallet file itself. Keep the two lists together: anything
+        // that is one wallet's view must not survive into the next one.
+        if let dir = storageDirectory() {
+            for name in ["wallet.json", "filters.json", "broadcast.json", "vaults.json"] {
+                try? FileManager.default.removeItem(at: dir.appending(path: name))
+            }
+        }
+        defaults.removeObject(forKey: DefaultsKey.backupPending(walletID))
+
+        wallet = nil
+        self.walletID = nil
+        walletDescriptor = nil
+        status = Status()
+        syncPhase = .idle
+        await vaultStore.configure(storageURL: vaultsURL())
+        vaults = await vaultStore.all
+        stage = .onboarding
+        e2e?.journal("wallet.destroyed", fields: ["walletID": walletID])
+
+        if isActive { await activate() }
+        await refresh()
+    }
+
     /// Polls the pool until a peer completes the handshake (or the timeout
     /// fires) — onboarding's create/import flows need one peer to ask for the
     /// chain tip.

@@ -14,6 +14,8 @@ struct SettingsView: View {
     @State private var showSilentPaymentsWarning = false
     @State private var showReadSide = false
     @State private var showPapers = false
+    @State private var showDestroyWallet = false
+    @State private var destroyError: String?
     @State private var showExport = false
     @State private var revealedMnemonic: String?
     @State private var revealError: String?
@@ -183,9 +185,40 @@ struct SettingsView: View {
                     LabeledContent("Wallet ID", value: model.walletID ?? "—")
                     Button("Design papers") { showPapers = true }
                 }
+
+                if model.walletID != nil {
+                    Section {
+                        Button("Delete wallet from this device", role: .destructive) {
+                            showDestroyWallet = true
+                        }
+                        .accessibilityIdentifier("deleteWalletButton")
+                    } header: {
+                        Text("Danger zone")
+                    } footer: {
+                        Text("Removes this \(model.network.rawValue) wallet and its vaults so you can create or import another. The key is deleted from this device — without your recovery phrase the money is gone. Block headers are kept, so the next wallet does not re-sync the chain.")
+                    }
+                }
             }
             .navigationTitle("Settings")
             .task { await refreshPeers() }
+            .alert("Delete this wallet?", isPresented: $showDestroyWallet) {
+                Button("Delete wallet", role: .destructive) {
+                    Task {
+                        do { try await model.destroyWallet() }
+                        catch { destroyError = error.localizedDescription }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This deletes the key from this device. Anyone holding the recovery phrase can still restore it; without that phrase, any money in this wallet is unrecoverable. Check you have the phrase written down before continuing.")
+            }
+            .alert("Could not delete the wallet",
+                   isPresented: Binding(get: { destroyError != nil },
+                                        set: { if !$0 { destroyError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(destroyError ?? "")
+            }
             .alert("Enable experimental silent-payment receive?", isPresented: $showSilentPaymentsWarning) {
                 Button("Enable experimental receive") {
                     model.setSilentPaymentsEnabled(true)
