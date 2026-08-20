@@ -120,6 +120,29 @@ struct HeaderChainTests {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
 
+    /// A build that cannot interpret a checkpoint-rooted file must say so
+    /// rather than read it as genesis-rooted — that would silently shift every
+    /// height in the chain, and nothing downstream would notice (#89).
+    @Test("a checkpoint-rooted header file is refused, not misread")
+    func checkpointFileRefused() async throws {
+        let chain = makeSyntheticChain(length: 2, watchHeight: 6)
+        let file = tempFileURL("headers.dat")
+
+        var data = Data()
+        data.appendUInt32(0xFFFF_FFFF)          // format marker
+        data.appendUInt32(1)                    // version
+        data.appendUInt32(500_000)              // base height
+        data.append(Data(repeating: 0, count: 32)) // base work
+        data.appendUInt32(UInt32(chain.blocks.count))
+        for block in chain.blocks { data.append(block.header.serialized) }
+        try data.write(to: file)
+
+        #expect(throws: HeaderChainError.self) {
+            _ = try HeaderChain(params: chain.params, storageURL: file)
+        }
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    }
+
     @Test("corrupt store is rejected")
     func corruptStore() async throws {
         let chain = makeSyntheticChain(length: 1, watchHeight: 6)

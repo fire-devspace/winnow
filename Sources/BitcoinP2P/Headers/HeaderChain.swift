@@ -52,11 +52,18 @@ public actor HeaderChain {
     public let params: NetworkParams
     private let storageURL: URL?
 
-    /// Main chain, index = height. Element 0 is the genesis header.
+    /// Main chain. Element 0 is at `baseHeight`; index + baseHeight = height.
     private var headers: [BlockHeader]
-    /// Cumulative work, aligned with `headers`.
+    /// Cumulative work, aligned with `headers`. Element 0 carries the work of
+    /// the whole chain up to and including `headers[0]`, so fork choice keeps
+    /// comparing totals even when the chain does not start at genesis.
     private var chainwork: [UInt256]
+    /// Absolute heights, not indices.
     private var heightByHash: [Data: UInt32]
+    /// Height of `headers[0]`. Zero when syncing from genesis; a checkpoint
+    /// height when starting from one (#89). Every index/height conversion in
+    /// this type goes through it.
+    private let baseHeight: UInt32
 
     public init(params: NetworkParams, storageURL: URL? = nil) throws {
         self.params = params
@@ -65,9 +72,19 @@ public actor HeaderChain {
         headers = [genesis]
         chainwork = [UInt256()]
         heightByHash = [genesis.hash: 0]
+        baseHeight = 0
         if let storageURL, FileManager.default.fileExists(atPath: storageURL.path) {
             do {
-                (headers, chainwork, heightByHash) = try Self.load(from: storageURL, params: params)
+                let loaded = try Self.load(from: storageURL, params: params)
+                guard loaded.baseHeight == 0 else {
+                    // Phase 1 only reads chains that start at genesis; a
+                    // checkpoint-based file is from a build this one cannot
+                    // interpret, and silently treating it as genesis-rooted
+                    // would corrupt every height.
+                    throw HeaderChainError.storageCorrupt(
+                        "header file starts at height \(loaded.baseHeight), which this build cannot read")
+                }
+                (headers, chainwork, heightByHash) = (loaded.headers, loaded.chainwork, loaded.heightByHash)
             } catch let error as HeaderChainError {
                 throw error
             } catch {
@@ -89,13 +106,17 @@ public actor HeaderChain {
 
     public var tip: BlockHeader { headers[headers.count - 1] }
     public var tipHash: Data { tip.hash }
-    public var height: UInt32 { UInt32(headers.count - 1) }
+    public var height: UInt32 { baseHeight + UInt32(headers.count - 1) }
+    /// Lowest height this chain holds. Zero unless started from a checkpoint.
+    public var startHeight: UInt32 { baseHeight }
 
     /// Cumulative chainwork at the tip, big-endian (display) byte order.
     public var tipWork: Data { chainwork[chainwork.count - 1].bigEndianData }
 
     public func header(at height: UInt32) -> BlockHeader? {
-        height < headers.count ? headers[Int(height)] : nil
+        guard height >= baseHeight else { return nil }
+        let index = Int(height - baseHeight)
+        return index < headers.count ? headers[index] : nil
     }
 
     public func blockHash(at height: UInt32) -> Data? {
@@ -158,7 +179,7 @@ public actor HeaderChain {
         // whole hash index, so its cost grows with the chain — 460 batches
         // against mainnet meant hundreds of millions of redundant operations
         // (#86). An append touches only the new headers.
-        if Int(forkHeight) == headers.count - 1 {
+        if forkHeight == height {
             var previousHash = headers[headers.count - 1].hash
             var work = chainwork[chainwork.count - 1]
             var appended: [BlockHeader] = []
@@ -166,7 +187,7 @@ public actor HeaderChain {
             appended.reserveCapacity(newHeaders.count)
             appendedWork.reserveCapacity(newHeaders.count)
             for header in newHeaders {
-                let height = UInt32(headers.count + appended.count)
+                let height = baseHeight + UInt32(headers.count + appended.count)
                 guard header.previousHash == previousHash else {
                     throw HeaderChainError.doesNotConnect
                 }
@@ -175,20 +196,21 @@ public actor HeaderChain {
                 appendedWork.append(work)
                 previousHash = header.hash
             }
-            let base = headers.count
+            let firstNewHeight = baseHeight + UInt32(headers.count)
             headers.append(contentsOf: appended)
             chainwork.append(contentsOf: appendedWork)
             for (offset, header) in appended.enumerated() {
-                heightByHash[header.hash] = UInt32(base + offset)
+                heightByHash[header.hash] = firstNewHeight + UInt32(offset)
             }
             try persist()
             return newHeaders.count
         }
 
-        var stagedHeaders = Array(headers[...Int(forkHeight)])
-        var stagedWork = Array(chainwork[...Int(forkHeight)])
+        let forkIndex = Int(forkHeight - baseHeight)
+        var stagedHeaders = Array(headers[...forkIndex])
+        var stagedWork = Array(chainwork[...forkIndex])
         for header in newHeaders {
-            let height = UInt32(stagedHeaders.count)
+            let height = baseHeight + UInt32(stagedHeaders.count)
             guard header.previousHash == stagedHeaders[stagedHeaders.count - 1].hash else {
                 throw HeaderChainError.doesNotConnect
             }
@@ -198,7 +220,7 @@ public actor HeaderChain {
         }
 
         // A shorter replacement branch must carry strictly more work.
-        if Int(forkHeight) < headers.count - 1,
+        if forkIndex < headers.count - 1,
            stagedWork[stagedWork.count - 1] <= chainwork[chainwork.count - 1] {
             throw HeaderChainError.reorgWithoutMoreWork
         }
@@ -207,7 +229,7 @@ public actor HeaderChain {
         chainwork = stagedWork
         heightByHash = heightByHash.filter { $0.value <= forkHeight }
         for (index, header) in headers.enumerated() where heightByHash[header.hash] == nil {
-            heightByHash[header.hash] = UInt32(index)
+            heightByHash[header.hash] = baseHeight + UInt32(index)
         }
         try persist()
         return newHeaders.count
@@ -235,10 +257,26 @@ public actor HeaderChain {
     /// File format: uint32 LE header count, then raw 80-byte headers in height
     /// order. Rewritten atomically on every successful connect — fine for a
     /// fresh-wallet client whose chains are short.
+    /// Legacy files begin with a header count. A count can never be this
+    /// value, so it is safe as a format marker: seeing it means the file
+    /// carries a base height and base work before the count.
+    private static let formatMarker: UInt32 = 0xFFFF_FFFF
+    private static let formatVersion: UInt32 = 1
+
     private func persist() throws {
         guard let storageURL else { return }
         var data = Data()
-        data.appendUInt32(UInt32(headers.count))
+        if baseHeight == 0 {
+            // Genesis-rooted chains keep the original layout, so a file
+            // written here still opens in an older build.
+            data.appendUInt32(UInt32(headers.count))
+        } else {
+            data.appendUInt32(Self.formatMarker)
+            data.appendUInt32(Self.formatVersion)
+            data.appendUInt32(baseHeight)
+            data.append(chainwork[0].bigEndianData)
+            data.appendUInt32(UInt32(headers.count))
+        }
         for header in headers { data.append(header.serialized) }
         // .atomic writes to a temp file then renames — safe mid-write crash.
         do {
@@ -250,10 +288,30 @@ public actor HeaderChain {
     }
 
     private static func load(from url: URL, params: NetworkParams) throws
-        -> (headers: [BlockHeader], chainwork: [UInt256], heightByHash: [Data: UInt32]) {
+        -> (headers: [BlockHeader], chainwork: [UInt256], heightByHash: [Data: UInt32], baseHeight: UInt32) {
         let data = try Data(contentsOf: url)
         var reader = ByteReader(data)
-        guard let count = try? reader.readUInt32(), data.count == 4 + Int(count) * BlockHeader.serializedSize else {
+        guard let first = try? reader.readUInt32() else {
+            throw HeaderChainError.storageCorrupt("bad length")
+        }
+        var baseHeight: UInt32 = 0
+        var baseWork = UInt256()
+        var prefix = 4
+        var count = first
+        if first == formatMarker {
+            guard let version = try? reader.readUInt32(), version == formatVersion else {
+                throw HeaderChainError.storageCorrupt("unsupported header-file version")
+            }
+            guard let base = try? reader.readUInt32(),
+                  let workBytes = try? reader.readBytes(32),
+                  let stored = try? reader.readUInt32()
+            else { throw HeaderChainError.storageCorrupt("truncated header-file prefix") }
+            baseHeight = base
+            baseWork = UInt256(bigEndian: workBytes)
+            count = stored
+            prefix = 4 + 4 + 4 + 32 + 4
+        }
+        guard data.count == prefix + Int(count) * BlockHeader.serializedSize else {
             throw HeaderChainError.storageCorrupt("bad length")
         }
         let genesis = HeaderChain.genesisHeader(for: params)
@@ -269,24 +327,34 @@ public actor HeaderChain {
             if let cached = workByBits[header.bits] {
                 parameters = cached
             } else {
-                parameters = try targetAndWork(bits: header.bits, params: params, height: index)
+                parameters = try targetAndWork(bits: header.bits, params: params, height: baseHeight + index)
                 workByBits[header.bits] = parameters
             }
             // Caching block-work must never cache header validity: every hash
             // remains independently checked against the repeated target.
             let hashAsNumber = UInt256(littleEndian: header.hash)
             guard hashAsNumber <= parameters.target else {
-                throw HeaderChainError.insufficientProofOfWork(height: index)
+                throw HeaderChainError.insufficientProofOfWork(height: baseHeight + index)
             }
-            work = work + parameters.work
-            if index == 0, header != genesis { throw HeaderChainError.storageCorrupt("genesis mismatch") }
+            if index == 0, baseHeight > 0 {
+                // The first header of a checkpoint chain carries the work of
+                // everything before it, which cannot be recomputed from a file
+                // that does not contain those headers.
+                work = baseWork
+            } else {
+                work = work + parameters.work
+            }
+            if baseHeight == 0, index == 0, header != genesis {
+                throw HeaderChainError.storageCorrupt("genesis mismatch")
+            }
             if index > 0, header.previousHash != loadedHeaders[loadedHeaders.count - 1].hash {
-                throw HeaderChainError.storageCorrupt("broken linkage at \(index)")
+                throw HeaderChainError.storageCorrupt("broken linkage at \(baseHeight + index)")
             }
             loadedHeaders.append(header)
             loadedWork.append(work)
         }
-        let index = Dictionary(uniqueKeysWithValues: loadedHeaders.enumerated().map { ($1.hash, UInt32($0)) })
-        return (loadedHeaders, loadedWork, index)
+        let index = Dictionary(uniqueKeysWithValues:
+            loadedHeaders.enumerated().map { ($1.hash, baseHeight + UInt32($0)) })
+        return (loadedHeaders, loadedWork, index, baseHeight)
     }
 }
