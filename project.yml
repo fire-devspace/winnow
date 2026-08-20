@@ -75,6 +75,25 @@ targets:
         # Sync-while-active by design: no UIBackgroundModes.
         CODE_SIGN_STYLE: Automatic
 
+  WinnowAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: WinnowApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.btcswift.app.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/WinnowApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WinnowApp"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: "2858MX5336"
+
   # End-to-end UI tests (XCUITest): drive the app on the local custom-signet
   # node and capture screenshots of every major use case into
   # docs/screenshots/. Node access (bitcoin-cli mining/funding) happens from
@@ -117,4 +136,5 @@ schemes:
     test:
       config: Debug
       targets:
+        - WinnowAppTests
         - WinnowAppUITests

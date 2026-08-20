@@ -84,6 +84,19 @@ final class AppModel {
         case synced
         /// Peer discovery ran out of candidates with zero connections.
         case peerDiscoveryFailed
+
+        /// The filter row uses actor-polled progress while a scan is active,
+        /// falling back to the last committed wallet snapshot in other phases.
+        func filterScanText(fallbackScanned: UInt32, fallbackTip: UInt32) -> String {
+            let progress: (scanned: UInt32, tip: UInt32)
+            switch self {
+            case let .filters(scanned, tip):
+                progress = (scanned, tip)
+            default:
+                progress = (fallbackScanned, fallbackTip)
+            }
+            return "block \(min(progress.scanned, progress.tip).formatted()) of \(progress.tip.formatted())"
+        }
     }
 
     /// One-line rendering of `syncPhase`; nil when there is nothing to show.
