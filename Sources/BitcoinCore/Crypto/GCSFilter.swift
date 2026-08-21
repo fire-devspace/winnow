@@ -3,12 +3,23 @@ import Foundation
 
 public enum GCSError: Error, Equatable {
     case emptyKey
+    case invalidParameters
+    case tooManyElements(UInt32)
+    case encodedFilterTooLarge(Int)
+    case truncatedEncoding
+    case nonCanonicalEncoding
+    case decodedValueOverflow
 }
 
 /// BIP158 Golomb-Coded-Set filter (basic filters: P=19, M=784931).
 public struct GCSFilter: Sendable, Equatable {
     public static let defaultP: UInt8 = 19
     public static let defaultM: UInt32 = 784_931
+    /// Resource ceiling for an untrusted BIP158 filter. A standard block cannot
+    /// produce nearly this many basic-filter elements, while accepting a
+    /// claimed UInt32-sized set would make matching loop billions of times.
+    public static let maxElementCount: UInt32 = 1_000_000
+    public static let maxEncodedSize = 4_000_000
 
     public let p: UInt8
     public let m: UInt32
@@ -58,11 +69,64 @@ public struct GCSFilter: Sendable, Equatable {
 
     public init(p: UInt8 = GCSFilter.defaultP, m: UInt32 = GCSFilter.defaultM, key: Data, n: UInt32, encoded: Data) throws {
         guard key.count == 16 else { throw GCSError.emptyKey }
+        guard p < 64, m > 0 else { throw GCSError.invalidParameters }
+        guard n <= Self.maxElementCount else { throw GCSError.tooManyElements(n) }
+        guard encoded.count <= Self.maxEncodedSize else {
+            throw GCSError.encodedFilterTooLarge(encoded.count)
+        }
+        try Self.validateEncoding(p: p, n: n, encoded: encoded)
         self.p = p
         self.m = m
         self.key = key
         self.n = n
         self.encoded = encoded
+    }
+
+    /// Validate the complete Golomb-Rice stream once at the hostile-input
+    /// boundary. Matching can then remain a small, nonthrowing hot path.
+    private static func validateEncoding(p: UInt8, n: UInt32, encoded: Data) throws {
+        if n == 0 {
+            guard encoded.isEmpty else { throw GCSError.nonCanonicalEncoding }
+            return
+        }
+
+        // Every item requires a zero terminator and P remainder bits. This
+        // rejects tiny encodings with enormous claimed counts before looping.
+        let minimumBits = UInt64(n) * UInt64(p + 1)
+        guard UInt64(encoded.count) * 8 >= minimumBits else {
+            throw GCSError.truncatedEncoding
+        }
+
+        var reader = BitReader(encoded)
+        var value: UInt64 = 0
+        for _ in 0 ..< n {
+            var quotient: UInt64 = 0
+            while true {
+                guard let bit = reader.readOptional() else { throw GCSError.truncatedEncoding }
+                if !bit { break }
+                let (next, overflow) = quotient.addingReportingOverflow(1)
+                guard !overflow else { throw GCSError.decodedValueOverflow }
+                quotient = next
+            }
+
+            var remainder: UInt64 = 0
+            for _ in 0 ..< p {
+                guard let bit = reader.readOptional() else { throw GCSError.truncatedEncoding }
+                remainder = (remainder << 1) | UInt64(bit ? 1 : 0)
+            }
+            guard quotient <= UInt64.max >> p else { throw GCSError.decodedValueOverflow }
+            let delta = (quotient << p) | remainder
+            let (next, overflow) = value.addingReportingOverflow(delta)
+            guard !overflow else { throw GCSError.decodedValueOverflow }
+            value = next
+        }
+
+        // The writer pads the final byte with at most seven zero bits. Extra
+        // bytes or nonzero padding would be a second spelling of the filter.
+        guard reader.remainingBits < 8 else { throw GCSError.nonCanonicalEncoding }
+        while let bit = reader.readOptional() {
+            guard !bit else { throw GCSError.nonCanonicalEncoding }
+        }
     }
 
     /// Serialized form: compactSize(N) || encoded bitstream (BIP158 `NBytes`).
@@ -165,12 +229,18 @@ struct BitReader {
         self.data = data
     }
 
-    mutating func read() -> Bool {
+    var remainingBits: Int { data.count * 8 - bitCount }
+
+    mutating func readOptional() -> Bool? {
         let byte = bitCount / 8
-        guard byte < data.count else { return false }
+        guard byte < data.count else { return nil }
         let bit = (data[byte] >> UInt8(7 - (bitCount % 8))) & 1
         bitCount += 1
         return bit == 1
+    }
+
+    mutating func read() -> Bool {
+        readOptional() ?? false
     }
 }
 

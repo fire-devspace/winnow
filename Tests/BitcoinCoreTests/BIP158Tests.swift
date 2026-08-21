@@ -78,6 +78,30 @@ struct BIP158Tests {
         #expect(filter.serialized == Data([0]))
         #expect(!filter.contains(Data([0x51])))
     }
+
+    @Test("hostile claimed counts and malformed streams fail before matching")
+    func hostileEncodingBounds() throws {
+        let key = Data(repeating: 0, count: 16)
+
+        #expect(throws: GCSError.tooManyElements(UInt32.max)) {
+            _ = try GCSFilter(key: key, n: UInt32.max, encoded: Data())
+        }
+        #expect(throws: GCSError.truncatedEncoding) {
+            _ = try GCSFilter(key: key, n: 100_000, encoded: Data([0]))
+        }
+        #expect(throws: GCSError.nonCanonicalEncoding) {
+            _ = try GCSFilter(key: key, n: 0, encoded: Data([0]))
+        }
+        #expect(throws: GCSError.nonCanonicalEncoding) {
+            // N=1, P=0: the first zero completes the item; another full byte
+            // is not legal padding.
+            _ = try GCSFilter(p: 0, m: 1, key: key, n: 1, encoded: Data([0, 0]))
+        }
+        #expect(throws: GCSError.nonCanonicalEncoding) {
+            // N=1, P=0: nonzero padding is not canonical.
+            _ = try GCSFilter(p: 0, m: 1, key: key, n: 1, encoded: Data([0x40]))
+        }
+    }
 }
 
 /// `matchAny` replaced a per-item full decode with a single sorted merge pass
