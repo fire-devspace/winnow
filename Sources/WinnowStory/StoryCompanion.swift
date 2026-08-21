@@ -1,7 +1,7 @@
 import BitcoinCore
 import BitcoinP2P
 import Foundation
-import WalletCore
+@_spi(WinnowStoryUnsafe) import WalletCore
 
 public struct StoryCompanion: Sendable {
     public let state: StoryRunState
@@ -281,7 +281,7 @@ public struct StoryCompanion: Sendable {
         }
         let vault = try Vault(descriptor: inheritanceDescriptor(), network: .signet)
         var psbt = try PSBT(base64: psbtBase64)
-        try vault.partialSign(&psbt, master: master(for: personaID))
+        try vault.storyPartialSign(&psbt, master: master(for: personaID))
         return psbt.base64
     }
 
@@ -297,8 +297,8 @@ public struct StoryCompanion: Sendable {
         updated.musigSecretNonces.removeAll()
         for input in psbt.inputs.indices {
             let context = try vault.muSig2Context(choice: 0, index: 0)
-            let nonces = try vault.muSig2AttachNonce(&psbt, input: input, context: context,
-                                                     master: master(for: "mateo"))
+            let nonces = try vault.storyMuSig2AttachNonce(
+                &psbt, input: input, context: context, master: master(for: "mateo"))
             for (pubkey, secret) in nonces {
                 updated.musigSecretNonces["\(input):\(pubkey.hex)"] = secret.hex
             }
@@ -330,8 +330,8 @@ public struct StoryCompanion: Sendable {
                 nonces[pubkey] = secret
             }
             let context = try vault.muSig2Context(choice: 0, index: 0)
-            try vault.muSig2Sign(&psbt, input: input, context: context,
-                                 master: master(for: "mateo"), secretNonces: &nonces)
+            try vault.storyMuSig2Sign(&psbt, input: input, context: context,
+                                      master: master(for: "mateo"), secretNonces: &nonces)
         }
         updated.musigSecretNonces.removeAll()
         updated.musigPartialPSBT = psbt.base64

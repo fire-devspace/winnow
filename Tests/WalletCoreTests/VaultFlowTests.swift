@@ -192,9 +192,21 @@ struct VaultFlowTests {
 
         // Cosigners 0 and 2 each partial-sign their own copy (signer role).
         var partialA = try PSBT(base64: base64)
-        try vault.partialSign(&partialA, master: masters[0])
+        let ownedCoordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
+        var wrongCoin = utxo
+        wrongCoin.amount += 1
+        var rejected = partialA
+        #expect(throws: VaultError.self) {
+            try vault.partialSign(&rejected, master: masters[0], knownUTXOs: [wrongCoin],
+                                  ownedOutputCoordinates: ownedCoordinates)
+        }
+        #expect(rejected == partialA)
+
+        try vault.partialSign(&partialA, master: masters[0], knownUTXOs: [utxo],
+                              ownedOutputCoordinates: ownedCoordinates)
         var partialC = try PSBT(base64: base64)
-        try vault.partialSign(&partialC, master: masters[2])
+        try vault.partialSign(&partialC, master: masters[2], knownUTXOs: [utxo],
+                              ownedOutputCoordinates: ownedCoordinates)
         #expect(partialA.inputs[0].tapScriptSignatures.count == 1)
         #expect(partialC.inputs[0].tapScriptSignatures.count == 1)
 
@@ -220,7 +232,8 @@ struct VaultFlowTests {
         combined.inputs[0].tapLeafScripts = [bogusLeaf, realLeaf]
         #expect(combined.inputs[0].tapLeafScripts.first?.controlBlock.internalKey
             == Data(repeating: 0, count: 32))
-        let signed = try vault.finalizeSpend(&combined)
+        let signed = try vault.finalizeSpend(&combined, knownUTXOs: [utxo],
+                                             ownedOutputCoordinates: ownedCoordinates)
 
         // Verify the witness cryptographically (see the helper below).
         let result = try verifyMultisigSpend(tx: signed, inputIndex: 0,
@@ -328,21 +341,29 @@ struct VaultFlowTests {
         #expect(utxo.scriptPubKey == Data([0x51, 0x20]) + context.outputKey)
         // MuSig2 outputs do not carry per-key derivation labels. Descriptor
         // script matching still recognizes the real change output.
+        let ownedCoordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
         let review = try vault.reviewSpend(
-            created, knownUTXOs: [utxo], ownedOutputCoordinates: [
-                Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0),
-            ])
+            created, knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         let changeScript = try vault.scriptPubKey(index: 0, choice: AddressChain.change.rawValue)
         #expect(review.outputs.first { $0.scriptPubKey == changeScript }?.isVaultOwned == true)
+
+        var tooManyOutputs = created
+        tooManyOutputs.outputs = Array(repeating: created.outputs[0], count: 1_001)
+        #expect(throws: VaultError.self) {
+            try vault.reviewSpend(tooManyOutputs, knownUTXOs: [utxo],
+                                  ownedOutputCoordinates: ownedCoordinates)
+        }
 
         // Round 1: each cosigner attaches its public nonce to its own copy.
         let base64 = created.base64
         var noncePSBT_A = try PSBT(base64: base64)
-        var secnoncesA = try vault.muSig2AttachNonce(&noncePSBT_A, input: 0, context: context,
-                                                     master: masters[0])
+        var secnoncesA = try vault.muSig2AttachNonce(
+            &noncePSBT_A, input: 0, context: context, master: masters[0],
+            knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         var noncePSBT_B = try PSBT(base64: base64)
-        var secnoncesB = try vault.muSig2AttachNonce(&noncePSBT_B, input: 0, context: context,
-                                                     master: masters[1])
+        var secnoncesB = try vault.muSig2AttachNonce(
+            &noncePSBT_B, input: 0, context: context, master: masters[1],
+            knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         #expect(noncePSBT_A.inputs[0].musig2PubNonces.count == 1)
         #expect(secnoncesA.count == 1 && secnoncesB.count == 1)
 
@@ -352,19 +373,23 @@ struct VaultFlowTests {
         #expect(withNonces.inputs[0].musig2PubNonces.count == 2)
         var signedA = withNonces
         try vault.muSig2Sign(&signedA, input: 0, context: context, master: masters[0],
-                             secretNonces: &secnoncesA)
+                             secretNonces: &secnoncesA, knownUTXOs: [utxo],
+                             ownedOutputCoordinates: ownedCoordinates)
         var signedB = withNonces
         try vault.muSig2Sign(&signedB, input: 0, context: context, master: masters[1],
-                             secretNonces: &secnoncesB)
+                             secretNonces: &secnoncesB, knownUTXOs: [utxo],
+                             ownedOutputCoordinates: ownedCoordinates)
         // The secnonce was zeroed — reuse is rejected.
         #expect(secnoncesA.values.first?.allSatisfy { $0 == 0 } == true)
         #expect(signedA.inputs[0].musig2PartialSigs.count == 1)
 
         // Combine partials, aggregate into the key-path signature, finalize.
         var combined = try signedA.combined(with: [signedB])
-        try vault.muSig2Aggregate(&combined, input: 0, context: context)
+        try vault.muSig2Aggregate(&combined, input: 0, context: context,
+                                  knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         #expect(combined.inputs[0].tapKeySignature?.count == 64)
-        let signed = try vault.finalizeSpend(&combined)
+        let signed = try vault.finalizeSpend(&combined, knownUTXOs: [utxo],
+                                             ownedOutputCoordinates: ownedCoordinates)
 
         // The witness is a single 64-byte BIP340 signature over the key-path
         // sighash, valid for the tweaked aggregate key.
@@ -389,7 +414,10 @@ struct VaultFlowTests {
         // The third master is not a participant: no nonce, no signature.
         let outsider = try Self.masters()[2]
         #expect(throws: VaultError.noCosignerKey(input: 0)) {
-            _ = try vault.muSig2AttachNonce(&psbt, input: 0, context: context, master: outsider)
+            _ = try vault.muSig2AttachNonce(
+                &psbt, input: 0, context: context, master: outsider,
+                knownUTXOs: [utxo],
+                ownedOutputCoordinates: [.init(choice: 1, index: 0)])
         }
     }
 

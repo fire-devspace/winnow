@@ -167,6 +167,9 @@ public struct Vault: Sendable {
         let maxMoney: Int64 = 2_100_000_000_000_000
         guard !psbt.inputs.isEmpty else { throw VaultError.invalidSpend("it has no inputs") }
         guard !psbt.outputs.isEmpty else { throw VaultError.invalidSpend("it has no outputs") }
+        guard psbt.outputs.count <= 1_000 else {
+            throw VaultError.invalidSpend("it has more than 1,000 outputs")
+        }
         guard psbt.txVersion == 1 || psbt.txVersion == 2 else {
             throw VaultError.invalidSpend("transaction version \(psbt.txVersion) is not supported")
         }
@@ -426,7 +429,15 @@ public struct Vault: Sendable {
     /// derivation fingerprints in the PSBT). Throws `noCosignerKey` when an
     /// input has no key we hold. The PSBT then travels (Base64) to the next
     /// cosigner; when k partials are present, combine + finalize.
-    public func partialSign(_ psbt: inout PSBT, master: HDKey) throws {
+    public func partialSign(_ psbt: inout PSBT, master: HDKey,
+                            knownUTXOs: [WalletUTXO],
+                            ownedOutputCoordinates: [OutputCoordinate]) throws {
+        _ = try reviewSpend(psbt, knownUTXOs: knownUTXOs,
+                            ownedOutputCoordinates: ownedOutputCoordinates)
+        try partialSignUnchecked(&psbt, master: master)
+    }
+
+    private func partialSignUnchecked(_ psbt: inout PSBT, master: HDKey) throws {
         guard case .multiA = policy else { throw VaultError.invalidDescriptor("not a multi_a vault") }
         for index in psbt.inputs.indices {
             var secrets: [Data] = []
@@ -443,6 +454,15 @@ public struct Vault: Sendable {
             guard !secrets.isEmpty else { throw VaultError.noCosignerKey(input: index) }
             try psbt.signScriptPath(input: index, privateKeys: secrets)
         }
+    }
+
+    /// The reproducible story runner operates on deterministic, public test
+    /// fixtures outside the production app. Keep its deliberately unchecked
+    /// cosigner primitive behind an explicit SPI so normal clients cannot
+    /// accidentally bypass the trusted-coin boundary above.
+    @_spi(WinnowStoryUnsafe)
+    public func storyPartialSign(_ psbt: inout PSBT, master: HDKey) throws {
+        try partialSignUnchecked(&psbt, master: master)
     }
 
     // MARK: - MuSig2 signing (n-of-n)
@@ -535,7 +555,18 @@ public struct Vault: Sendable {
     /// returns the secret nonces keyed by participant pubkey — the caller MUST
     /// keep them until round 2 and never reuse them.
     public func muSig2AttachNonce(_ psbt: inout PSBT, input: Int, context: MuSig2Context,
-                                  master: HDKey, extraInput: Data? = nil) throws -> [Data: Data] {
+                                  master: HDKey, knownUTXOs: [WalletUTXO],
+                                  ownedOutputCoordinates: [OutputCoordinate],
+                                  extraInput: Data? = nil) throws -> [Data: Data] {
+        _ = try reviewSpend(psbt, knownUTXOs: knownUTXOs,
+                            ownedOutputCoordinates: ownedOutputCoordinates)
+        return try muSig2AttachNonceUnchecked(&psbt, input: input, context: context,
+                                              master: master, extraInput: extraInput)
+    }
+
+    private func muSig2AttachNonceUnchecked(_ psbt: inout PSBT, input: Int,
+                                            context: MuSig2Context, master: HDKey,
+                                            extraInput: Data? = nil) throws -> [Data: Data] {
         let message = try keyPathSighash(psbt, input: input)
         var secretNonces: [Data: Data] = [:] // participant pubkey → secnonce
         for (participant, secret) in try participantSecrets(context: context, master: master) {
@@ -552,10 +583,29 @@ public struct Vault: Sendable {
         return secretNonces
     }
 
+    @_spi(WinnowStoryUnsafe)
+    public func storyMuSig2AttachNonce(_ psbt: inout PSBT, input: Int,
+                                       context: MuSig2Context, master: HDKey,
+                                       extraInput: Data? = nil) throws -> [Data: Data] {
+        try muSig2AttachNonceUnchecked(&psbt, input: input, context: context,
+                                       master: master, extraInput: extraInput)
+    }
+
     /// MuSig2 round 2 (after every cosigner attached a nonce): partial-signs
     /// and attaches PSBT_IN_MUSIG2_PARTIAL_SIG, zeroing the secret nonce.
     public func muSig2Sign(_ psbt: inout PSBT, input: Int, context: MuSig2Context,
-                           master: HDKey, secretNonces: inout [Data: Data]) throws {
+                           master: HDKey, secretNonces: inout [Data: Data],
+                           knownUTXOs: [WalletUTXO],
+                           ownedOutputCoordinates: [OutputCoordinate]) throws {
+        _ = try reviewSpend(psbt, knownUTXOs: knownUTXOs,
+                            ownedOutputCoordinates: ownedOutputCoordinates)
+        try muSig2SignUnchecked(&psbt, input: input, context: context, master: master,
+                                secretNonces: &secretNonces)
+    }
+
+    private func muSig2SignUnchecked(_ psbt: inout PSBT, input: Int,
+                                     context: MuSig2Context, master: HDKey,
+                                     secretNonces: inout [Data: Data]) throws {
         let session = try psbt.muSig2Session(input: input, aggregateKey: context.aggregate,
                                              tweaks: context.tweaks, isXOnlyTweaks: context.isXOnlyTweaks,
                                              message: keyPathSighash(psbt, input: input))
@@ -571,10 +621,22 @@ public struct Vault: Sendable {
         guard signed > 0 else { throw VaultError.noCosignerKey(input: input) }
     }
 
+    @_spi(WinnowStoryUnsafe)
+    public func storyMuSig2Sign(_ psbt: inout PSBT, input: Int, context: MuSig2Context,
+                                master: HDKey,
+                                secretNonces: inout [Data: Data]) throws {
+        try muSig2SignUnchecked(&psbt, input: input, context: context, master: master,
+                                secretNonces: &secretNonces)
+    }
+
     /// MuSig2 final step: combines the partial signatures into the aggregate
     /// BIP340 signature (PSBT_IN_TAP_KEY_SIG); `finalize()` then produces the
     /// single-item key-path witness.
-    public func muSig2Aggregate(_ psbt: inout PSBT, input: Int, context: MuSig2Context) throws {
+    public func muSig2Aggregate(_ psbt: inout PSBT, input: Int, context: MuSig2Context,
+                                knownUTXOs: [WalletUTXO],
+                                ownedOutputCoordinates: [OutputCoordinate]) throws {
+        _ = try reviewSpend(psbt, knownUTXOs: knownUTXOs,
+                            ownedOutputCoordinates: ownedOutputCoordinates)
         let session = try psbt.muSig2Session(input: input, aggregateKey: context.aggregate,
                                              tweaks: context.tweaks, isXOnlyTweaks: context.isXOnlyTweaks,
                                              message: keyPathSighash(psbt, input: input))
@@ -582,7 +644,10 @@ public struct Vault: Sendable {
     }
 
     /// Finalizes the fully-signed PSBT and extracts the raw transaction.
-    public func finalizeSpend(_ psbt: inout PSBT) throws -> Transaction {
+    public func finalizeSpend(_ psbt: inout PSBT, knownUTXOs: [WalletUTXO],
+                              ownedOutputCoordinates: [OutputCoordinate]) throws -> Transaction {
+        _ = try reviewSpend(psbt, knownUTXOs: knownUTXOs,
+                            ownedOutputCoordinates: ownedOutputCoordinates)
         try psbt.finalize()
         return try psbt.extractedTransaction()
     }

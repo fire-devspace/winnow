@@ -33,6 +33,7 @@ struct VaultSignView: View {
     @State private var pasted = ""
     @State private var working: PSBT?
     @State private var spendReview: Vault.SpendReview?
+    @State private var reviewedOutputLines: [OutputLine] = []
     @State private var spendReviewError: String?
     @State private var output: String?
     @State private var error: String?
@@ -65,13 +66,20 @@ struct VaultSignView: View {
     private var minPartialSigs: Int { working?.inputs.map(\.musig2PartialSigs.count).min() ?? 0 }
     private var workingInputsRemainAvailable: Bool { spendReview != nil }
 
-    /// Re-evaluate the cached review when either the proposal or trusted local
-    /// coin set changes. Rendering never performs cryptographic validation.
-    private var spendReviewIdentity: String {
-        let coins = record?.utxos.map {
-            "\($0.txid.hex):\($0.vout):\($0.amount):\($0.chain.rawValue):\($0.index)"
-        }.joined(separator: "|") ?? "missing-record"
-        return "\(working?.base64 ?? "missing-psbt")|\(coins)"
+    /// A cheap identity for trusted local state. Imported/combined proposals
+    /// are reviewed synchronously once; this task only rechecks when the local
+    /// coin set or descriptor frontier changes.
+    private struct TrustedStateIdentity: Equatable {
+        var utxos: [WalletUTXO]
+        var nextReceiveIndex: UInt32
+        var nextChangeIndex: UInt32
+    }
+
+    private var trustedStateIdentity: TrustedStateIdentity? {
+        record.map {
+            TrustedStateIdentity(utxos: $0.utxos, nextReceiveIndex: $0.nextReceiveIndex,
+                                 nextChangeIndex: $0.nextChangeIndex)
+        }
     }
 
     var body: some View {
@@ -124,7 +132,7 @@ struct VaultSignView: View {
                 }
             }
             .navigationTitle("Sign / combine")
-            .task(id: spendReviewIdentity) {
+            .task(id: trustedStateIdentity) {
                 refreshSpendReview()
             }
             .toolbar {
@@ -159,11 +167,10 @@ struct VaultSignView: View {
         return address
     }
 
-    /// Outputs the spend pays. Vault ownership comes from matching each actual
-    /// locking script against locally expected descriptor derivations.
-    private var outputLines: [OutputLine] {
-        guard let review = spendReview else { return [] }
-        return review.outputs.map {
+    /// Outputs the spend pays, materialized once when review succeeds rather
+    /// than rebuilding every address during each SwiftUI body evaluation.
+    private func outputLines(for review: Vault.SpendReview) -> [OutputLine] {
+        review.outputs.map {
             OutputLine(destination: destination(forScript: $0.scriptPubKey),
                        amount: $0.amount, isVaultOwned: $0.isVaultOwned)
         }
@@ -198,8 +205,8 @@ struct VaultSignView: View {
     private var reviewSection: some View {
         Section {
             if spendReview != nil {
-                ForEach(outputLines.indices, id: \.self) { index in
-                    let line = outputLines[index]
+                ForEach(reviewedOutputLines.indices, id: \.self) { index in
+                    let line = reviewedOutputLines[index]
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Text(line.isVaultOwned ? "Vault-owned output" : "Pays")
@@ -303,7 +310,8 @@ struct VaultSignView: View {
 
     /// Reconstructs the authorization review from trusted local vault state.
     /// Output BIP32 metadata is never used to decide that an output is change.
-    private func validateSpend(_ psbt: PSBT) throws -> Vault.SpendReview {
+    private func authorizationInputs() throws -> (vault: Vault, record: VaultRecord,
+                                                   coordinates: [Vault.OutputCoordinate]) {
         guard let vault, let record else { throw SignError.unknownInput }
         var coordinates = record.utxos.map {
             Vault.OutputCoordinate(choice: $0.chain.rawValue, index: $0.index)
@@ -312,21 +320,32 @@ struct VaultSignView: View {
             choice: AddressChain.receive.rawValue, index: record.nextReceiveIndex))
         coordinates.append(Vault.OutputCoordinate(
             choice: AddressChain.change.rawValue, index: record.nextChangeIndex))
+        return (vault, record, coordinates)
+    }
+
+    private func validateSpend(_ psbt: PSBT) throws -> Vault.SpendReview {
+        let inputs = try authorizationInputs()
+        let vault = inputs.vault
+        let record = inputs.record
         return try vault.reviewSpend(psbt, knownUTXOs: record.utxos,
-                                     ownedOutputCoordinates: coordinates)
+                                     ownedOutputCoordinates: inputs.coordinates)
     }
 
     private func refreshSpendReview() {
         guard let working else {
             spendReview = nil
+            reviewedOutputLines = []
             spendReviewError = nil
             return
         }
         do {
-            spendReview = try validateSpend(working)
+            let review = try validateSpend(working)
+            spendReview = review
+            reviewedOutputLines = outputLines(for: review)
             spendReviewError = nil
         } catch {
             spendReview = nil
+            reviewedOutputLines = []
             spendReviewError = error.localizedDescription
         }
     }
@@ -336,7 +355,9 @@ struct VaultSignView: View {
         do {
             let incoming = try PSBT(base64: pasted.trimmingCharacters(in: .whitespacesAndNewlines))
             let candidate = try working?.combined(with: [incoming]) ?? incoming
-            spendReview = try validateSpend(candidate)
+            let review = try validateSpend(candidate)
+            spendReview = review
+            reviewedOutputLines = outputLines(for: review)
             spendReviewError = nil
             working = candidate
             if let working { model.journalPSBT(stage: "vault-psbt-combined", psbt: working) }
@@ -358,10 +379,14 @@ struct VaultSignView: View {
     // MARK: - multi_a
 
     private func signMultiA() {
-        guard var psbt = working, let vault else { error = SignError.noWorkingPSBT.localizedDescription; return }
+        guard var psbt = working else { error = SignError.noWorkingPSBT.localizedDescription; return }
         do {
-            _ = try validateSpend(psbt)
-            try model.withMasterKey { try vault.partialSign(&psbt, master: $0) }
+            let inputs = try authorizationInputs()
+            try model.withMasterKey {
+                try inputs.vault.partialSign(
+                    &psbt, master: $0, knownUTXOs: inputs.record.utxos,
+                    ownedOutputCoordinates: inputs.coordinates)
+            }
             working = psbt
             output = psbt.base64
             model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
@@ -377,8 +402,10 @@ struct VaultSignView: View {
         Task {
             defer { broadcasting = false }
             do {
-                _ = try validateSpend(psbt)
-                let transaction = try vault.finalizeSpend(&psbt)
+                let inputs = try authorizationInputs()
+                let transaction = try vault.finalizeSpend(
+                    &psbt, knownUTXOs: inputs.record.utxos,
+                    ownedOutputCoordinates: inputs.coordinates)
                 try await commitAndBroadcast(transaction, vault: vault, record: record)
             } catch {
                 self.error = error.localizedDescription
@@ -391,12 +418,15 @@ struct VaultSignView: View {
     private func attachNonces() {
         guard var psbt = working, let vault, let record else { error = SignError.noWorkingPSBT.localizedDescription; return }
         do {
-            _ = try validateSpend(psbt)
+            let inputs = try authorizationInputs()
             var nonces: [Int: [Data: Data]] = [:]
             for index in psbt.inputs.indices {
                 let context = try context(for: psbt.inputs[index], vault: vault, record: record)
                 nonces[index] = try model.withMasterKey {
-                    try vault.muSig2AttachNonce(&psbt, input: index, context: context, master: $0)
+                    try vault.muSig2AttachNonce(
+                        &psbt, input: index, context: context, master: $0,
+                        knownUTXOs: inputs.record.utxos,
+                        ownedOutputCoordinates: inputs.coordinates)
                 }
             }
             secretNonces = nonces
@@ -412,7 +442,7 @@ struct VaultSignView: View {
     private func signMuSig2() {
         guard var psbt = working, let vault, let record else { return }
         do {
-            _ = try validateSpend(psbt)
+            let inputs = try authorizationInputs()
             // Stage the nonce mutations alongside the PSBT. If a later input
             // fails, the visible working copy and the in-memory nonce session
             // both remain retryable instead of becoming half-consumed.
@@ -422,7 +452,9 @@ struct VaultSignView: View {
                 var nonces = stagedNonces[index] ?? [:]
                 try model.withMasterKey {
                     try vault.muSig2Sign(&psbt, input: index, context: context, master: $0,
-                                         secretNonces: &nonces)
+                                         secretNonces: &nonces,
+                                         knownUTXOs: inputs.record.utxos,
+                                         ownedOutputCoordinates: inputs.coordinates)
                 }
                 stagedNonces[index] = nonces // zeroed by partialSign
             }
@@ -443,13 +475,18 @@ struct VaultSignView: View {
         Task {
             defer { broadcasting = false }
             do {
-                _ = try validateSpend(psbt)
+                let inputs = try authorizationInputs()
                 for index in psbt.inputs.indices {
                     let context = try context(for: psbt.inputs[index], vault: vault, record: record)
-                    try vault.muSig2Aggregate(&psbt, input: index, context: context)
+                    try vault.muSig2Aggregate(
+                        &psbt, input: index, context: context,
+                        knownUTXOs: inputs.record.utxos,
+                        ownedOutputCoordinates: inputs.coordinates)
                 }
                 model.journalPSBT(stage: "musig2-aggregated", psbt: psbt)
-                let transaction = try vault.finalizeSpend(&psbt)
+                let transaction = try vault.finalizeSpend(
+                    &psbt, knownUTXOs: inputs.record.utxos,
+                    ownedOutputCoordinates: inputs.coordinates)
                 try await commitAndBroadcast(transaction, vault: vault, record: record)
             } catch {
                 self.error = error.localizedDescription

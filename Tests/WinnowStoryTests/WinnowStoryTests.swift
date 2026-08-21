@@ -434,7 +434,9 @@ struct WinnowStoryTests {
         let leo = try PSBT(base64: companion.partialSignInheritance(psbtBase64: created.base64, as: "leo"))
         let marina = try PSBT(base64: companion.partialSignInheritance(psbtBase64: created.base64, as: "marina"))
         var combined = try leo.combined(with: [marina])
-        let transaction = try vault.finalizeSpend(&combined)
+        let ownedCoordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
+        let transaction = try vault.finalizeSpend(
+            &combined, knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         #expect(transaction.inputs[0].witness.count >= 4)
     }
 
@@ -453,8 +455,10 @@ struct WinnowStoryTests {
         let context = try vault.muSig2Context(choice: 0, index: 0)
 
         var elenaNonce = created
-        var elenaSecrets = try vault.muSig2AttachNonce(&elenaNonce, input: 0, context: context,
-                                                       master: companion.master(for: "elena"))
+        let ownedCoordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
+        var elenaSecrets = try vault.muSig2AttachNonce(
+            &elenaNonce, input: 0, context: context, master: companion.master(for: "elena"),
+            knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         let mateoNonce = try companion.attachMateoNonces(psbtBase64: created.base64)
         let repeatedNonce = try StoryCompanion(state: mateoNonce.state)
             .attachMateoNonces(psbtBase64: created.base64)
@@ -466,15 +470,18 @@ struct WinnowStoryTests {
 
         var elenaSigned = withNonces
         try vault.muSig2Sign(&elenaSigned, input: 0, context: context,
-                             master: companion.master(for: "elena"), secretNonces: &elenaSecrets)
+                             master: companion.master(for: "elena"), secretNonces: &elenaSecrets,
+                             knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         let mateoSigned = try companion.signMateo(psbtBase64: withNonces.base64)
         #expect(mateoSigned.state.musigSecretNonces.isEmpty)
         let repeatedSigned = try StoryCompanion(state: mateoSigned.state)
             .signMateo(psbtBase64: withNonces.base64)
         #expect(repeatedSigned.psbt == mateoSigned.psbt)
         var combined = try elenaSigned.combined(with: [PSBT(base64: mateoSigned.psbt)])
-        try vault.muSig2Aggregate(&combined, input: 0, context: context)
-        let transaction = try vault.finalizeSpend(&combined)
+        try vault.muSig2Aggregate(&combined, input: 0, context: context,
+                                  knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
+        let transaction = try vault.finalizeSpend(
+            &combined, knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates)
         #expect(transaction.inputs[0].witness.count == 1)
         #expect(transaction.inputs[0].witness[0].count == 64)
     }
