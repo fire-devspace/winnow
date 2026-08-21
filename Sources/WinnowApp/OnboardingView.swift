@@ -8,12 +8,16 @@ import WalletCore
 /// *is* the history).
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var busy: String?
     @State private var error: String?
     @State private var mnemonic: String?
     @State private var writtenDown = false
     @State private var showImport = false
+    @State private var suppressAutomaticBackupResume = false
+    @State private var phraseEpoch = SensitivePresentationEpoch()
+    @State private var phraseTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -24,18 +28,35 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section {
-                    Button {
-                        create()
-                    } label: {
-                        Label("Create new wallet", systemImage: "plus.circle")
+                    if model.hasPendingBackup {
+                        Button {
+                            suppressAutomaticBackupResume = false
+                            resumePendingBackup()
+                        } label: {
+                            Label("Resume wallet backup", systemImage: "key.viewfinder")
+                        }
+                        .accessibilityIdentifier("resumeBackupButton")
+                    } else if model.walletID != nil {
+                        Button {
+                            model.finishOnboarding()
+                        } label: {
+                            Label("Continue with imported wallet", systemImage: "checkmark.circle")
+                        }
+                        .accessibilityIdentifier("resumeImportedWalletButton")
+                    } else {
+                        Button {
+                            create()
+                        } label: {
+                            Label("Create new wallet", systemImage: "plus.circle")
+                        }
+                        .accessibilityIdentifier("createWalletButton")
+                        Button {
+                            showImport = true
+                        } label: {
+                            Label("Import wallet bundle", systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("importWalletButton")
                     }
-                    .accessibilityIdentifier("createWalletButton")
-                    Button {
-                        showImport = true
-                    } label: {
-                        Label("Import wallet bundle", systemImage: "square.and.arrow.down")
-                    }
-                    .accessibilityIdentifier("importWalletButton")
                 } footer: {
                     Text("Network: \(model.network.rawValue) (change in Settings). Your backup appears immediately; peer and header synchronization continues while you secure it.")
                 }
@@ -59,7 +80,9 @@ struct OnboardingView: View {
                 // pending — re-present instead of stranding the user on the
                 // onboarding list. Done clears the flag before this fires, so
                 // the confirmed path cannot loop.
-                resumePendingBackup()
+                if scenePhase == .active, !suppressAutomaticBackupResume {
+                    resumePendingBackup()
+                }
             }) { words in
                 MnemonicBackupView(mnemonic: words.text, writtenDown: $writtenDown) {
                     model.finishOnboarding()
@@ -68,8 +91,12 @@ struct OnboardingView: View {
             .task {
                 // Relaunched mid-backup: resume the sheet with the same words,
                 // straight from the Keychain (#5).
-                if mnemonic == nil { await loadPendingBackup() }
+                if mnemonic == nil { resumePendingBackup() }
             }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { clearSensitiveOnboardingState() }
+            }
+            .onDisappear { clearSensitiveOnboardingState() }
         }
     }
 
@@ -87,32 +114,75 @@ struct OnboardingView: View {
     }
 
     private func create() {
+        phraseTask?.cancel()
+        let token = phraseEpoch.begin()
         busy = "Creating the wallet…"
         error = nil
-        Task {
+        phraseTask = Task { @MainActor in
             do {
                 let words = try await model.createWallet()
+                try Task.checkCancellation()
+                guard phraseEpoch.accepts(
+                    token, whilePresentationIsAllowed: scenePhase != .background
+                ) else { return }
                 busy = nil
                 mnemonic = words
+            } catch is CancellationError {
+                // The Keychain backup-pending flag remains the source of
+                // truth if creation crossed an inactive transition.
             } catch {
-                busy = nil
-                self.error = error.localizedDescription
+                if phraseEpoch.accepts(token, whilePresentationIsAllowed: scenePhase != .background) {
+                    busy = nil
+                    self.error = error.localizedDescription
+                }
             }
+            guard phraseEpoch.accepts(
+                token, whilePresentationIsAllowed: scenePhase != .background
+            ) else {
+                return
+            }
+            phraseTask = nil
         }
     }
 
     private func resumePendingBackup() {
-        Task { await loadPendingBackup() }
+        phraseTask?.cancel()
+        let token = phraseEpoch.begin()
+        phraseTask = Task { @MainActor in
+            do {
+                let words = try await model.pendingBackupMnemonic()
+                try Task.checkCancellation()
+                guard phraseEpoch.accepts(
+                    token, whilePresentationIsAllowed: scenePhase != .background
+                ) else { return }
+                mnemonic = words
+            } catch let authError as LAError where authError.code == .userCancel {
+                // The backup remains pending and will be offered again.
+            } catch is CancellationError {
+                // Leaving the active scene intentionally abandons this reveal.
+            } catch {
+                if phraseEpoch.accepts(token, whilePresentationIsAllowed: scenePhase != .background) {
+                    self.error = error.localizedDescription
+                }
+            }
+            guard phraseEpoch.accepts(
+                token, whilePresentationIsAllowed: scenePhase != .background
+            ) else {
+                return
+            }
+            phraseTask = nil
+        }
     }
 
-    private func loadPendingBackup() async {
-        do {
-            mnemonic = try await model.pendingBackupMnemonic()
-        } catch let authError as LAError where authError.code == .userCancel {
-            // The backup remains pending and will be offered again.
-        } catch {
-            self.error = error.localizedDescription
-        }
+    private func clearSensitiveOnboardingState() {
+        suppressAutomaticBackupResume = true
+        phraseEpoch.invalidate()
+        phraseTask?.cancel()
+        phraseTask = nil
+        mnemonic = nil
+        writtenDown = false
+        busy = nil
+        error = nil
     }
 }
 
@@ -123,6 +193,7 @@ private struct MnemonicBackupView: View {
     @Binding var writtenDown: Bool
     let onFinish: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     private var words: [String] { mnemonic.split(separator: " ").map(String.init) }
 
@@ -173,6 +244,9 @@ private struct MnemonicBackupView: View {
             }
             .navigationTitle("Wallet backup")
             .interactiveDismissDisabled(!writtenDown)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { dismiss() }
+            }
         }
     }
 }
@@ -182,12 +256,15 @@ private struct MnemonicBackupView: View {
 private struct ImportBundleView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var json = ""
     @State private var busy = false
     @State private var error: String?
     @State private var report: ImportReport?
     @State private var imported = false
+    @State private var importEpoch = SensitivePresentationEpoch()
+    @State private var importTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -218,7 +295,8 @@ private struct ImportBundleView: View {
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
-                if report != nil || imported {
+                if report != nil || imported
+                    || (model.walletID != nil && !model.hasPendingBackup) {
                     if let report {
                         Section("Verification report") {
                             LabeledContent("Scanned from block", value: "\(report.scannedFromHeight)")
@@ -252,26 +330,67 @@ private struct ImportBundleView: View {
                 }
             }
             .navigationTitle("Import wallet")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        clearSensitiveImport()
+                        dismiss()
+                    }
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { clearSensitiveImport() }
+            }
+            .onDisappear { clearSensitiveImport() }
         }
     }
 
     private func importBundle() {
+        importTask?.cancel()
+        let token = importEpoch.begin()
+        let payload = json
         busy = true
         error = nil
-        Task {
+        importTask = Task { @MainActor in
             do {
-                report = try await model.importWallet(bundleJSON: json)
+                let result = try await model.importWallet(bundleJSON: payload)
+                try Task.checkCancellation()
+                guard importEpoch.accepts(
+                    token, whilePresentationIsAllowed: scenePhase != .background
+                ) else { return }
+                report = result
                 // A seed-bearing bundle must not remain in view state after
                 // it has been handed to WalletCore/Keychain.
                 json = ""
                 imported = true
-                if report == nil {
+                if result == nil {
                     error = "Imported, but no peers were reachable for verification yet — the regular sync will verify from the bundle's height."
                 }
+            } catch is CancellationError {
+                // The text is cleared below; an import that already crossed
+                // its commit boundary remains discoverable through AppModel.
             } catch {
-                self.error = error.localizedDescription
+                if importEpoch.accepts(token, whilePresentationIsAllowed: scenePhase != .background) {
+                    self.error = error.localizedDescription
+                }
+            }
+            guard importEpoch.accepts(
+                token, whilePresentationIsAllowed: scenePhase != .background
+            ) else {
+                return
             }
             busy = false
+            importTask = nil
         }
+    }
+
+    private func clearSensitiveImport() {
+        importEpoch.invalidate()
+        importTask?.cancel()
+        importTask = nil
+        json = ""
+        busy = false
+        error = nil
+        report = nil
     }
 }

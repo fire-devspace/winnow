@@ -73,15 +73,19 @@ final class WinnowAppUITests: XCTestCase {
     /// wallet shell (balance visible) unless onboarding is expected.
     @discardableResult
     func launchApp(run: String = "main", reset: Bool = false, clipboard: String? = nil,
-                   expectOnboarding: Bool = false) -> XCUIApplication {
+                   expectOnboarding: Bool = false,
+                   configureLocalNode: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = [
             "WINNOW_E2E": "1",
             "WINNOW_E2E_RUN": run,
-            "WINNOW_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
-            "WINNOW_E2E_CHALLENGE": BitcoinCLI.challengeHex,
             "WINNOW_E2E_ENTROPY": Self.entropyHex,
         ]
+        if configureLocalNode {
+            app.launchEnvironment["WINNOW_E2E_PEER"] =
+                "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)"
+            app.launchEnvironment["WINNOW_E2E_CHALLENGE"] = BitcoinCLI.challengeHex
+        }
         if reset { app.launchEnvironment["WINNOW_E2E_RESET"] = "1" }
         if let clipboard { app.launchEnvironment["WINNOW_E2E_CLIPBOARD"] = clipboard }
         app.launch()
@@ -461,6 +465,21 @@ final class WinnowAppUITests: XCTestCase {
             // Fallback: type the JSON into the editor (autocorrect disabled).
             app.typeInto("importJSONEditor", json)
         }
+
+        // Imported JSON may contain the seed. Leaving the active scene must
+        // erase it before the app can be foregrounded again.
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["importPasteButton"].waitForExistence(timeout: 20),
+                      "import sheet did not return after activation")
+        XCTAssertFalse(((app.textViews["importJSONEditor"].value as? String) ?? "")
+            .contains("lastKnownHeight"), "seed-bearing import JSON survived backgrounding")
+        app.buttons["importPasteButton"].tap()
+        _ = poll(timeout: 15, interval: 1, "bundle re-pasted after lifecycle clearing") {
+            if allowPaste.exists { allowPaste.tap() }
+            return ((app.textViews["importJSONEditor"].value as? String) ?? "")
+                .contains("lastKnownHeight")
+        }
         let verifyStart = Date()
         app.buttons["importVerifyButton"].tap()
         let reportVisible = poll(timeout: 300, interval: 3, "verification report") {
@@ -532,6 +551,13 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Change (this vault)"].exists, "review lists no change output")
         Timings.record("vault", step: "cosign-review", from: reviewStart)
         Screenshots.capture(app, "15-vault-cosign", testCase: self)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertFalse(review.waitForExistence(timeout: 3),
+                       "vault signing review survived backgrounding")
+        XCTAssertTrue(signButton.waitForExistence(timeout: 20),
+                      "vault signing sheet was not dismissed on background")
     }
 
     // MARK: - 09 Backup resume + recovery-phrase reveal (#5)
@@ -546,11 +572,10 @@ final class WinnowAppUITests: XCTestCase {
         let backupEnvironment: [String: String] = [
             "WINNOW_E2E": "1",
             "WINNOW_E2E_RUN": "backup",
-            "WINNOW_E2E_PEER": "\(BitcoinCLI.nodeHost):\(BitcoinCLI.p2pPort)",
-            "WINNOW_E2E_CHALLENGE": BitcoinCLI.challengeHex,
             "WINNOW_E2E_ENTROPY": Self.entropyHex,
         ]
-        let app = launchApp(run: "backup", reset: true, expectOnboarding: true)
+        let app = launchApp(run: "backup", reset: true, expectOnboarding: true,
+                            configureLocalNode: false)
         app.buttons["createWalletButton"].tap()
         XCTAssertTrue(app.switches["writtenDownToggle"].waitForExistence(timeout: 180),
                       "backup sheet did not appear after create")
@@ -565,9 +590,25 @@ final class WinnowAppUITests: XCTestCase {
                       "relaunch did not resume the backup sheet — backup skipped (#5)")
         Screenshots.capture(resumed, "21-backup-resumed", testCase: self)
 
+        // A background transition erases the phrase and dismisses its sheet;
+        // resuming requires another explicit action (and production auth).
+        XCUIDevice.shared.press(.home)
+        resumed.activate()
+        XCTAssertFalse(resumed.switches["writtenDownToggle"].waitForExistence(timeout: 3),
+                       "onboarding recovery phrase survived backgrounding")
+        let resumeBackup = resumed.buttons["resumeBackupButton"]
+        XCTAssertTrue(resumeBackup.waitForExistence(timeout: 20),
+                      "pending backup has no explicit resume action")
+        resumeBackup.tap()
+        XCTAssertTrue(resumed.switches["writtenDownToggle"].waitForExistence(timeout: 60),
+                      "explicit backup resume did not restore the authenticated flow")
+
         // Complete the backup: toggle + Done -> wallet home.
         resumed.flipSwitch(resumed.switches["writtenDownToggle"])
-        resumed.buttons["backupDoneButton"].tap()
+        let backupDone = resumed.buttons["backupDoneButton"]
+        XCTAssertTrue(scrollUntilExists(resumed, backupDone, maxSwipes: 4),
+                      "backup Done button was not reachable after explicit resume")
+        backupDone.tap()
         XCTAssertTrue(resumed.staticTexts["balanceText"].waitForExistence(timeout: 60),
                       "home did not appear after backup Done")
 
@@ -591,7 +632,51 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(settled.buttons["settingsCopyPhraseButton"].exists,
                       "Settings recovery screen does not offer phrase copy")
         Screenshots.capture(settled, "22-phrase-revealed", testCase: self)
-        settled.buttons["Close"].tap()
+        XCUIDevice.shared.press(.home)
+        settled.activate()
+        XCTAssertFalse(settled.staticTexts[firstWord].waitForExistence(timeout: 3),
+                       "Settings recovery phrase survived backgrounding")
+        XCTAssertTrue(scrollUntilExists(settled, revealButton, up: true),
+                      "phrase sheet did not dismiss to Settings")
+
+        // A seed-bearing export is staged only for the lifetime of its sheet.
+        let exportButton = settled.buttons["exportBundleButton"]
+        XCTAssertTrue(scrollUntilExists(settled, exportButton, up: true),
+                      "no export button after phrase dismissal")
+        exportButton.tap()
+        let seedToggle = settled.switches["exportIncludeMnemonicToggle"]
+        XCTAssertTrue(seedToggle.waitForExistence(timeout: 20), "no seed-export toggle")
+        settled.flipSwitch(seedToggle)
+        settled.buttons["exportConfirmButton"].tap()
+        let seedAlert = settled.alerts["Include the recovery phrase?"]
+        XCTAssertTrue(seedAlert.waitForExistence(timeout: 10), "no seed-export warning")
+        seedAlert.buttons["Export with phrase"].tap()
+        let shareLink = settled.buttons["exportShareLink"]
+        XCTAssertTrue(shareLink.waitForExistence(timeout: 30), "seed export was not staged")
+        XCUIDevice.shared.press(.home)
+        settled.activate()
+        XCTAssertFalse(shareLink.waitForExistence(timeout: 3),
+                       "seed-bearing staged export survived backgrounding")
+        XCTAssertTrue(scrollUntilExists(settled, exportButton, up: true),
+                      "seed export sheet did not dismiss to Settings")
+        settled.terminate()
+
+        // Imported JSON can carry the same seed. It is erased immediately on
+        // background even before parsing or authentication begins.
+        let importApp = launchApp(run: "import-lifecycle", reset: true,
+                                  expectOnboarding: true, configureLocalNode: false)
+        importApp.buttons["importWalletButton"].tap()
+        let privateMarker = "seed-bearing-private-material"
+        importApp.typeInto("importJSONEditor", privateMarker)
+        XCTAssertTrue(((importApp.textViews["importJSONEditor"].value as? String) ?? "")
+            .contains(privateMarker), "import test marker was not entered")
+        XCUIDevice.shared.press(.home)
+        importApp.activate()
+        XCTAssertTrue(importApp.buttons["importPasteButton"].waitForExistence(timeout: 20),
+                      "empty import sheet did not remain available")
+        XCTAssertFalse(((importApp.textViews["importJSONEditor"].value as? String) ?? "")
+            .contains(privateMarker), "import text survived backgrounding")
+        importApp.terminate()
     }
 
     // MARK: - 08 Export bundle (Settings -> Backup, #18)
@@ -670,6 +755,11 @@ final class WinnowAppUITests: XCTestCase {
             .exists, "no shared-file note")
         Screenshots.capture(app, "19-export-seed-redacted", testCase: self)
 
-        app.buttons["Close"].tap()
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertFalse(shareLink.waitForExistence(timeout: 3),
+                       "staged seed export survived backgrounding")
+        XCTAssertTrue(scrollUntilExists(app, exportButton, up: true),
+                      "seed export sheet did not dismiss to Settings")
     }
 }

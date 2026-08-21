@@ -17,6 +17,7 @@ struct VaultSignView: View {
     let recordID: String
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     enum SignError: LocalizedError {
         case unknownInput
@@ -47,6 +48,8 @@ struct VaultSignView: View {
     /// second nonce or sign twice while this sheet remains open.
     @State private var nonceSessionStarted = false
     @State private var signedMuSig2ThisSession = false
+    @State private var operationEpoch = SensitivePresentationEpoch()
+    @State private var operationTask: Task<Void, Never>?
 
     private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
     private var vault: Vault? { record.flatMap { try? Vault($0.descriptor, network: model.network) } }
@@ -139,9 +142,18 @@ struct VaultSignView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        clearSensitiveSigningState()
+                        dismiss()
+                    }
                 }
             }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .background else { return }
+                clearSensitiveSigningState()
+                dismiss()
+            }
+            .onDisappear { clearSensitiveSigningState() }
         }
     }
 
@@ -386,10 +398,11 @@ struct VaultSignView: View {
             error = SignError.noWorkingPSBT.localizedDescription
             return
         }
+        operationTask?.cancel()
+        let token = operationEpoch.begin()
         authorizing = true
         error = nil
-        Task {
-            defer { authorizing = false }
+        operationTask = Task { @MainActor in
             do {
                 let psbt = try await model.withMasterKey(
                     reason: "Sign this shared-vault transaction") { master in
@@ -400,30 +413,47 @@ struct VaultSignView: View {
                         ownedOutputCoordinates: inputs.coordinates)
                     return candidate
                 }
+                try Task.checkCancellation()
+                guard accepts(token) else { return }
                 working = psbt
                 output = psbt.base64
                 model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
+            } catch is CancellationError {
+                // Inactive/background transitions deliberately abandon output.
             } catch {
-                self.error = error.localizedDescription
+                if accepts(token) { self.error = error.localizedDescription }
             }
+            guard accepts(token) else { return }
+            authorizing = false
+            operationTask = nil
         }
     }
 
     private func finalizeAndBroadcast() {
         guard !broadcasting, broadcastTxid == nil,
               var psbt = working, let vault, let record else { return }
+        operationTask?.cancel()
+        let token = operationEpoch.begin()
         broadcasting = true
-        Task {
-            defer { broadcasting = false }
+        operationTask = Task { @MainActor in
             do {
+                try Task.checkCancellation()
                 let inputs = try authorizationInputs()
                 let transaction = try vault.finalizeSpend(
                     &psbt, knownUTXOs: inputs.record.utxos,
                     ownedOutputCoordinates: inputs.coordinates)
-                try await commitAndBroadcast(transaction, vault: vault, record: record)
+                let txid = try await commitAndBroadcast(transaction, vault: vault, record: record)
+                guard accepts(token) else { return }
+                broadcastTxid = txid
+            } catch is CancellationError {
+                // Broadcast may already have crossed its external commit
+                // point; AppModel remains the source of truth after dismissal.
             } catch {
-                self.error = error.localizedDescription
+                if accepts(token) { self.error = error.localizedDescription }
             }
+            guard accepts(token) else { return }
+            broadcasting = false
+            operationTask = nil
         }
     }
 
@@ -434,10 +464,11 @@ struct VaultSignView: View {
             error = SignError.noWorkingPSBT.localizedDescription
             return
         }
+        operationTask?.cancel()
+        let token = operationEpoch.begin()
         authorizing = true
         error = nil
-        Task {
-            defer { authorizing = false }
+        operationTask = Task { @MainActor in
             do {
                 let result = try await model.withMasterKey(
                     reason: "Start signing this MuSig2 vault transaction") { master in
@@ -454,24 +485,33 @@ struct VaultSignView: View {
                     }
                     return (psbt, nonces)
                 }
+                try Task.checkCancellation()
+                guard accepts(token) else { return }
                 secretNonces = result.1
                 nonceSessionStarted = true
                 working = result.0
                 output = result.0.base64
                 model.journalPSBT(stage: "musig2-public-nonces", psbt: result.0)
+            } catch is CancellationError {
+                // Secret nonces produced for an invalidated presentation are
+                // never installed into view state or exposed for round two.
             } catch {
-                self.error = error.localizedDescription
+                if accepts(token) { self.error = error.localizedDescription }
             }
+            guard accepts(token) else { return }
+            authorizing = false
+            operationTask = nil
         }
     }
 
     private func signMuSig2() {
         guard let initial = working else { return }
         let initialNonces = secretNonces
+        operationTask?.cancel()
+        let token = operationEpoch.begin()
         authorizing = true
         error = nil
-        Task {
-            defer { authorizing = false }
+        operationTask = Task { @MainActor in
             do {
                 let psbt = try await model.withMasterKey(
                     reason: "Complete signing this MuSig2 vault transaction") { master in
@@ -493,24 +533,34 @@ struct VaultSignView: View {
                     }
                     return psbt
                 }
+                try Task.checkCancellation()
+                guard accepts(token) else { return }
                 working = psbt
                 output = psbt.base64
                 secretNonces.removeAll(keepingCapacity: false)
                 signedMuSig2ThisSession = true
                 model.journalPSBT(stage: "musig2-partial-signed", psbt: psbt)
+            } catch is CancellationError {
+                // The presentation was invalidated; the session cannot be
+                // resumed with the old nonce material.
             } catch {
-                self.error = error.localizedDescription
+                if accepts(token) { self.error = error.localizedDescription }
             }
+            guard accepts(token) else { return }
+            authorizing = false
+            operationTask = nil
         }
     }
 
     private func aggregateAndBroadcast() {
         guard !broadcasting, broadcastTxid == nil,
               var psbt = working, let vault, let record else { return }
+        operationTask?.cancel()
+        let token = operationEpoch.begin()
         broadcasting = true
-        Task {
-            defer { broadcasting = false }
+        operationTask = Task { @MainActor in
             do {
+                try Task.checkCancellation()
                 let inputs = try authorizationInputs()
                 for index in psbt.inputs.indices {
                     let context = try context(for: psbt.inputs[index], vault: vault, record: record)
@@ -523,10 +573,18 @@ struct VaultSignView: View {
                 let transaction = try vault.finalizeSpend(
                     &psbt, knownUTXOs: inputs.record.utxos,
                     ownedOutputCoordinates: inputs.coordinates)
-                try await commitAndBroadcast(transaction, vault: vault, record: record)
+                let txid = try await commitAndBroadcast(transaction, vault: vault, record: record)
+                guard accepts(token) else { return }
+                broadcastTxid = txid
+            } catch is CancellationError {
+                // See finalizeAndBroadcast: the persistent model reconciles
+                // an operation that crossed the broadcast boundary.
             } catch {
-                self.error = error.localizedDescription
+                if accepts(token) { self.error = error.localizedDescription }
             }
+            guard accepts(token) else { return }
+            broadcasting = false
+            operationTask = nil
         }
     }
 
@@ -535,12 +593,32 @@ struct VaultSignView: View {
     /// Broadcasts the finalized spend and commits it to the vault's local
     /// UTXO set (inputs out, change in pending — the `Wallet.send` rule).
     private func commitAndBroadcast(_ transaction: BitcoinTransaction, vault: Vault,
-                                    record: VaultRecord) async throws {
+                                    record: VaultRecord) async throws -> Data {
         let txid = try await model.broadcast(transaction)
         let changeIndex = record.nextChangeIndex
         let changeScript = try? vault.scriptPubKey(index: changeIndex, choice: AddressChain.change.rawValue)
         _ = await model.recordVaultSpend(id: record.id, transaction: transaction,
                                          changeScriptPubKey: changeScript, changeIndex: changeIndex)
-        broadcastTxid = txid
+        return txid
+    }
+
+    private func accepts(_ token: SensitivePresentationEpoch.Token) -> Bool {
+        operationEpoch.accepts(token, whilePresentationIsAllowed: scenePhase != .background)
+    }
+
+    private func clearSensitiveSigningState() {
+        operationEpoch.invalidate()
+        operationTask?.cancel()
+        operationTask = nil
+        pasted = ""
+        working = nil
+        output = nil
+        error = nil
+        broadcastTxid = nil
+        broadcasting = false
+        authorizing = false
+        secretNonces.removeAll(keepingCapacity: false)
+        nonceSessionStarted = false
+        signedMuSig2ThisSession = false
     }
 }

@@ -610,6 +610,7 @@ final class AppModel {
     /// user backs up the phrase.
     func createWallet() async throws -> String {
         try await authenticateSensitiveAction(reason: "Create and reveal a new wallet recovery phrase")
+        try Task.checkCancellation()
         await buildStackIfNeeded()
         guard let stack else { throw AppError.noStack }
         let knownHeight = await creationHeightForNewWallet()
@@ -649,6 +650,9 @@ final class AppModel {
             try await authenticateSensitiveAction(
                 reason: "Import this wallet's recovery phrase")
         }
+        // Do not cross the Keychain/storage commit boundary after the view
+        // that requested a seed-bearing import has been invalidated.
+        try Task.checkCancellation()
         e2e?.journal("import.started", fields: [
             "bundleVersion": String(bundle.version),
             "seedBearing": String(bundle.mnemonic != nil),
@@ -702,6 +706,7 @@ final class AppModel {
             try await authenticateSensitiveAction(
                 reason: "Export this wallet with its recovery phrase")
         }
+        try Task.checkCancellation()
         // The UI snapshot already prefers filters.nextScanHeight; export
         // must too, in case the last persist was skipped (failed pass).
         if let filters = stack?.filters {
@@ -785,7 +790,9 @@ final class AppModel {
     /// only between `createWallet()` and the backup sheet's Done. Read from
     /// the Keychain on demand so a relaunch mid-backup resumes the sheet with
     /// the same words.
-    private var hasPendingBackup: Bool {
+    /// UI-readable without touching the Keychain. The phrase itself remains
+    /// behind `pendingBackupMnemonic()` and device-owner authentication.
+    var hasPendingBackup: Bool {
         guard let walletID else { return false }
         return defaults.bool(forKey: DefaultsKey.backupPending(walletID))
     }
@@ -794,6 +801,7 @@ final class AppModel {
         guard let walletID, hasPendingBackup else { return nil }
         try await authenticateSensitiveAction(
             reason: "Resume this wallet's recovery-phrase backup")
+        try Task.checkCancellation()
         guard case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw AppError.mnemonicUnavailable
         }
@@ -808,6 +816,7 @@ final class AppModel {
     func revealMnemonic() async throws -> String {
         guard let walletID else { throw AppError.noWallet }
         try await authenticateSensitiveAction(reason: "Reveal this wallet's recovery phrase")
+        try Task.checkCancellation()
         guard case let .mnemonic(words) = try keyStore.load(walletID: walletID) else {
             throw WalletError.mnemonicUnavailable
         }
@@ -1193,6 +1202,7 @@ final class AppModel {
     func withMasterKey<T>(reason: String, _ body: (HDKey) throws -> T) async throws -> T {
         guard let walletID else { throw AppError.noWallet }
         try await authenticateSensitiveAction(reason: reason)
+        try Task.checkCancellation()
         let master: HDKey
         switch try keyStore.load(walletID: walletID) {
         case let .mnemonic(words): master = try HDKey(seed: BIP39.seed(mnemonic: words))
