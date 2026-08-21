@@ -427,6 +427,7 @@ private struct RevealPhraseView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                    .privacySensitive()
                     .accessibilityIdentifier("revealedPhraseGrid")
                 } footer: {
                     Text("These words are the wallet. Anyone who sees them can spend — keep them offline, on paper, and close this screen when done.")
