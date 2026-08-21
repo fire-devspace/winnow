@@ -18,6 +18,13 @@ final class AppModel {
         case loading
         case onboarding
         case ready
+        case storageDamaged(String)
+    }
+
+    enum PersistedWalletOpenResult {
+        case missing
+        case opened(Wallet)
+        case damaged(String)
     }
 
     enum AppError: LocalizedError {
@@ -215,7 +222,13 @@ final class AppModel {
             UIPasteboard.general.string = clipboard
         }
         await vaultStore.configure(storageURL: vaultsURL())
-        if let walletURL = walletURL(), let wallet = try? Wallet.open(storageURL: walletURL, keyStore: keyStore) {
+        guard let walletURL = walletURL() else {
+            stage = .storageDamaged(
+                "Winnow could not access its protected local storage. No wallet files or keys were changed.")
+            return
+        }
+        switch Self.openPersistedWallet(at: walletURL, keyStore: keyStore) {
+        case let .opened(wallet):
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
@@ -226,14 +239,35 @@ final class AppModel {
             if backupPending {
                 e2e?.journal("backup.pendingResumed", fields: ["walletID": walletID ?? ""])
             }
-        } else {
+        case .missing:
             stage = .onboarding
+        case let .damaged(details):
+            stage = .storageDamaged(details)
+            return
         }
         e2e?.journal("app.booted", fields: [
             "stage": stage == .ready ? "ready" : "onboarding",
             "walletID": walletID ?? "",
         ])
         await refresh()
+    }
+
+    static func openPersistedWallet(at url: URL,
+                                    keyStore: any KeyStore) -> PersistedWalletOpenResult {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .missing }
+        do {
+            return .opened(try Wallet.open(storageURL: url, keyStore: keyStore))
+        } catch {
+            return .damaged(
+                "Winnow found local wallet data but could not safely read it. The files and protected key were left untouched. Retry; if this continues, restore from a known-good wallet bundle or ask for help before changing anything.")
+        }
+    }
+
+    func retryWalletOpen() async {
+        guard case .storageDamaged = stage else { return }
+        stage = .loading
+        await boot()
+        if isActive { await activate() }
     }
 
     /// Sync-while-active: the stack runs only while the scene is foreground.
@@ -255,6 +289,7 @@ final class AppModel {
     }
 
     private func activate() async {
+        if case .storageDamaged = stage { return }
         await buildStackIfNeeded()
         startPhasePolling()
         await stack?.pool.start()
@@ -1148,15 +1183,24 @@ final class AppModel {
         network = newNetwork
         defaults.set(newNetwork.rawValue, forKey: DefaultsKey.network)
         await vaultStore.configure(storageURL: vaultsURL())
-        if let walletURL = walletURL(), let wallet = try? Wallet.open(storageURL: walletURL, keyStore: keyStore) {
+        guard let walletURL = walletURL() else {
+            stage = .storageDamaged(
+                "Winnow could not access its protected local storage. No wallet files or keys were changed.")
+            return
+        }
+        switch Self.openPersistedWallet(at: walletURL, keyStore: keyStore) {
+        case let .opened(wallet):
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
             // A wallet whose backup was never confirmed re-enters onboarding:
             // the backup sheet resumes from the Keychain (#5).
             stage = pendingBackupMnemonic() == nil ? .ready : .onboarding
-        } else {
+        case .missing:
             stage = .onboarding
+        case let .damaged(details):
+            stage = .storageDamaged(details)
+            return
         }
         await refresh()
         if isActive { await activate() }

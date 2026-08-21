@@ -15,12 +15,34 @@ struct WinnowApp: App {
                     OnboardingView()
                 case .ready:
                     MainTabView()
+                case let .storageDamaged(message):
+                    StorageDamagedView(message: message)
                 }
             }
             .environment(model)
             .task { await model.boot() }
             .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
         }
+    }
+}
+
+struct StorageDamagedView: View {
+    let message: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Wallet data needs attention", systemImage: "externaldrive.badge.exclamationmark")
+        } description: {
+            Text(message)
+        } actions: {
+            Button("Retry without changing anything") {
+                Task { await model.retryWalletOpen() }
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("retryDamagedWalletButton")
+        }
+        .padding()
     }
 }
 
