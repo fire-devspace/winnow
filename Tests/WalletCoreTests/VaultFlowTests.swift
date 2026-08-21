@@ -230,6 +230,59 @@ struct VaultFlowTests {
         #expect(result.keyCount == 3)
     }
 
+    @Test("vault review trusts known coins and descriptor scripts, not PSBT labels")
+    func vaultSpendReview() throws {
+        let masters = try Self.masters()
+        let descriptor = try Vault.multiADescriptor(
+            threshold: 2, cosigners: masters.map { try Self.keyExpression(master: $0) })
+        let vault = try Vault(descriptor: descriptor, network: .signet)
+        let utxo = try Self.funding(vault: vault, amount: 100_000)
+        let changeCoordinate = Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0)
+        let created = try vault.createSpend(
+            utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
+            changeIndex: 0, feeRateSatPerVByte: 2)
+
+        let review = try vault.reviewSpend(
+            created, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        #expect(review.inputTotal == 100_000)
+        #expect(review.outputTotal + review.fee == review.inputTotal)
+        #expect(review.outputs.first { $0.scriptPubKey == destination }?.isVaultOwned == false)
+        #expect(review.outputs.first { $0.scriptPubKey != destination }?.isVaultOwned == true)
+
+        // Forge the attacker's output metadata to look exactly like the real
+        // change metadata. Ownership still comes from its actual script.
+        var forgedLabel = created
+        let externalIndex = try #require(forgedLabel.outputs.firstIndex { $0.script == destination })
+        let changeIndex = try #require(forgedLabel.outputs.firstIndex { $0.script != destination })
+        forgedLabel.outputs[externalIndex].tapBIP32Derivation =
+            forgedLabel.outputs[changeIndex].tapBIP32Derivation
+        let forgedReview = try vault.reviewSpend(
+            forgedLabel, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        #expect(forgedReview.outputs[externalIndex].isVaultOwned == false)
+
+        var wrongAmount = created
+        wrongAmount.inputs[0].witnessUTXO = SighashBIP341.SpentOutput(
+            amount: utxo.amount + 1, scriptPubKey: utxo.scriptPubKey)
+        #expect(throws: VaultError.self) {
+            _ = try vault.reviewSpend(
+                wrongAmount, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        }
+
+        var unsafeSighash = created
+        unsafeSighash.inputs[0].sighashType = 2 // SIGHASH_NONE
+        #expect(throws: VaultError.self) {
+            _ = try vault.reviewSpend(
+                unsafeSighash, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        }
+
+        var changedPolicy = created
+        changedPolicy.inputs[0].tapInternalKey = Data(repeating: 0x44, count: 32)
+        #expect(throws: VaultError.self) {
+            _ = try vault.reviewSpend(
+                changedPolicy, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        }
+    }
+
     // MARK: - 2-of-2 MuSig2 key-path vault
 
     @Test("2-of-2 musig vault: nonce round, partial sigs, aggregate, BIP340-verifiable")
@@ -249,6 +302,14 @@ struct VaultFlowTests {
         #expect(created.inputs[0].tapInternalKey == context.internalKey)
         // The tweaked aggregate key is exactly the vault's output program.
         #expect(utxo.scriptPubKey == Data([0x51, 0x20]) + context.outputKey)
+        // MuSig2 outputs do not carry per-key derivation labels. Descriptor
+        // script matching still recognizes the real change output.
+        let review = try vault.reviewSpend(
+            created, knownUTXOs: [utxo], ownedOutputCoordinates: [
+                Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0),
+            ])
+        let changeScript = try vault.scriptPubKey(index: 0, choice: AddressChain.change.rawValue)
+        #expect(review.outputs.first { $0.scriptPubKey == changeScript }?.isVaultOwned == true)
 
         // Round 1: each cosigner attaches its public nonce to its own copy.
         let base64 = created.base64

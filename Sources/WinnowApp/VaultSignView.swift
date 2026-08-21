@@ -62,11 +62,8 @@ struct VaultSignView: View {
     private var minNonces: Int { working?.inputs.map(\.musig2PubNonces.count).min() ?? 0 }
     private var minPartialSigs: Int { working?.inputs.map(\.musig2PartialSigs.count).min() ?? 0 }
     private var workingInputsRemainAvailable: Bool {
-        guard let working, let record else { return false }
-        return working.inputs.allSatisfy { input in
-            guard let txid = input.previousTxid, let vout = input.outputIndex else { return false }
-            return record.utxos.contains { $0.txid == txid && $0.vout == vout }
-        }
+        guard let working else { return false }
+        return (try? validateSpend(working)) != nil
     }
 
     var body: some View {
@@ -132,7 +129,7 @@ struct VaultSignView: View {
     private struct OutputLine {
         let destination: String
         let amount: Int64
-        let isChange: Bool
+        let isVaultOwned: Bool
     }
 
     private var hrp: String { model.network == .mainnet ? "bc" : "tb" }
@@ -151,27 +148,19 @@ struct VaultSignView: View {
         return address
     }
 
-    /// Outputs the spend pays. A non-empty output key-derivation marks the
-    /// vault's own change; everything else is money leaving the vault.
+    /// Outputs the spend pays. Vault ownership comes from matching each actual
+    /// locking script against locally expected descriptor derivations.
     private var outputLines: [OutputLine] {
-        guard let working else { return [] }
-        return working.outputs.map {
-            OutputLine(destination: destination(forScript: $0.script ?? Data()),
-                       amount: $0.amount ?? 0,
-                       isChange: !$0.tapBIP32Derivation.isEmpty)
+        guard let working, let review = try? validateSpend(working) else { return [] }
+        return review.outputs.map {
+            OutputLine(destination: destination(forScript: $0.scriptPubKey),
+                       amount: $0.amount, isVaultOwned: $0.isVaultOwned)
         }
     }
 
-    /// Fee is known only when every input carries its witnessUTXO amount.
-    private var inputAmountsKnown: Bool {
-        (working?.inputs.allSatisfy { $0.witnessUTXO != nil }) ?? false
-    }
-
     private var feeAmount: Int64? {
-        guard let working, inputAmountsKnown else { return nil }
-        let inputs = working.inputs.compactMap { $0.witnessUTXO?.amount }.reduce(0, +)
-        let outputs = outputLines.reduce(0) { $0 + $1.amount }
-        return inputs - outputs
+        guard let working else { return nil }
+        return try? validateSpend(working).fee
     }
 
     private var sighashRaw: UInt32 { working?.inputs.first?.sighashType ?? 0 }
@@ -191,9 +180,9 @@ struct VaultSignView: View {
                 let line = outputLines[index]
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
-                        Text(line.isChange ? "Change (this vault)" : "Pays")
+                        Text(line.isVaultOwned ? "Vault-owned output" : "Pays")
                             .font(.caption)
-                            .foregroundStyle(line.isChange ? Color.secondary : Color.primary)
+                            .foregroundStyle(line.isVaultOwned ? Color.secondary : Color.primary)
                         Spacer()
                         Text("\(line.amount) sat")
                             .font(.system(.callout, design: .monospaced))
@@ -219,7 +208,7 @@ struct VaultSignView: View {
         } header: {
             Text("Review — what you are signing")
         } footer: {
-            Text("A cosigner can propose any transaction. Your signature authorizes exactly these outputs — verify every destination and the fee before signing.")
+            Text("A cosigner can propose any transaction. Winnow verifies known inputs and vault-owned output scripts; your signature authorizes exactly the destinations and fee shown here.")
         }
     }
 
@@ -280,16 +269,33 @@ struct VaultSignView: View {
     }
 
     private var stalePSBTMessage: some View {
-        Text("This PSBT's input is no longer available. It may already have been spent; create a new PSBT instead.")
+        Text("This PSBT is no longer a valid spend of the vault's available coins. It may be stale or altered; create or import a valid PSBT instead.")
             .font(.footnote)
             .foregroundStyle(.orange)
+    }
+
+    /// Reconstructs the authorization review from trusted local vault state.
+    /// Output BIP32 metadata is never used to decide that an output is change.
+    private func validateSpend(_ psbt: PSBT) throws -> Vault.SpendReview {
+        guard let vault, let record else { throw SignError.unknownInput }
+        var coordinates = record.utxos.map {
+            Vault.OutputCoordinate(choice: $0.chain.rawValue, index: $0.index)
+        }
+        coordinates.append(Vault.OutputCoordinate(
+            choice: AddressChain.receive.rawValue, index: record.nextReceiveIndex))
+        coordinates.append(Vault.OutputCoordinate(
+            choice: AddressChain.change.rawValue, index: record.nextChangeIndex))
+        return try vault.reviewSpend(psbt, knownUTXOs: record.utxos,
+                                     ownedOutputCoordinates: coordinates)
     }
 
     private func addPasted() {
         error = nil
         do {
             let incoming = try PSBT(base64: pasted.trimmingCharacters(in: .whitespacesAndNewlines))
-            working = try working?.combined(with: [incoming]) ?? incoming
+            let candidate = try working?.combined(with: [incoming]) ?? incoming
+            _ = try validateSpend(candidate)
+            working = candidate
             if let working { model.journalPSBT(stage: "vault-psbt-combined", psbt: working) }
             pasted = ""
         } catch {
@@ -311,6 +317,7 @@ struct VaultSignView: View {
     private func signMultiA() {
         guard var psbt = working, let vault else { error = SignError.noWorkingPSBT.localizedDescription; return }
         do {
+            _ = try validateSpend(psbt)
             try model.withMasterKey { try vault.partialSign(&psbt, master: $0) }
             working = psbt
             output = psbt.base64
@@ -327,6 +334,7 @@ struct VaultSignView: View {
         Task {
             defer { broadcasting = false }
             do {
+                _ = try validateSpend(psbt)
                 let transaction = try vault.finalizeSpend(&psbt)
                 try await commitAndBroadcast(transaction, vault: vault, record: record)
             } catch {
@@ -340,6 +348,7 @@ struct VaultSignView: View {
     private func attachNonces() {
         guard var psbt = working, let vault, let record else { error = SignError.noWorkingPSBT.localizedDescription; return }
         do {
+            _ = try validateSpend(psbt)
             var nonces: [Int: [Data: Data]] = [:]
             for index in psbt.inputs.indices {
                 let context = try context(for: psbt.inputs[index], vault: vault, record: record)
@@ -360,6 +369,7 @@ struct VaultSignView: View {
     private func signMuSig2() {
         guard var psbt = working, let vault, let record else { return }
         do {
+            _ = try validateSpend(psbt)
             // Stage the nonce mutations alongside the PSBT. If a later input
             // fails, the visible working copy and the in-memory nonce session
             // both remain retryable instead of becoming half-consumed.
@@ -390,6 +400,7 @@ struct VaultSignView: View {
         Task {
             defer { broadcasting = false }
             do {
+                _ = try validateSpend(psbt)
                 for index in psbt.inputs.indices {
                     let context = try context(for: psbt.inputs[index], vault: vault, record: record)
                     try vault.muSig2Aggregate(&psbt, input: index, context: context)

@@ -10,6 +10,20 @@ public enum VaultError: Error, Equatable {
     case scriptMismatch(index: UInt32, choice: Int)
     /// None of the cosigner keys for this input derive from the loaded secret.
     case noCosignerKey(input: Int)
+    /// An imported spend proposal is not an exact, safe spend of known vault coins.
+    case invalidSpend(String)
+}
+
+extension VaultError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidDescriptor(reason): "The vault descriptor is invalid: \(reason)."
+        case let .scriptMismatch(index, choice):
+            "Vault key \(choice)/\(index) does not produce the stored Bitcoin output."
+        case let .noCosignerKey(input): "This device has no matching key for vault input \(input + 1)."
+        case let .invalidSpend(reason): "This vault spend is unsafe: \(reason)."
+        }
+    }
 }
 
 /// A shared-custody vault: a Taproot output descriptor backing either a
@@ -24,6 +38,32 @@ public enum VaultError: Error, Equatable {
 /// builds the spend PSBT, each cosigner partial-signs with the keys it holds,
 /// partials are combined, and the finalizer produces the raw transaction.
 public struct Vault: Sendable {
+    /// A descriptor coordinate that may legitimately receive money back into
+    /// this vault. The caller supplies its current receive/change frontiers;
+    /// PSBT output metadata is deliberately not trusted for ownership labels.
+    public struct OutputCoordinate: Hashable, Sendable {
+        public var choice: Int
+        public var index: UInt32
+
+        public init(choice: Int, index: UInt32) {
+            self.choice = choice
+            self.index = index
+        }
+    }
+
+    public struct SpendReview: Equatable, Sendable {
+        public struct Output: Equatable, Sendable {
+            public var amount: Int64
+            public var scriptPubKey: Data
+            public var isVaultOwned: Bool
+        }
+
+        public var outputs: [Output]
+        public var inputTotal: Int64
+        public var outputTotal: Int64
+        public var fee: Int64
+    }
+
     /// The two supported vault policies.
     public enum Policy: Equatable, Sendable {
         /// Script-path k-of-n over a single multi_a/sortedmulti_a leaf.
@@ -108,6 +148,111 @@ public struct Vault: Sendable {
     }
 
     // MARK: - Spending (creator role)
+
+    /// Validates an imported PSBT before it is displayed, signed, finalized,
+    /// or broadcast. Every input must be a unique, known vault UTXO with the
+    /// exact amount/script used by the sighash; its Taproot policy fields must
+    /// match this descriptor; every signature must commit to all outputs; and
+    /// all economic arithmetic must be valid Bitcoin amounts.
+    ///
+    /// Output ownership is determined only by matching the actual script to a
+    /// descriptor derivation supplied by the caller. Untrusted BIP32 metadata
+    /// can never make an attacker output appear to be vault change.
+    public func reviewSpend(_ psbt: PSBT, knownUTXOs: [WalletUTXO],
+                            ownedOutputCoordinates: [OutputCoordinate]) throws -> SpendReview {
+        let maxMoney: Int64 = 2_100_000_000_000_000
+        guard !psbt.inputs.isEmpty else { throw VaultError.invalidSpend("it has no inputs") }
+        guard !psbt.outputs.isEmpty else { throw VaultError.invalidSpend("it has no outputs") }
+
+        var seenOutpoints: [Transaction.Outpoint] = []
+        var inputTotal: Int64 = 0
+        for (inputIndex, input) in psbt.inputs.enumerated() {
+            guard let txid = input.previousTxid, txid.count == 32, let vout = input.outputIndex else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) has no complete outpoint")
+            }
+            let outpoint = Transaction.Outpoint(txid: txid, vout: vout)
+            guard !seenOutpoints.contains(outpoint) else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) repeats an earlier outpoint")
+            }
+            seenOutpoints.append(outpoint)
+            guard let known = knownUTXOs.first(where: { $0.outpoint == outpoint }) else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) is not an available vault coin")
+            }
+            guard known.amount > 0, known.amount <= maxMoney,
+                  let claimed = input.witnessUTXO, claimed == known.spentOutput else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) has the wrong amount or locking script")
+            }
+            guard try scriptPubKey(index: known.index, choice: known.chain.rawValue) == known.scriptPubKey else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) does not belong to this descriptor")
+            }
+            let rawSighash = input.sighashType ?? 0
+            guard rawSighash == 0 || rawSighash == 1 else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) does not commit to every output")
+            }
+            try validatePolicyFields(input, inputIndex: inputIndex, utxo: known)
+            let (sum, overflow) = inputTotal.addingReportingOverflow(known.amount)
+            guard !overflow, sum <= maxMoney else {
+                throw VaultError.invalidSpend("input amounts exceed Bitcoin's supply")
+            }
+            inputTotal = sum
+        }
+
+        let coordinates = Array(Set(ownedOutputCoordinates.filter { (0 ... 1).contains($0.choice) }))
+        guard coordinates.count <= 1_024 else {
+            throw VaultError.invalidSpend("too many candidate vault output paths")
+        }
+        var ownedScripts: Set<Data> = []
+        for coordinate in coordinates {
+            ownedScripts.insert(try scriptPubKey(index: coordinate.index, choice: coordinate.choice))
+        }
+
+        var outputTotal: Int64 = 0
+        var reviewedOutputs: [SpendReview.Output] = []
+        for (outputIndex, output) in psbt.outputs.enumerated() {
+            guard let amount = output.amount, amount > 0, amount <= maxMoney,
+                  let script = output.script, !script.isEmpty else {
+                throw VaultError.invalidSpend("output \(outputIndex + 1) has an invalid amount or script")
+            }
+            let (sum, overflow) = outputTotal.addingReportingOverflow(amount)
+            guard !overflow, sum <= maxMoney else {
+                throw VaultError.invalidSpend("output amounts exceed Bitcoin's supply")
+            }
+            outputTotal = sum
+            reviewedOutputs.append(SpendReview.Output(
+                amount: amount, scriptPubKey: script, isVaultOwned: ownedScripts.contains(script)))
+        }
+        guard outputTotal <= inputTotal else {
+            throw VaultError.invalidSpend("outputs exceed its known inputs")
+        }
+        return SpendReview(outputs: reviewedOutputs, inputTotal: inputTotal,
+                           outputTotal: outputTotal, fee: inputTotal - outputTotal)
+    }
+
+    private func validatePolicyFields(_ input: PSBT.Input, inputIndex: Int,
+                                      utxo: WalletUTXO) throws {
+        switch policy {
+        case .multiA:
+            let (internalKey, tree) = try descriptor.resolvedTaproot(
+                index: utxo.index, choice: utxo.chain.rawValue)
+            guard case let .leaf(version, script) = tree else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) has no expected vault leaf")
+            }
+            let control = try Taproot.controlBlock(
+                internalKey: internalKey, tree: tree!, leafIndex: 0)
+            let expected = PSBT.TapLeafScript(
+                controlBlock: control, script: script.bytes, leafVersion: version)
+            guard input.tapInternalKey == internalKey, input.tapLeafScripts == [expected] else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) changes the vault spending policy")
+            }
+        case .muSig2:
+            let context = try muSig2Context(choice: utxo.chain.rawValue, index: utxo.index)
+            guard input.tapInternalKey == context.internalKey,
+                  input.musig2ParticipantPubKeys.count == 1,
+                  input.musig2ParticipantPubKeys[context.aggregate] == context.participants else {
+                throw VaultError.invalidSpend("input \(inputIndex + 1) changes the MuSig2 participants")
+            }
+        }
+    }
 
     /// Builds the vault spend PSBT (creator role): coin selection and the
     /// unsigned transaction like `Wallet.send`, then the vault fields — for
