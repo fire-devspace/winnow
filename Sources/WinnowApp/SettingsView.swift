@@ -304,7 +304,10 @@ private struct ExportBundleView: View {
 
     @State private var includeMnemonic = false
     @State private var confirmSeed = false
-    @State private var json: String?
+    /// Display-only JSON. A seed-bearing export is redacted before it enters
+    /// view state; the complete value goes directly to the protected staging
+    /// file and is then released.
+    @State private var previewJSON: String?
     @State private var fileURL: URL?
     @State private var error: String?
     @State private var busy = false
@@ -330,10 +333,9 @@ private struct ExportBundleView: View {
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
-                if let json {
+                if let previewJSON {
                     Section("Bundle") {
-                        CopyableTextBlock(text: includeMnemonic
-                                          ? ImportBundle.redactedPreview(json) : json)
+                        CopyableTextBlock(text: previewJSON)
                         if includeMnemonic {
                             Text("The recovery phrase is in the shared file, not shown here.")
                                 .font(.footnote)
@@ -379,7 +381,7 @@ private struct ExportBundleView: View {
     }
 
     private func resetExport() {
-        json = nil
+        previewJSON = nil
         fileURL = nil
         error = nil
         staging.remove()
@@ -393,12 +395,12 @@ private struct ExportBundleView: View {
                 let text = try await model.exportWalletBundle(includeMnemonic: includeMnemonic)
                 let name = "winnow-\(model.network.rawValue)-\(model.walletID ?? "wallet").json"
                 let url = try staging.write(text, suggestedName: name)
-                json = text
+                previewJSON = includeMnemonic ? ImportBundle.redactedPreview(text) : text
                 fileURL = url
             } catch {
                 staging.remove()
                 fileURL = nil
-                json = nil
+                previewJSON = nil
                 self.error = error.localizedDescription
             }
             busy = false

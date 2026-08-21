@@ -39,6 +39,7 @@ struct VaultSignView: View {
     @State private var error: String?
     @State private var broadcastTxid: Data?
     @State private var broadcasting = false
+    @State private var authorizing = false
     /// MuSig2 round-1 secret nonces per input (participant pubkey → secnonce).
     /// Never persisted, never shown — zeroed by round 2.
     @State private var secretNonces: [Int: [Data: Data]] = [:]
@@ -97,7 +98,8 @@ struct VaultSignView: View {
                     .accessibilityIdentifier("psbtPasteButton")
                     Button("Add / combine PSBT") { addPasted() }
                         .accessibilityIdentifier("addPSBTButton")
-                        .disabled(pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(authorizing
+                            || pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } footer: {
                     Text("The first PSBT becomes the working copy; further PSBTs are combined into it (BIP174 combiner role).")
                 }
@@ -270,12 +272,12 @@ struct VaultSignView: View {
         if let threshold {
             Section("Actions") {
                 Button("Sign with this device") { signMultiA() }
-                    .disabled(!workingInputsRemainAvailable || broadcastTxid != nil)
+                    .disabled(authorizing || !workingInputsRemainAvailable || broadcastTxid != nil)
                 Button(broadcasting ? "Broadcasting…" : "Finalize & broadcast") {
                     finalizeAndBroadcast()
                 }
                 .disabled(minSignatures < threshold || !workingInputsRemainAvailable
-                    || broadcasting || broadcastTxid != nil)
+                    || authorizing || broadcasting || broadcastTxid != nil)
                 if !workingInputsRemainAvailable {
                     stalePSBTMessage
                 }
@@ -285,16 +287,17 @@ struct VaultSignView: View {
                 Button("Round 1 — attach this device's nonce") { attachNonces() }
                     .disabled(nonceSessionStarted || minNonces >= participantCount
                         || minPartialSigs > 0 || !workingInputsRemainAvailable
-                        || broadcastTxid != nil)
+                        || authorizing || broadcastTxid != nil)
                 Button("Round 2 — sign with this device") { signMuSig2() }
                     .disabled(!nonceSessionStarted || signedMuSig2ThisSession
                         || secretNonces.isEmpty || minNonces < participantCount
-                        || minPartialSigs >= participantCount || !workingInputsRemainAvailable)
+                        || minPartialSigs >= participantCount || !workingInputsRemainAvailable
+                        || authorizing)
                 Button(broadcasting ? "Broadcasting…" : "Aggregate & broadcast") {
                     aggregateAndBroadcast()
                 }
                 .disabled(minPartialSigs < participantCount || !workingInputsRemainAvailable
-                    || broadcasting || broadcastTxid != nil)
+                    || authorizing || broadcasting || broadcastTxid != nil)
                 if !workingInputsRemainAvailable {
                     stalePSBTMessage
                 }
@@ -379,19 +382,30 @@ struct VaultSignView: View {
     // MARK: - multi_a
 
     private func signMultiA() {
-        guard var psbt = working else { error = SignError.noWorkingPSBT.localizedDescription; return }
-        do {
-            let inputs = try authorizationInputs()
-            try model.withMasterKey {
-                try inputs.vault.partialSign(
-                    &psbt, master: $0, knownUTXOs: inputs.record.utxos,
-                    ownedOutputCoordinates: inputs.coordinates)
+        guard let initial = working else {
+            error = SignError.noWorkingPSBT.localizedDescription
+            return
+        }
+        authorizing = true
+        error = nil
+        Task {
+            defer { authorizing = false }
+            do {
+                let psbt = try await model.withMasterKey(
+                    reason: "Sign this shared-vault transaction") { master in
+                    let inputs = try authorizationInputs()
+                    var candidate = initial
+                    try inputs.vault.partialSign(
+                        &candidate, master: master, knownUTXOs: inputs.record.utxos,
+                        ownedOutputCoordinates: inputs.coordinates)
+                    return candidate
+                }
+                working = psbt
+                output = psbt.base64
+                model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
+            } catch {
+                self.error = error.localizedDescription
             }
-            working = psbt
-            output = psbt.base64
-            model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 
@@ -416,55 +430,77 @@ struct VaultSignView: View {
     // MARK: - MuSig2
 
     private func attachNonces() {
-        guard var psbt = working, let vault, let record else { error = SignError.noWorkingPSBT.localizedDescription; return }
-        do {
-            let inputs = try authorizationInputs()
-            var nonces: [Int: [Data: Data]] = [:]
-            for index in psbt.inputs.indices {
-                let context = try context(for: psbt.inputs[index], vault: vault, record: record)
-                nonces[index] = try model.withMasterKey {
-                    try vault.muSig2AttachNonce(
-                        &psbt, input: index, context: context, master: $0,
-                        knownUTXOs: inputs.record.utxos,
-                        ownedOutputCoordinates: inputs.coordinates)
+        guard let initial = working else {
+            error = SignError.noWorkingPSBT.localizedDescription
+            return
+        }
+        authorizing = true
+        error = nil
+        Task {
+            defer { authorizing = false }
+            do {
+                let result = try await model.withMasterKey(
+                    reason: "Start signing this MuSig2 vault transaction") { master in
+                    let inputs = try authorizationInputs()
+                    var psbt = initial
+                    var nonces: [Int: [Data: Data]] = [:]
+                    for index in psbt.inputs.indices {
+                        let signingContext = try context(
+                            for: psbt.inputs[index], vault: inputs.vault, record: inputs.record)
+                        nonces[index] = try inputs.vault.muSig2AttachNonce(
+                            &psbt, input: index, context: signingContext, master: master,
+                            knownUTXOs: inputs.record.utxos,
+                            ownedOutputCoordinates: inputs.coordinates)
+                    }
+                    return (psbt, nonces)
                 }
+                secretNonces = result.1
+                nonceSessionStarted = true
+                working = result.0
+                output = result.0.base64
+                model.journalPSBT(stage: "musig2-public-nonces", psbt: result.0)
+            } catch {
+                self.error = error.localizedDescription
             }
-            secretNonces = nonces
-            nonceSessionStarted = true
-            working = psbt
-            output = psbt.base64
-            model.journalPSBT(stage: "musig2-public-nonces", psbt: psbt)
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 
     private func signMuSig2() {
-        guard var psbt = working, let vault, let record else { return }
-        do {
-            let inputs = try authorizationInputs()
-            // Stage the nonce mutations alongside the PSBT. If a later input
-            // fails, the visible working copy and the in-memory nonce session
-            // both remain retryable instead of becoming half-consumed.
-            var stagedNonces = secretNonces
-            for index in psbt.inputs.indices {
-                let context = try context(for: psbt.inputs[index], vault: vault, record: record)
-                var nonces = stagedNonces[index] ?? [:]
-                try model.withMasterKey {
-                    try vault.muSig2Sign(&psbt, input: index, context: context, master: $0,
-                                         secretNonces: &nonces,
-                                         knownUTXOs: inputs.record.utxos,
-                                         ownedOutputCoordinates: inputs.coordinates)
+        guard let initial = working else { return }
+        let initialNonces = secretNonces
+        authorizing = true
+        error = nil
+        Task {
+            defer { authorizing = false }
+            do {
+                let psbt = try await model.withMasterKey(
+                    reason: "Complete signing this MuSig2 vault transaction") { master in
+                    let inputs = try authorizationInputs()
+                    // Stage nonce mutations beside the PSBT. Authentication
+                    // cancellation or any later failure leaves the live nonce
+                    // session untouched and retryable.
+                    var psbt = initial
+                    var stagedNonces = initialNonces
+                    for index in psbt.inputs.indices {
+                        let signingContext = try context(
+                            for: psbt.inputs[index], vault: inputs.vault, record: inputs.record)
+                        var nonces = stagedNonces[index] ?? [:]
+                        try inputs.vault.muSig2Sign(
+                            &psbt, input: index, context: signingContext, master: master,
+                            secretNonces: &nonces, knownUTXOs: inputs.record.utxos,
+                            ownedOutputCoordinates: inputs.coordinates)
+                        stagedNonces[index] = nonces
+                    }
+                    return psbt
                 }
-                stagedNonces[index] = nonces // zeroed by partialSign
+                working = psbt
+                output = psbt.base64
+                secretNonces.removeAll(keepingCapacity: false)
+                signedMuSig2ThisSession = true
+                model.journalPSBT(stage: "musig2-partial-signed", psbt: psbt)
+            } catch {
+                self.error = error.localizedDescription
             }
-            working = psbt
-            output = psbt.base64
-            secretNonces.removeAll(keepingCapacity: false)
-            signedMuSig2ThisSession = true
-            model.journalPSBT(stage: "musig2-partial-signed", psbt: psbt)
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 
