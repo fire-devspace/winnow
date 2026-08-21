@@ -321,6 +321,23 @@ struct WalletTests {
         #expect(replacement.built.fee >= original.built.fee + Int64(replacementVSize))
         #expect(preview.fee == replacement.built.fee)
         #expect(preview.feeRateSatPerVByte > currentRate)
+        #expect(preview.authorizes(replacement.built))
+
+        var changedFee = replacement.built
+        changedFee.fee += 1
+        #expect(!preview.authorizes(changedFee))
+
+        var changedOutput = replacement.built
+        changedOutput.transaction.outputs[0].value -= 1
+        #expect(!preview.authorizes(changedOutput))
+
+        var changedInput = replacement.built
+        changedInput.transaction.inputs[0].previousOutput.vout += 1
+        #expect(!preview.authorizes(changedInput))
+
+        var changedSequence = replacement.built
+        changedSequence.transaction.inputs[0].sequence -= 1
+        #expect(!preview.authorizes(changedSequence))
         #expect(replacementTx.inputs.map(\.previousOutput) == originalTx.inputs.map(\.previousOutput))
         #expect(replacementTx.outputs.contains { $0.value == 100_000 && $0.scriptPubKey == destination })
         #expect(replacement.built.changeAmount! < original.built.changeAmount!)

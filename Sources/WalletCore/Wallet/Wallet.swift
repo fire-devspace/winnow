@@ -444,14 +444,42 @@ public struct FeeBumpPreview: Equatable, Sendable {
     public var feeRateSatPerVByte: Double
     public var fee: Int64
     public var changeAmount: Int64?
+    /// Exact non-witness replacement the user reviewed. The signed result
+    /// must preserve every input, output, sequence, version, and locktime.
+    public var replacementTransaction: Transaction
 
     public init(originalTxid: Data, currentFeeRateSatPerVByte: Double,
-                feeRateSatPerVByte: Double, fee: Int64, changeAmount: Int64?) {
+                feeRateSatPerVByte: Double, fee: Int64, changeAmount: Int64?,
+                replacementTransaction: Transaction) {
         self.originalTxid = originalTxid
         self.currentFeeRateSatPerVByte = currentFeeRateSatPerVByte
         self.feeRateSatPerVByte = feeRateSatPerVByte
         self.fee = fee
         self.changeAmount = changeAmount
+        self.replacementTransaction = replacementTransaction
+    }
+
+    /// Binds the signed replacement to the complete reviewed transaction.
+    /// Witnesses are intentionally excluded: they are added by signing after
+    /// review, while all authorization-relevant transaction fields are fixed.
+    public func authorizes(_ built: BuiltTransaction) -> Bool {
+        let actual = built.transaction
+        let reviewed = replacementTransaction
+        guard built.fee == fee,
+              built.changeAmount == changeAmount,
+              actual.version == reviewed.version,
+              actual.locktime == reviewed.locktime,
+              actual.outputs == reviewed.outputs,
+              actual.inputs.count == reviewed.inputs.count,
+              zip(actual.inputs, reviewed.inputs).allSatisfy({ pair in
+                  pair.0.previousOutput == pair.1.previousOutput
+                      && pair.0.scriptSig == pair.1.scriptSig
+                      && pair.0.sequence == pair.1.sequence
+              })
+        else { return false }
+
+        let vsize = TransactionBuilder.vsize(of: actual)
+        return vsize > 0 && Double(built.fee) / Double(vsize) == feeRateSatPerVByte
     }
 }
 
@@ -1121,7 +1149,8 @@ public actor Wallet {
         return FeeBumpPreview(originalTxid: txid,
                               currentFeeRateSatPerVByte: candidate.currentFeeRate,
                               feeRateSatPerVByte: candidate.replacementFeeRate,
-                              fee: candidate.fee, changeAmount: candidate.change?.amount)
+                              fee: candidate.fee, changeAmount: candidate.change?.amount,
+                              replacementTransaction: candidate.transaction)
     }
 
     /// Rebuilds and signs a BIP125 replacement with the same inputs and

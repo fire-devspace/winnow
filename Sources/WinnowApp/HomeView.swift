@@ -309,13 +309,12 @@ private struct FeeBumpView: View {
     }
 
     private func bump() {
-        guard let reviewedFeeBump, let targetRate = reviewedFeeBump.request.targetRate else { return }
+        guard let reviewedFeeBump else { return }
         bumping = true
         error = nil
         Task {
             do {
-                replacementTxid = try await model.bumpFee(txid: reviewedFeeBump.request.txid,
-                                                         feeRateSatPerVByte: targetRate)
+                replacementTxid = try await model.bumpFee(preview: reviewedFeeBump.preview)
             } catch {
                 self.error = error.localizedDescription
             }

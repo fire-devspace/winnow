@@ -969,11 +969,12 @@ final class AppModel {
     /// and cancels the original relay only after both succeed. If commit fails,
     /// the new broadcaster entry is removed and the old transaction keeps
     /// relaying, preserving the same rollback boundary as a first send.
-    func bumpFee(txid: Data, feeRateSatPerVByte: Double) async throws -> Data {
+    func bumpFee(preview: FeeBumpPreview) async throws -> Data {
         guard let wallet else { throw AppError.noWallet }
         guard let broadcaster = stack?.broadcaster else { throw AppError.noStack }
-        let prepared = try await wallet.buildFeeBump(txid: txid,
-                                                     feeRateSatPerVByte: feeRateSatPerVByte)
+        let prepared = try await wallet.buildFeeBump(
+            txid: preview.originalTxid, feeRateSatPerVByte: preview.feeRateSatPerVByte)
+        guard preview.authorizes(prepared.built) else { throw AppError.sendReviewChanged }
         let replacementVSize = TransactionBuilder.vsize(of: prepared.built.transaction)
         let replacementRate = Double(prepared.built.fee) / Double(replacementVSize)
         let replacementTxid = try await broadcast(
@@ -984,10 +985,10 @@ final class AppModel {
             await broadcaster.cancel(replacementTxid)
             throw error
         }
-        await broadcaster.cancel(txid)
+        await broadcaster.cancel(preview.originalTxid)
         await refresh()
         e2e?.journal("transaction.replaced", fields: [
-            "original": txid.displayHex,
+            "original": preview.originalTxid.displayHex,
             "replacement": replacementTxid.displayHex,
             "raw": prepared.built.transaction.serialized(includeWitness: true).hex,
         ])
