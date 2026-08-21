@@ -205,6 +205,21 @@ struct VaultFlowTests {
         // Combine (combiner role) → finalize → raw transaction.
         var combined = try partialA.combined(with: [partialC])
         #expect(combined.inputs[0].tapScriptSignatures.count == 2)
+        // A hostile combiner may append an unrelated but structurally parsed
+        // leaf. It must not shadow a later valid committed leaf and turn a
+        // fully signed spend into a permanent finalization failure.
+        let realLeaf = try #require(combined.inputs[0].tapLeafScripts.first)
+        let bogusControl = Taproot.ControlBlock(
+            leafVersion: realLeaf.leafVersion,
+            outputKeyParity: false,
+            internalKey: Data(repeating: 0, count: 32),
+            path: [])
+        let bogusLeaf = PSBT.TapLeafScript(controlBlock: bogusControl,
+                                           script: realLeaf.script,
+                                           leafVersion: realLeaf.leafVersion)
+        combined.inputs[0].tapLeafScripts = [bogusLeaf, realLeaf]
+        #expect(combined.inputs[0].tapLeafScripts.first?.controlBlock.internalKey
+            == Data(repeating: 0, count: 32))
         let signed = try vault.finalizeSpend(&combined)
 
         // Verify the witness cryptographically (see the helper below).

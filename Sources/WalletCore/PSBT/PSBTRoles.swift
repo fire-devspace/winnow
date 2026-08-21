@@ -454,9 +454,10 @@ extension PSBT {
         }
     }
 
-    /// Validates an imported key-path signature against the actual P2TR
-    /// witness UTXO before moving it into the final witness. Finalization is
-    /// an authorization boundary, not a byte-copy operation.
+    /// Validates an imported key-path signature against the PSBT's declared
+    /// P2TR witness UTXO before moving it into the final witness. Trusted
+    /// wallet policy must separately bind that declaration to the real coin;
+    /// finalization proves document self-consistency, not chain ownership.
     private func validatedKeyPathWitness(input index: Int, signature: Data,
                                          tx: Transaction,
                                          spentOutputs: [SighashBIP341.SpentOutput]) throws -> [Data] {
@@ -497,29 +498,24 @@ extension PSBT {
     private func finalizedScriptPathWitness(input index: Int, leaf: TapLeafScript,
                                             tx: Transaction,
                                             spentOutputs: [SighashBIP341.SpentOutput]) throws -> [Data]? {
-        guard leaf.leafVersion == leaf.controlBlock.leafVersion else {
-            throw PSBTError.malformed("input \(index) leaf/control-block version mismatch")
-        }
+        guard leaf.leafVersion == leaf.controlBlock.leafVersion else { return nil }
         let spentScript = spentOutputs[index].scriptPubKey
         guard spentScript.count == 34, spentScript[spentScript.startIndex] == 0x51,
               spentScript[spentScript.index(after: spentScript.startIndex)] == 0x20
         else { throw PSBTError.malformed("input \(index) witness utxo is not P2TR") }
         var merkleRoot = leaf.leafHash
         for sibling in leaf.controlBlock.path {
-            guard sibling.count == 32 else {
-                throw PSBTError.malformed("input \(index) control-block path")
-            }
+            guard sibling.count == 32 else { return nil }
             merkleRoot = Taproot.branchHash(merkleRoot, sibling)
         }
-        let committed = try Taproot.tweakedOutputKey(
+        guard let committed = try? Taproot.tweakedOutputKey(
             internalKey: leaf.controlBlock.internalKey, merkleRoot: merkleRoot)
+        else { return nil }
         guard committed.key == spentScript.suffix(32),
               committed.parity == leaf.controlBlock.outputKeyParity
-        else { throw PSBTError.malformed("input \(index) control block does not match the spent output") }
+        else { return nil }
 
-        guard let (threshold, leafKeys) = Multisig.parse(Script(leaf.script)) else {
-            throw PSBTError.malformed("input \(index) leaf script")
-        }
+        guard let (threshold, leafKeys) = Multisig.parse(Script(leaf.script)) else { return nil }
         var valid: [Data: Data] = [:]
         for (id, signature) in inputs[index].tapScriptSignatures where id.leafHash == leaf.leafHash {
             guard leafKeys.contains(id.publicKey) else { continue }
