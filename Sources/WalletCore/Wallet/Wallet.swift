@@ -769,6 +769,14 @@ public actor Wallet {
                 grouping: try scanner.matches(in: match.block, candidates: candidates),
                 by: \.txid)
         }
+        // Everything below is one state transition. If the matched block
+        // would violate the wallet-wide monetary invariant (or persistence
+        // fails), restore the exact pre-block state before returning an error.
+        let stateBeforeBlock = state
+        var committed = false
+        defer {
+            if !committed { state = stateBeforeBlock }
+        }
         var effect = MatchEffect()
         for tx in match.block.transactions {
             let txid = tx.txid
@@ -876,7 +884,17 @@ public actor Wallet {
             }
             state.pendingSends.removeAll { $0.txid == txid }
         }
+        var walletTotal: Int64 = 0
+        for coin in state.utxos {
+            let (next, overflow) = walletTotal.addingReportingOverflow(coin.amount)
+            guard coin.amount > 0, coin.amount <= BitcoinAmount.maximum,
+                  !overflow, next <= BitcoinAmount.maximum else {
+                throw WalletError.invalidTransactionAmounts
+            }
+            walletTotal = next
+        }
         try persist()
+        committed = true
         return effect
     }
 

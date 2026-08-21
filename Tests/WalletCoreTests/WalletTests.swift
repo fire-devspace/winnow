@@ -112,6 +112,31 @@ struct WalletTests {
         #expect(await wallet.observedFeeRates.count == 1)
     }
 
+    @Test("block application rejects wallet-wide monetary overflow atomically")
+    func applyRejectsAggregateOverflow() async throws {
+        let wallet = try await makeWallet()
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let first = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            .init(value: BitcoinAmount.maximum, scriptPubKey: script),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [first]))
+        #expect(await wallet.balance == BitcoinAmount.maximum)
+
+        let second = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            .init(value: BitcoinAmount.maximum, scriptPubKey: script),
+        ], locktime: 1)
+        do {
+            _ = try await wallet.apply(match: fakeMatch(height: 101, transactions: [second]))
+            Issue.record("a wallet total above Bitcoin's monetary range was accepted")
+        } catch let error as WalletError {
+            #expect(error == .invalidTransactionAmounts)
+        }
+
+        #expect(await wallet.balance == BitcoinAmount.maximum)
+        #expect(await wallet.utxos.count == 1)
+        #expect(await wallet.history.count == 1)
+    }
+
     @Test("payments beyond the gap-limit window are not detected; inside it, indices advance")
     func gapWindow() async throws {
         let wallet = try await makeWallet()
