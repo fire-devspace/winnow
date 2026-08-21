@@ -859,6 +859,9 @@ final class AppModel {
     /// What a send will look like at the resolved feerate (coin selection run
     /// without committing — `Wallet.send` itself commits on success).
     struct SendPreview: Equatable {
+        /// The normalized address/code that produced the actual payment.
+        /// Review UI renders this immutable value, never live text-field state.
+        var destination: String
         var payments: [Payment]
         var silentPayments: [SilentPayment]
         var feeRateSatPerVByte: Double
@@ -890,7 +893,7 @@ final class AppModel {
         let selection = try CoinSelection.select(utxos: utxos, payments: sizingPayments,
                                                  changeScriptPubKey: changeScript,
                                                  feeRateSatPerVByte: feeRate)
-        return SendPreview(payments: payments, silentPayments: silentPayments,
+        return SendPreview(destination: trimmed, payments: payments, silentPayments: silentPayments,
                            feeRateSatPerVByte: feeRate, fee: selection.fee,
                            changeAmount: selection.changeAmount, inputCount: selection.selected.count)
     }
