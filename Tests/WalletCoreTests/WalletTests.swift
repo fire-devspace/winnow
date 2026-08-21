@@ -649,6 +649,29 @@ struct WalletTests {
         #expect(await wallet.history.isEmpty)
     }
 
+    @Test("zero-value watched outputs are ignored without wedging later blocks")
+    func zeroValueWatchedOutputDoesNotWedgeScan() async throws {
+        let wallet = try await makeWallet()
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let zero = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 0, scriptPubKey: script),
+        ], locktime: 0)
+
+        let effect = try await wallet.apply(match: fakeMatch(height: 100, transactions: [zero]))
+        #expect(effect.received.isEmpty)
+        #expect(await wallet.balance == 0)
+        #expect(await wallet.utxos.isEmpty)
+        #expect(await wallet.history.isEmpty)
+        #expect(await wallet.nextReceiveIndex == 0)
+
+        let positive = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 42_000, scriptPubKey: script),
+        ], locktime: 0)
+        _ = try await wallet.apply(match: fakeMatch(height: 101, transactions: [positive]))
+        #expect(await wallet.balance == 42_000)
+        #expect(await wallet.nextReceiveIndex == 1)
+    }
+
     @Test("wallet state from before fee-bump metadata remains readable")
     func legacyPersistence() async throws {
         let url = tempFileURL("legacy-wallet.json")

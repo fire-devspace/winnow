@@ -815,7 +815,12 @@ public actor Wallet {
             }
 
             for (vout, output) in tx.outputs.enumerated() {
-                guard let (chain, index) = map[output.scriptPubKey] else { continue }
+                // Zero-value outputs are consensus-valid. They are not coins,
+                // and admitting one would violate the positive-UTXO invariant
+                // below and wedge this forward-only scan at the same block.
+                guard output.value > 0,
+                      let (chain, index) = map[output.scriptPubKey]
+                else { continue }
                 if let existing = state.utxos.firstIndex(where: { $0.txid == txid && $0.vout == UInt32(vout) }) {
                     // Already known: either a re-applied block, or our own
                     // pending change output being confirmed — update its height.
@@ -843,7 +848,8 @@ public actor Wallet {
             // above, and folded into `receivedAmount` so a tx paying us both
             // ways still yields one merged history entry.
             for found in silentPaymentsByTxid[txid] ?? [] {
-                guard !state.utxos.contains(where: { $0.txid == found.txid && $0.vout == found.vout })
+                guard found.amount > 0,
+                      !state.utxos.contains(where: { $0.txid == found.txid && $0.vout == found.vout })
                 else { continue }
                 let utxo = WalletUTXO(txid: found.txid, vout: found.vout, amount: found.amount,
                                       scriptPubKey: found.scriptPubKey, chain: .receive,
