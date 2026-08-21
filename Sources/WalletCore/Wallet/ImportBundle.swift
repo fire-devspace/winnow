@@ -236,7 +236,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
 
     /// The bundle's claimed UTXOs in wallet form.
     public func claimedUTXOs() throws -> [WalletUTXO] {
-        try utxos.map { utxo in
+        let claimed = try utxos.map { utxo in
             guard let txid = Data(hex: utxo.txid), txid.count == 32 else {
                 throw WalletError.invalidBundle("bad txid \(utxo.txid)")
             }
@@ -265,6 +265,25 @@ public struct ImportBundle: Codable, Equatable, Sendable {
                               height: utxo.height, silentPaymentTweak: silentPaymentTweak,
                               isCoinbase: utxo.isCoinbase ?? false)
         }
+        var seen = Set<Transaction.Outpoint>()
+        var total: Int64 = 0
+        for coin in claimed {
+            guard coin.amount > 0, coin.amount <= BitcoinAmount.maximum else {
+                throw WalletError.invalidBundle("invalid UTXO amount \(coin.amount)")
+            }
+            guard !coin.scriptPubKey.isEmpty else {
+                throw WalletError.invalidBundle("empty UTXO scriptPubKey")
+            }
+            guard seen.insert(coin.outpoint).inserted else {
+                throw WalletError.invalidBundle("duplicate UTXO outpoint")
+            }
+            let (next, overflow) = total.addingReportingOverflow(coin.amount)
+            guard !overflow, next <= BitcoinAmount.maximum else {
+                throw WalletError.invalidBundle("UTXO total exceeds Bitcoin's monetary range")
+            }
+            total = next
+        }
+        return claimed
     }
 }
 
@@ -437,6 +456,10 @@ extension Wallet {
             } else {
                 replacedBy = nil
             }
+            guard (0 ... BitcoinAmount.maximum).contains(known.received),
+                  (0 ... BitcoinAmount.maximum).contains(known.spent),
+                  known.fee.map({ (0 ... BitcoinAmount.maximum).contains($0) }) ?? true
+            else { throw WalletError.invalidBundle("transaction history has invalid amounts") }
             return HistoryEntry(txid: Data(txid.reversed()), height: known.height,
                                 received: known.received, spent: known.spent, fee: known.fee,
                                 replacedBy: replacedBy)

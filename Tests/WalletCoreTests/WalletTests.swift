@@ -578,6 +578,52 @@ struct WalletTests {
         #expect(reopenedDescriptor == originalDescriptor)
     }
 
+    @Test("corrupt persisted coin totals fail closed instead of trapping balance")
+    func corruptPersistedAmounts() async throws {
+        let url = tempFileURL("corrupt-amount-wallet.json")
+        let keyStore = InMemoryKeyStore()
+        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 42_000, scriptPubKey: script),
+        ], locktime: 0)
+        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+
+        let data = try Data(contentsOf: url)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var coins = try #require(json["utxos"] as? [[String: Any]])
+        coins[0]["amount"] = BitcoinAmount.maximum
+        var second = coins[0]
+        second["vout"] = 1
+        coins.append(second)
+        json["utxos"] = coins
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+
+        #expect(throws: (any Error).self) {
+            _ = try Wallet.open(storageURL: url, keyStore: keyStore)
+        }
+    }
+
+    @Test("invalid block amounts are rejected atomically before wallet mutation")
+    func invalidBlockAmounts() async throws {
+        let wallet = try await makeWallet()
+        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
+        let valid = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: 42_000, scriptPubKey: script),
+        ], locktime: 0)
+        let invalid = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
+            Transaction.Output(value: BitcoinAmount.maximum, scriptPubKey: script),
+            Transaction.Output(value: 1, scriptPubKey: Data([0x51])),
+        ], locktime: 0)
+
+        await #expect(throws: WalletError.invalidTransactionAmounts) {
+            _ = try await wallet.apply(match: fakeMatch(
+                height: 100, transactions: [valid, invalid]))
+        }
+        #expect(await wallet.balance == 0)
+        #expect(await wallet.history.isEmpty)
+    }
+
     @Test("wallet state from before fee-bump metadata remains readable")
     func legacyPersistence() async throws {
         let url = tempFileURL("legacy-wallet.json")

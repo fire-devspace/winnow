@@ -94,7 +94,7 @@ public enum CoinSelection {
                               witnessBytesPerInput: Int = 66) throws -> Selection {
         guard !utxos.isEmpty else { throw CoinSelectionError.noUTXOs }
         guard !changeScriptPubKey.isEmpty else { throw CoinSelectionError.emptyScript }
-        guard (0 ... 100_000).contains(witnessBytesPerInput) else {
+        guard (1 ... 100_000).contains(witnessBytesPerInput) else {
             throw CoinSelectionError.invalidWitnessSize(witnessBytesPerInput)
         }
         // A negative/zero/NaN feerate underflows the fee (inflating change past

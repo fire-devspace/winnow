@@ -185,5 +185,11 @@ struct CoinSelectionTests {
                 changeScriptPubKey: p2tr, feeRateSatPerVByte: 1,
                 witnessBytesPerInput: -1)
         }
+        #expect(throws: CoinSelectionError.invalidWitnessSize(0)) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [Payment(amount: 10_000, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1,
+                witnessBytesPerInput: 0)
+        }
     }
 }

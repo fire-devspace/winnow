@@ -121,6 +121,22 @@ struct ImportBundleTests {
         #expect(throws: WalletError.invalidBundle("unsupported version 99")) {
             _ = try Wallet.importing(future, keyStore: InMemoryKeyStore())
         }
+
+        var invalidAmount = bundle
+        invalidAmount.utxos[0].amount = Int64.max
+        #expect(throws: WalletError.invalidBundle("invalid UTXO amount \(Int64.max)")) {
+            _ = try Wallet.importing(invalidAmount, keyStore: InMemoryKeyStore())
+        }
+        var duplicate = bundle
+        duplicate.utxos.append(duplicate.utxos[0])
+        #expect(throws: WalletError.invalidBundle("duplicate UTXO outpoint")) {
+            _ = try Wallet.importing(duplicate, keyStore: InMemoryKeyStore())
+        }
+        var invalidHistory = bundle
+        invalidHistory.transactions[0].received = -1
+        #expect(throws: WalletError.invalidBundle("transaction history has invalid amounts")) {
+            _ = try Wallet.importing(invalidHistory, keyStore: InMemoryKeyStore())
+        }
     }
 
     @Test("verify report: confirmed, spent-since-bundle (mismatch), discovered")
