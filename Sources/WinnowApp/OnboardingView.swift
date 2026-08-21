@@ -1,3 +1,4 @@
+import LocalAuthentication
 import SwiftUI
 import UIKit
 import WalletCore
@@ -58,7 +59,7 @@ struct OnboardingView: View {
                 // pending — re-present instead of stranding the user on the
                 // onboarding list. Done clears the flag before this fires, so
                 // the confirmed path cannot loop.
-                mnemonic = model.pendingBackupMnemonic()
+                resumePendingBackup()
             }) { words in
                 MnemonicBackupView(mnemonic: words.text, writtenDown: $writtenDown) {
                     model.finishOnboarding()
@@ -67,7 +68,7 @@ struct OnboardingView: View {
             .task {
                 // Relaunched mid-backup: resume the sheet with the same words,
                 // straight from the Keychain (#5).
-                if mnemonic == nil { mnemonic = model.pendingBackupMnemonic() }
+                if mnemonic == nil { await loadPendingBackup() }
             }
         }
     }
@@ -97,6 +98,20 @@ struct OnboardingView: View {
                 busy = nil
                 self.error = error.localizedDescription
             }
+        }
+    }
+
+    private func resumePendingBackup() {
+        Task { await loadPendingBackup() }
+    }
+
+    private func loadPendingBackup() async {
+        do {
+            mnemonic = try await model.pendingBackupMnemonic()
+        } catch let authError as LAError where authError.code == .userCancel {
+            // The backup remains pending and will be offered again.
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
@@ -245,6 +260,9 @@ private struct ImportBundleView: View {
         Task {
             do {
                 report = try await model.importWallet(bundleJSON: json)
+                // A seed-bearing bundle must not remain in view state after
+                // it has been handed to WalletCore/Keychain.
+                json = ""
                 imported = true
                 if report == nil {
                     error = "Imported, but no peers were reachable for verification yet — the regular sync will verify from the bundle's height."
