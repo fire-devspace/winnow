@@ -266,6 +266,7 @@ struct LoopbackTests {
                                 extraScripts: { _ in throw IndexOutage() }) { _ in }
         }
         #expect(await sync.nextScanHeight == 1)
+        #expect(await sync.filterHeader(at: 1) == nil)
 
         // Recovery from persisted state, as after a crash/restart: a fresh
         // instance rescans the held-back heights once the index is healthy,

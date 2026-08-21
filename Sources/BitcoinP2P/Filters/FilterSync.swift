@@ -1,7 +1,7 @@
 import BitcoinCore
 import Foundation
 
-public enum FilterSyncError: Error, Equatable {
+public enum FilterSyncError: LocalizedError, Equatable, Sendable {
     case noPeers
     /// Peers (or a peer vs. our pinned chain) disagree on filter commitments.
     case checkpointMismatch(String)
@@ -10,6 +10,47 @@ public enum FilterSyncError: Error, Equatable {
     case filterHeaderMismatch(height: UInt32)
     /// A cfilter arrived for a block we did not ask about.
     case unexpectedBlockHash
+
+    public var errorDescription: String? {
+        switch self {
+        case .noPeers:
+            "No Bitcoin peers are available for compact-filter synchronization."
+        case let .checkpointMismatch(reason):
+            "Bitcoin peers disagreed about compact-filter checkpoints (\(reason))."
+        case let .badPeerResponse(reason):
+            "A Bitcoin peer returned invalid compact-filter data (\(reason))."
+        case let .filterHeaderMismatch(height):
+            "A compact filter did not match its authenticated header at block \(height)."
+        case .unexpectedBlockHash:
+            "A Bitcoin peer returned a compact filter for a block Winnow did not request."
+        }
+    }
+}
+
+public enum FilterSyncStorageError: LocalizedError, Equatable, Sendable {
+    case unreadable
+    case tooLarge(maxBytes: Int)
+    case damaged(String)
+    case writeFailed
+    case frontierBeforeWallet(stored: UInt32, wallet: UInt32)
+    case frontierBeyondTip(stored: UInt32, tip: UInt32)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unreadable:
+            "Winnow could not read its compact-filter progress file. Scanning is stopped so wallet history is not skipped."
+        case let .tooLarge(maxBytes):
+            "The compact-filter progress file is unexpectedly large (limit: \(maxBytes) bytes). Scanning is stopped."
+        case let .damaged(reason):
+            "The compact-filter progress file is damaged (\(reason)). Scanning is stopped; Winnow will not replace it automatically."
+        case .writeFailed:
+            "Winnow could not safely save compact-filter progress. The scan frontier was not advanced."
+        case let .frontierBeforeWallet(stored, wallet):
+            "Saved compact-filter progress starts at block \(stored), behind the wallet's required block \(wallet). Scanning is stopped."
+        case let .frontierBeyondTip(stored, tip):
+            "Saved compact-filter progress points to block \(stored), beyond the validated chain tip \(tip). Scanning is stopped."
+        }
+    }
 }
 
 /// A block whose compact filter matched the watch list.
@@ -48,6 +89,12 @@ public struct BlockMatch: Sendable, Equatable {
 /// 6. Progress (next scan height + pinned filter headers) is persisted after
 ///    every batch.
 public actor FilterSync {
+    public enum PersistenceState: Equatable, Sendable {
+        case disabled
+        case missing
+        case loaded
+    }
+
     public static let basicFilterType: UInt8 = 0
     /// Bitcoin Core serves at most 1000 filters / 2000 filter headers per request.
     public static let maxRangePerRequest: UInt32 = 1_000
@@ -74,7 +121,11 @@ public actor FilterSync {
     /// peers are used and the comparison simply covers those.
     public let requiredCheckpointPeers: Int
     private let storageURL: URL?
+    public nonisolated let persistenceState: PersistenceState
     private var progress: Progress
+
+    private static let maximumProgressBytes = 128 * 1_024 * 1_024
+    private static let maximumPinnedHeaders = 2_000_000
 
     public init(pool: PeerPool, chain: HeaderChain, startHeight: UInt32,
                 storageURL: URL? = nil, requiredCheckpointPeers: Int = 2) throws {
@@ -82,11 +133,12 @@ public actor FilterSync {
         self.chain = chain
         self.storageURL = storageURL
         self.requiredCheckpointPeers = requiredCheckpointPeers
-        if let storageURL,
-           let data = try? Data(contentsOf: storageURL),
-           let stored = try? JSONDecoder().decode(Progress.self, from: data) {
-            progress = stored
+        if let storageURL {
+            let result = try Self.load(storageURL: storageURL, startHeight: startHeight)
+            persistenceState = result.state
+            progress = result.progress
         } else {
+            persistenceState = .disabled
             progress = Progress(nextScanHeight: startHeight)
         }
     }
@@ -120,7 +172,8 @@ public actor FilterSync {
         guard !peers.isEmpty else { throw FilterSyncError.noPeers }
         let tip = await chain.height
         let tipHash = await chain.tipHash
-        guard tip >= progress.nextScanHeight else { try persist(); return }
+        try Self.validate(progress: progress, againstTip: tip)
+        guard tip >= progress.nextScanHeight else { return }
 
         // 2. cfcheckpt cross-peer comparison.
         let checkpointPeers = Array(peers.prefix(max(1, min(3, requiredCheckpointPeers))))
@@ -183,14 +236,20 @@ public actor FilterSync {
             guard let stopHash = await chain.blockHash(at: batchStop) else {
                 throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
             }
-            try await pinFilterHeaders(batchStart: batchStart, batchStop: batchStop,
-                                       stopHash: stopHash, peers: peers)
+            let proposedHeaders = try await pinFilterHeaders(
+                batchStart: batchStart, batchStop: batchStop,
+                stopHash: stopHash, peers: peers,
+                startingFrom: progress.filterHeaders)
             let extras = try await extraScripts?(batchStart ... batchStop) ?? [:]
             try await scanFilters(batchStart: batchStart, batchStop: batchStop,
                                   peer: peers[0], watchScripts: watchScripts,
-                                  extraScripts: extras, onMatch: onMatch)
-            progress.nextScanHeight = batchStop + 1
-            try persist()
+                                  extraScripts: extras, filterHeaders: proposedHeaders,
+                                  onMatch: onMatch)
+            var candidate = progress
+            candidate.filterHeaders = proposedHeaders
+            candidate.nextScanHeight = batchStop + 1
+            try persist(candidate)
+            progress = candidate
             peers = await pool.connectedPeers()
             guard !peers.isEmpty else { throw FilterSyncError.noPeers }
         }
@@ -210,7 +269,10 @@ public actor FilterSync {
     /// Fetches cfheaders for [batchStart, batchStop] and pins the filter
     /// header chain to our block-header chain.
     private func pinFilterHeaders(batchStart: UInt32, batchStop: UInt32, stopHash: Data,
-                                  peers: [PeerConnection]) async throws {
+                                  peers: [PeerConnection],
+                                  startingFrom storedHeaders: [String: String]) async throws
+        -> [String: String]
+    {
         // Always cross-check cfheaders between two peers when the pool has
         // them (paper §2.7: "fetch cfheaders from ≥2 independent peers and
         // disconnect peers that disagree"). A single-peer pool degrades to one.
@@ -238,12 +300,13 @@ public actor FilterSync {
             throw FilterSyncError.badPeerResponse("cfheaders count \(message.filterHashes.count) != \(batchStop - batchStart + 1)")
         }
 
+        var headers = storedHeaders
         if batchStart == 0 {
             // BIP157: the genesis block's previous filter header is zero.
             guard message.previousFilterHeader == Data(repeating: 0, count: 32) else {
                 throw FilterSyncError.filterHeaderMismatch(height: batchStart)
             }
-        } else if let pinned = filterHeader(at: batchStart - 1) {
+        } else if let pinned = Self.filterHeader(at: batchStart - 1, in: headers) {
             // The announced chain must continue our pinned chain exactly.
             guard message.previousFilterHeader == pinned else {
                 throw FilterSyncError.filterHeaderMismatch(height: batchStart)
@@ -253,21 +316,23 @@ public actor FilterSync {
             // exists, so the peer-supplied previous header is the anchor —
             // cross-checked byte-for-byte between two peers above when
             // possible, and verified against cfcheckpt at checkpoint heights.
-            progress.filterHeaders[String(batchStart - 1)] = message.previousFilterHeader.hex
+            headers[String(batchStart - 1)] = message.previousFilterHeader.hex
         }
 
         // Walk the BIP158 header chain: header[h] = SHA256d(filterHash[h] || header[h-1]).
         var previous = message.previousFilterHeader
         for (index, filterHash) in message.filterHashes.enumerated() {
             let header = SHA256d.hash(filterHash + previous)
-            progress.filterHeaders[String(batchStart + UInt32(index))] = header.hex
+            headers[String(batchStart + UInt32(index))] = header.hex
             previous = header
         }
+        return headers
     }
 
     /// Fetches, verifies and matches all filters in [batchStart, batchStop].
     private func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
                              watchScripts: [Data], extraScripts: [UInt32: [Data]] = [:],
+                             filterHeaders: [String: String],
                              onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         guard let stopHash = await chain.blockHash(at: batchStop) else {
             throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
@@ -300,8 +365,8 @@ public actor FilterSync {
             let filterHash = GCSFilter.filterHash(message.filter)
             let previous = height == 0
                 ? Data(repeating: 0, count: 32)
-                : filterHeader(at: height - 1)
-            guard let pinned = filterHeader(at: height),
+                : Self.filterHeader(at: height - 1, in: filterHeaders)
+            guard let pinned = Self.filterHeader(at: height, in: filterHeaders),
                   SHA256d.hash(filterHash + (previous ?? Data(repeating: 0, count: 32))) == pinned
             else {
                 throw FilterSyncError.filterHeaderMismatch(height: height)
@@ -345,9 +410,90 @@ public actor FilterSync {
         }
     }
 
-    private func persist() throws {
+    private static func filterHeader(at height: UInt32, in headers: [String: String]) -> Data? {
+        headers[String(height)].flatMap { Data(hex: $0) }
+    }
+
+    private static func load(storageURL: URL, startHeight: UInt32) throws
+        -> (state: PersistenceState, progress: Progress)
+    {
+        guard FileManager.default.fileExists(atPath: storageURL.path) else {
+            return (.missing, Progress(nextScanHeight: startHeight))
+        }
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: storageURL.path)
+        } catch {
+            throw FilterSyncStorageError.unreadable
+        }
+        if let size = attributes[.size] as? NSNumber,
+           size.int64Value > Int64(maximumProgressBytes) {
+            throw FilterSyncStorageError.tooLarge(maxBytes: maximumProgressBytes)
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: storageURL, options: .mappedIfSafe)
+        } catch {
+            throw FilterSyncStorageError.unreadable
+        }
+        guard data.count <= maximumProgressBytes else {
+            throw FilterSyncStorageError.tooLarge(maxBytes: maximumProgressBytes)
+        }
+        let stored: Progress
+        do {
+            stored = try JSONDecoder().decode(Progress.self, from: data)
+        } catch {
+            throw FilterSyncStorageError.damaged("the JSON or a progress field is invalid")
+        }
+        try validate(progress: stored, startHeight: startHeight)
+        return (.loaded, stored)
+    }
+
+    private static func validate(progress: Progress, startHeight: UInt32) throws {
+        guard progress.nextScanHeight >= startHeight else {
+            throw FilterSyncStorageError.frontierBeforeWallet(
+                stored: progress.nextScanHeight, wallet: startHeight)
+        }
+        guard progress.filterHeaders.count <= maximumPinnedHeaders else {
+            throw FilterSyncStorageError.damaged("there are too many pinned filter headers")
+        }
+        var parsedHeights = Set<UInt32>()
+        parsedHeights.reserveCapacity(progress.filterHeaders.count)
+        for (key, value) in progress.filterHeaders {
+            guard let height = UInt32(key), String(height) == key else {
+                throw FilterSyncStorageError.damaged("a filter-header height is not canonical decimal")
+            }
+            guard parsedHeights.insert(height).inserted else {
+                throw FilterSyncStorageError.damaged("two filter-header keys name the same height")
+            }
+            guard height < progress.nextScanHeight else {
+                throw FilterSyncStorageError.damaged("a pinned filter header is at or beyond the scan frontier")
+            }
+            guard value.utf8.count == 64,
+                  let header = Data(hex: value), header.count == 32 else {
+                throw FilterSyncStorageError.damaged("a pinned filter header is not 32 bytes")
+            }
+        }
+    }
+
+    private static func validate(progress: Progress, againstTip tip: UInt32) throws {
+        guard UInt64(progress.nextScanHeight) <= UInt64(tip) + 1 else {
+            throw FilterSyncStorageError.frontierBeyondTip(
+                stored: progress.nextScanHeight, tip: tip)
+        }
+    }
+
+    private func persist(_ candidate: Progress) throws {
         guard let storageURL else { return }
-        let data = try JSONEncoder().encode(progress)
-        try data.write(to: storageURL, options: .atomic)
+        let data = try JSONEncoder().encode(candidate)
+        guard data.count <= Self.maximumProgressBytes else {
+            throw FilterSyncStorageError.tooLarge(maxBytes: Self.maximumProgressBytes)
+        }
+        do {
+            try data.write(to: storageURL,
+                           options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            throw FilterSyncStorageError.writeFailed
+        }
     }
 }
