@@ -113,6 +113,19 @@ struct PSBTTests {
         #expect(try PSBT(base64: psbt.base64) == psbt)
     }
 
+    @Test("wire map order is normalized without changing PSBT semantics")
+    func mapOrderNormalization() throws {
+        // Minimized deterministic-fuzz regression: the valid global fields
+        // arrive in reverse-ish order (version before tx version/counts).
+        let wire = try #require(Data(hex:
+            "70736274ff01fb0402000000010204029f0000010401000105010000"))
+        let parsed = try PSBT(serialized: wire)
+        let canonical = parsed.serialized
+        #expect(canonical != wire)
+        #expect(try PSBT(serialized: canonical) == parsed)
+        #expect(try PSBT(base64: parsed.base64) == parsed)
+    }
+
     @Test("signer → finalizer → extractor produces the fully-signed raw tx")
     func roles() throws {
         let fixture = try Fixture()

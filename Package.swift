@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "BlockchainBackend", targets: ["BlockchainBackend"]),
         .library(name: "WalletCore", targets: ["WalletCore"]),
         .executable(name: "WinnowStory", targets: ["WinnowStory"]),
+        .executable(name: "WinnowFuzz", targets: ["WinnowFuzz"]),
     ],
     dependencies: [
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
@@ -34,6 +35,10 @@ let package = Package(
         .executableTarget(
             name: "WinnowStory",
             dependencies: ["BitcoinCore", "BitcoinP2P", "BlockchainBackend", "WalletCore"]
+        ),
+        .executableTarget(
+            name: "WinnowFuzz",
+            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"]
         ),
         .testTarget(
             name: "BitcoinCoreTests",

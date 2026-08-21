@@ -638,7 +638,12 @@ public struct PSBT: Equatable, Sendable {
             var seenKeys = Set<Data>()
             while true {
                 let keyLength = try reader.readVarInt()
-                guard keyLength > 0 else { return pairs } // separator
+                guard keyLength > 0 else {
+                    // PSBT maps are unordered on the wire. Normalize once at
+                    // the boundary so equality, review snapshots, and later
+                    // mutation do not depend on an attacker's field order.
+                    return pairs.sorted { $0.key.lexicographicallyPrecedes($1.key) }
+                }
                 guard pairs.count < Self.maxMapPairs else {
                     throw PSBTError.malformed("map exceeds \(Self.maxMapPairs) fields")
                 }
