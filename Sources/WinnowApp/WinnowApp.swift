@@ -1,5 +1,6 @@
 import BitcoinP2P
 import SwiftUI
+import UIKit
 
 @main
 struct WinnowApp: App {
@@ -8,33 +9,33 @@ struct WinnowApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                Group {
-                    switch model.stage {
-                    case .loading:
-                        ProgressView("Opening wallet…")
-                    case .onboarding:
-                        OnboardingView()
-                    case .ready:
-                        MainTabView()
-                    case let .storageDamaged(message):
-                        StorageDamagedView(message: message)
-                    }
-                }
-                .accessibilityHidden(shouldObscureWallet(for: scenePhase))
-
-                // iOS captures an app-switcher snapshot as a scene becomes
-                // inactive. Cover the entire wallet synchronously so a visible
-                // recovery phrase, PSBT, address, or balance is not preserved
-                // in that snapshot. The cover remains until the scene is active.
-                if shouldObscureWallet(for: scenePhase) {
-                    AppPrivacyCover()
-                        .zIndex(1)
+            Group {
+                switch model.stage {
+                case .loading:
+                    ProgressView("Opening wallet…")
+                case .onboarding:
+                    OnboardingView()
+                case .ready:
+                    MainTabView()
+                case let .storageDamaged(message):
+                    StorageDamagedView(message: message)
                 }
             }
+            .redacted(reason: shouldObscureWallet(for: scenePhase) ? .privacy : [])
+            .accessibilityHidden(shouldObscureWallet(for: scenePhase))
             .environment(model)
             .task { await model.boot() }
-            .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
+            .onAppear {
+                PrivacyShield.shared.setObscured(shouldObscureWallet(for: scenePhase))
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // A separate high-level UIWindow sits above SwiftUI sheets and
+                // full-screen covers. A cover inside this root hierarchy would
+                // remain behind presented recovery/signing sheets when iOS
+                // records its app-switcher snapshot.
+                PrivacyShield.shared.setObscured(shouldObscureWallet(for: phase))
+                model.scenePhaseChanged(phase)
+            }
         }
     }
 }
@@ -83,15 +84,72 @@ private struct AppPrivacyCover: View {
             Color(.systemBackground)
                 .ignoresSafeArea()
             VStack(spacing: 12) {
-                Image(systemName: "lock.shield")
+                Image(systemName: "eye.slash")
                     .font(.system(size: 34, weight: .semibold))
-                Text("Winnow is locked")
+                Text("Winnow is hidden")
                     .font(.headline)
             }
             .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Winnow is hidden while inactive")
+    }
+}
+
+/// Owns an opaque window above every application presentation window while
+/// the scene is inactive. Keeping this outside the SwiftUI presentation tree
+/// is essential: `.sheet` content is hosted above its presenting view and
+/// would otherwise remain visible in the app-switcher snapshot.
+@MainActor
+final class PrivacyShield {
+    static let shared = PrivacyShield()
+
+    private var windows: [ObjectIdentifier: UIWindow] = [:]
+
+    private init() {}
+
+    func setObscured(_ obscured: Bool) {
+        if obscured {
+            show()
+        } else {
+            hide()
+        }
+    }
+
+    private func show() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let liveIDs = Set(scenes.map { ObjectIdentifier($0) })
+
+        let staleIDs = windows.keys.filter { !liveIDs.contains($0) }
+        for id in staleIDs {
+            windows[id]?.isHidden = true
+            windows.removeValue(forKey: id)
+        }
+
+        for scene in scenes {
+            let id = ObjectIdentifier(scene)
+            let window = windows[id] ?? makeWindow(for: scene)
+            windows[id] = window
+            window.isHidden = false
+        }
+    }
+
+    private func hide() {
+        for window in windows.values {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        windows.removeAll(keepingCapacity: true)
+    }
+
+    private func makeWindow(for scene: UIWindowScene) -> UIWindow {
+        let window = UIWindow(windowScene: scene)
+        window.windowLevel = .alert + 1
+        window.backgroundColor = .systemBackground
+        window.isUserInteractionEnabled = false
+        window.rootViewController = UIHostingController(rootView: AppPrivacyCover())
+        window.accessibilityIdentifier = "appPrivacyCoverWindow"
+        return window
     }
 }
 
