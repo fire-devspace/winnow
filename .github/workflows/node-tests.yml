@@ -11,7 +11,8 @@ name: Node e2e (manual)
 #   WINNOW_NODE_HOST (default 127.0.0.1)
 #   WINNOW_P2P_PORT  (default 38401)
 #   WINNOW_RPC_PORT  (default 38400)
-#   WINNOW_DATADIR   (default ~/.bitcoin-mysignet, i.e. the runner's home)
+#   WINNOW_DATADIR is always an ephemeral client-only directory. The runner's
+#   BTC_SWIFT_DATADIR variable is probed only to document the fixture location.
 # The "Node reachability probe" step reports which of these the runners can
 # actually reach. Note: `xcodebuild test` does not forward its environment
 # into the iOS-simulator test runner, so the UI suite gets these values via
@@ -44,9 +45,11 @@ jobs:
       WINNOW_NODE_HOST: ${{ vars.BTC_SWIFT_NODE_HOST || '127.0.0.1' }}
       WINNOW_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
       WINNOW_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
-      WINNOW_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
+      WINNOW_FIXTURE_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Runner environment probe
         run: |
@@ -64,7 +67,7 @@ jobs:
             || ls /usr/local/bin/bitcoin-cli /opt/homebrew/bin/bitcoin-cli 2>/dev/null \
             || echo "no bitcoin-cli"
           echo "== datadir =="
-          ls -d "${WINNOW_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no node datadir in the runner home"
+          ls -d "${WINNOW_FIXTURE_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no fixture datadir visible on this runner"
           echo "== home =="; echo "$HOME"
 
       - name: Node reachability probe
@@ -74,11 +77,15 @@ jobs:
           echo "RPC $WINNOW_NODE_HOST:$WINNOW_RPC_PORT"
           nc -z -G 5 "$WINNOW_NODE_HOST" "$WINNOW_RPC_PORT" && echo "RPC REACHABLE" || echo "RPC UNREACHABLE"
 
-      - name: Install xcodegen if absent
-        run: which xcodegen || brew install xcodegen
+      - name: Install pinned XcodeGen
+        run: scripts/install-xcodegen
 
-      - name: Install bitcoin-cli if absent (file-based RPC auth needs the local CLI + datadir)
-        run: which bitcoin-cli || brew install bitcoin
+      - name: Require pre-provisioned bitcoin-cli
+        run: |
+          which bitcoin-cli >/dev/null || {
+            echo "::error::the dedicated node-e2e runner must pre-provision bitcoin-cli"
+            exit 1
+          }
 
       - name: Materialize fixed node RPC credential
         # BTC_SWIFT_RPC_COOKIE keeps its historical name, but its value is the
@@ -92,7 +99,8 @@ jobs:
             winnow-ci:*) ;;
             *) echo "::error::BTC_SWIFT_RPC_COOKIE must contain the fixed winnow-ci rpcauth credential"; exit 1 ;;
           esac
-          DD="${WINNOW_DATADIR:-$HOME/.bitcoin-mysignet}"
+          DD="$RUNNER_TEMP/winnow-node-client"
+          printf 'WINNOW_DATADIR=%s\n' "$DD" >> "$GITHUB_ENV"
           mkdir -p "$DD/signet"
           # bitcoin-cli derives the chain from the conf file; without it the
           # CLI assumes mainnet and looks for $DD/.cookie instead of
@@ -209,7 +217,7 @@ jobs:
 
       - name: Upload e2e screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-screenshots
           # The sim-runner config step symlinked the suite's default
@@ -218,3 +226,12 @@ jobs:
             docs/screenshots/*.png
             docs/screenshots/timings.json
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove runner credentials and test configuration
+        if: always()
+        run: |
+          DD="$RUNNER_TEMP/winnow-node-client"
+          rm -f "$DD/.cookie" "$DD/signet/.cookie" "$DD/bitcoin.conf"
+          rmdir "$DD/signet" "$DD" 2>/dev/null || true
+          rm -f "$HOME/.winnow-node.env" "$HOME/src/btc-swift/docs/screenshots"

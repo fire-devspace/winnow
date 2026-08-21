@@ -1,0 +1,44 @@
+#!/bin/bash
+# Build only production SwiftPM products and reject warnings emitted by this
+# repository's Sources/. Dependency and test warnings remain visible in the
+# log, but do not make this focused gate noisy.
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel)
+SCRATCH_PATH="${1:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/winnow-production-build}"
+LOG_PATH="${2:-$SCRATCH_PATH/production-build.log}"
+mkdir -p "$(dirname "$LOG_PATH")"
+
+swift build --configuration release --scratch-path "$SCRATCH_PATH" 2>&1 | tee "$LOG_PATH"
+git -C "$ROOT" diff --exit-code -- Package.resolved
+
+python3 - "$ROOT" "$LOG_PATH" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+sources = root / "Sources"
+warnings = []
+pattern = re.compile(r"^(.*?):(\d+):(\d+): warning: (.*)$")
+
+for line in pathlib.Path(sys.argv[2]).read_text(errors="replace").splitlines():
+    match = pattern.match(line)
+    if not match:
+        continue
+    path = pathlib.Path(match.group(1))
+    if not path.is_absolute():
+        path = root / path
+    try:
+        path.resolve().relative_to(sources)
+    except ValueError:
+        continue
+    warnings.append(line)
+
+if warnings:
+    for warning in warnings:
+        print(f"::error title=Production Swift warning::{warning}")
+    raise SystemExit(f"production package emitted {len(warnings)} warning(s)")
+
+print("Production Swift package build completed without first-party warnings")
+PY

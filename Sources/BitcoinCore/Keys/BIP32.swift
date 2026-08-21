@@ -176,8 +176,8 @@ public struct HDKey: Sendable, Equatable {
                          chainCode: chainCode, privateKey: Data(secret),
                          publicKey: key.publicKey.dataRepresentation)
         } else {
-            guard let key = try? P256K.Signing.PublicKey(dataRepresentation: keyData, format: .compressed),
-                  keyData.count == 33
+            guard keyData.count == 33,
+                  (try? P256K.Signing.PublicKey(dataRepresentation: keyData, format: .compressed)) != nil
             else { throw BIP32Error.invalidSerializedKey }
             return HDKey(depth: depth, parentFingerprint: parentFingerprint, childIndex: childIndex,
                          chainCode: chainCode, privateKey: nil, publicKey: keyData)

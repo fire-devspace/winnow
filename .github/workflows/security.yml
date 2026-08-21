@@ -1,0 +1,126 @@
+name: Security CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Scheduled workflows run from the default branch only.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  production-package:
+    if: github.event_name != 'schedule'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Release-build production package and reject first-party warnings
+        run: >-
+          scripts/ci-production-warnings
+          "$RUNNER_TEMP/winnow-production-build"
+          "$RUNNER_TEMP/winnow-production-build.log"
+
+      - name: Generate deterministic SBOM and build provenance
+        run: |
+          scripts/generate-supply-chain-metadata \
+            --output-dir "$RUNNER_TEMP/supply-chain" \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/WinnowFuzz" \
+            --subject-name WinnowFuzz \
+            --builder-id "https://github.com/${{ github.repository }}/.github/workflows/security.yml@${{ github.workflow_sha }}"
+          scripts/generate-supply-chain-metadata \
+            --output-dir "$RUNNER_TEMP/supply-chain-replay" \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/WinnowFuzz" \
+            --subject-name WinnowFuzz \
+            --builder-id "https://github.com/${{ github.repository }}/.github/workflows/security.yml@${{ github.workflow_sha }}"
+          diff -ru "$RUNNER_TEMP/supply-chain" "$RUNNER_TEMP/supply-chain-replay"
+
+      - name: Upload build log, SBOM, and provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-supply-chain-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/winnow-production-build.log
+            ${{ runner.temp }}/supply-chain/
+          if-no-files-found: warn
+          retention-days: 14
+
+  fuzz-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Bounded deterministic fuzz smoke
+        run: |
+          mkdir -p "$RUNNER_TEMP/winnow-fuzz-smoke"
+          set -o pipefail
+          swift run --configuration release WinnowFuzz \
+            --iterations 1000 \
+            --seed 0x57494e4e4f575055 \
+            --max-input 16384 \
+            --artifact-dir "$RUNNER_TEMP/winnow-fuzz-smoke" \
+            2>&1 | tee "$RUNNER_TEMP/winnow-fuzz-smoke/run.log"
+
+      - name: Upload fuzz log and reproducer
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/winnow-fuzz-smoke/
+          if-no-files-found: warn
+          retention-days: 7
+
+  sustained-fuzz:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: address
+            seed: "0x57494e4e4f574153"
+          - sanitizer: thread
+            seed: "0x57494e4e4f575453"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Sustained deterministic fuzz under ${{ matrix.sanitizer }} sanitizer
+        env:
+          FUZZ_DIR: ${{ runner.temp }}/winnow-fuzz-${{ matrix.sanitizer }}
+        run: |
+          mkdir -p "$FUZZ_DIR"
+          set -o pipefail
+          swift run --configuration release --sanitize "${{ matrix.sanitizer }}" WinnowFuzz \
+            --iterations 25000 \
+            --seed "${{ matrix.seed }}" \
+            --max-input 65536 \
+            --artifact-dir "$FUZZ_DIR" \
+            2>&1 | tee "$FUZZ_DIR/run.log"
+
+      - name: Upload sanitizer log and reproducer
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/winnow-fuzz-${{ matrix.sanitizer }}/
+          if-no-files-found: warn
+          retention-days: 14

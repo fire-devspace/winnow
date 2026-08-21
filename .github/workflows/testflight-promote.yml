@@ -13,19 +13,25 @@ permissions:
   contents: read
 
 env:
-  ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-  ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-  ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
   TESTFLIGHT_PUBLIC_LINK_ID: 83djpNE7
   TESTFLIGHT_BUILD_ID: ${{ inputs.build_id }}
+
+concurrency:
+  group: testflight-promotion
+  cancel-in-progress: false
 
 jobs:
   promote:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install App Store Connect key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           install -d -m 700 "${RUNNER_TEMP}/winnow-asc"
           printf '%s' "$ASC_PRIVATE_KEY" > "${RUNNER_TEMP}/winnow-asc/AuthKey.p8"
@@ -33,10 +39,20 @@ jobs:
 
       - name: Promote latest build to the established public beta
         env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: ${{ runner.temp }}/winnow-asc/AuthKey.p8
         run: scripts/testflight.sh external
 
       - name: Verify TestFlight state
         env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: ${{ runner.temp }}/winnow-asc/AuthKey.p8
         run: scripts/testflight.sh status
+
+      - name: Remove App Store Connect key
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/winnow-asc/AuthKey.p8"
+          rmdir "${RUNNER_TEMP}/winnow-asc" 2>/dev/null || true

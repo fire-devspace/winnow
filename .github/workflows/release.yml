@@ -8,18 +8,20 @@ on:
     tags: ["v*.*.*"]
 
 permissions:
-  contents: write # the GitHub Release step needs to create releases
+  contents: read
 
-env:
-  ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-  ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-  ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   testflight:
     runs-on: macos-latest
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set version from tag
         run: |
@@ -33,8 +35,11 @@ jobs:
       - name: Full test suite (gate)
         run: swift test
 
+      - name: Install pinned XcodeGen
+        run: scripts/install-xcodegen
+
       - name: Generate Xcode project
-        run: brew install xcodegen && xcodegen
+        run: xcodegen
 
       - name: App unit tests (gate)
         run: |
@@ -53,9 +58,14 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation
 
       - name: Prepare signing credentials
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: scripts/ci-sign.sh
 
       - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: >-
           xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -configuration Release -destination 'generic/platform=iOS'
@@ -72,6 +82,9 @@ jobs:
           build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
 
       - name: Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           mkdir -p build
           cat > build/ExportOptions.plist <<'EOF'
@@ -102,6 +115,8 @@ jobs:
 
       - name: TestFlight groups (internal + external)
         env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: ${{ runner.temp }}/winnow-signing/AuthKey.p8
         run: |
           chmod +x scripts/testflight.sh
@@ -110,7 +125,45 @@ jobs:
           scripts/testflight.sh internal
           scripts/testflight.sh external
 
+      - name: Generate SBOM and app build provenance
+        run: >-
+          scripts/generate-supply-chain-metadata
+          --output-dir build/supply-chain
+          --subject build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
+          --subject-name WinnowApp.app
+          --builder-id https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.workflow_sha }}
+
+      - name: Upload supply-chain metadata for release publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-supply-chain-${{ github.run_id }}
+          path: build/supply-chain/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove App Store Connect key
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/winnow-signing/AuthKey.p8"
+          rmdir "${RUNNER_TEMP}/winnow-signing" 2>/dev/null || true
+
+  github-release:
+    needs: testflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download supply-chain metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-supply-chain-${{ github.run_id }}
+          path: supply-chain
+
       - name: GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
+          files: |
+            supply-chain/winnow.spdx.json
+            supply-chain/winnow-build-provenance.json

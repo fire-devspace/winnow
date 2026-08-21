@@ -8,6 +8,7 @@
 # certificate limit.
 # Needs env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY (PEM contents).
 set -euo pipefail
+umask 077
 
 WORK="${RUNNER_TEMP:-/tmp}/winnow-signing"
 install -d -m 700 "$WORK"
