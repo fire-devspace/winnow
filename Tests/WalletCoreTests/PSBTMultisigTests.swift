@@ -200,4 +200,25 @@ struct PSBTMultisigTests {
         #expect(foreignKey != fixture.leafKeys[0])
         #expect(throws: PSBTError.self) { try poisoned.finalize() }
     }
+
+    @Test("script-path finalizer verifies the control block against the spent output")
+    func finalizerRejectsUncommittedLeaf() throws {
+        let fixture = try Fixture()
+        var wrongOutput = fixture.psbt
+        let unrelatedInternalKey = BIP86.xonlyPublicKey(of: fixture.masters[0])
+        wrongOutput.inputs[0].witnessUTXO = .init(
+            amount: 100_000,
+            scriptPubKey: try BIP86.scriptPubKey(internalKey: unrelatedInternalKey))
+        try wrongOutput.signScriptPath(input: 0, privateKeys: fixture.secrets,
+                                       auxiliaryRand: Data(repeating: 0, count: 32))
+        #expect(throws: PSBTError.self) { try wrongOutput.finalize() }
+
+        var mismatchedVersion = fixture.psbt
+        let original = try #require(mismatchedVersion.inputs[0].tapLeafScripts.first)
+        mismatchedVersion.inputs[0].tapLeafScripts = [PSBT.TapLeafScript(
+            controlBlock: original.controlBlock, script: original.script, leafVersion: 0xC2)]
+        try mismatchedVersion.signScriptPath(input: 0, privateKeys: fixture.secrets,
+                                             auxiliaryRand: Data(repeating: 0, count: 32))
+        #expect(throws: PSBTError.self) { try mismatchedVersion.finalize() }
+    }
 }

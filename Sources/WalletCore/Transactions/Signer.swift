@@ -5,6 +5,7 @@ import P256K
 
 public enum SignerError: Error, Equatable {
     case invalidPrivateKey
+    case spentOutputCountMismatch(inputs: Int, spentOutputs: Int)
     /// No key resolved for an input's spent scriptPubKey (hex).
     case missingKey(scriptPubKey: String)
     /// A leaf script that is not a canonical multi_a/sortedmulti_a tapscript.
@@ -45,6 +46,10 @@ public enum Signer {
                             hashType: SighashBIP341.HashType = .default,
                             auxiliaryRand: Data? = nil,
                             privateKeyFor: (Data) throws -> Data?) throws {
+        guard tx.inputs.count == spentOutputs.count else {
+            throw SignerError.spentOutputCountMismatch(
+                inputs: tx.inputs.count, spentOutputs: spentOutputs.count)
+        }
         for index in tx.inputs.indices {
             guard let privateKey = try privateKeyFor(spentOutputs[index].scriptPubKey) else {
                 throw SignerError.missingKey(scriptPubKey: spentOutputs[index].scriptPubKey.hex)

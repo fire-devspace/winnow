@@ -151,6 +151,29 @@ struct PSBTTests {
         #expect(signed == direct)
     }
 
+    @Test("finalizer verifies key-path signatures and fails atomically")
+    func finalizerRejectsInvalidKeyPathSignature() throws {
+        let fixture = try Fixture()
+        var psbt = try PSBT(unsignedTx: fixture.tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        for index in fixture.tweakedKeys.indices {
+            try psbt.signKeyPath(input: index, tweakedPrivateKey: fixture.tweakedKeys[index],
+                                 auxiliaryRand: Data(repeating: 0, count: 32))
+        }
+        var corrupt = try #require(psbt.inputs[1].tapKeySignature)
+        corrupt[corrupt.startIndex] ^= 0x01
+        psbt.inputs[1].tapKeySignature = corrupt
+        let before = psbt
+
+        #expect(throws: PSBTError.self) { try psbt.finalize() }
+        #expect(psbt == before, "a failed later input must not finalize or erase earlier input fields")
+
+        var unsafe = before
+        var encodedDefault = try #require(unsafe.inputs[0].tapKeySignature)
+        encodedDefault.append(0x00) // 65-byte DEFAULT encoding is invalid under BIP341.
+        unsafe.inputs[0].tapKeySignature = encodedDefault
+        #expect(throws: PSBTError.self) { try unsafe.finalize() }
+    }
+
     @Test("unsignedTransaction/extractor enforce presence of required fields")
     func validation() throws {
         let fixture = try Fixture()

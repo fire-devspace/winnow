@@ -97,4 +97,17 @@ struct SignerTests {
             try Signer.sign(tx: &tx, spentOutputs: fixture.utxos.map(\.spent)) { _ in nil }
         }
     }
+
+    @Test("spent-output count mismatch is an error, not an index trap")
+    func spentOutputCountMismatch() throws {
+        let fixture = try Fixture(indices: [0], amounts: [10_000])
+        var tx = try TransactionBuilder.build(
+            inputs: fixture.utxos.map(\.outpoint),
+            payments: [Payment(amount: 9_000,
+                               scriptPubKey: Data([0x51, 0x20] + repeatElement(0x99, count: 32)))])
+        #expect(throws: SignerError.spentOutputCountMismatch(inputs: 1, spentOutputs: 0)) {
+            try Signer.sign(tx: &tx, spentOutputs: []) { _ in nil }
+        }
+        #expect(tx.inputs[0].witness.isEmpty)
+    }
 }
