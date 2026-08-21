@@ -33,12 +33,31 @@ jobs:
       - name: Full test suite (gate)
         run: swift test
 
+      - name: Generate Xcode project
+        run: brew install xcodegen && xcodegen
+
+      - name: App unit tests (gate)
+        run: |
+          SIMULATOR_ID="$(xcrun simctl list devices available -j | ruby -rjson -e '
+            json = JSON.parse(STDIN.read)
+            runtimes = json.fetch("devices").keys.grep(/\.iOS-/).sort.reverse
+            device = runtimes.lazy.flat_map { |runtime| json["devices"][runtime] }
+              .find { |entry| entry["isAvailable"] && entry["name"].start_with?("iPhone") }
+            abort "no available iPhone simulator" unless device
+            puts device.fetch("udid")
+          ')"
+          test -n "$SIMULATOR_ID"
+          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -only-testing:WinnowAppTests \
+            -skipPackagePluginValidation -skipMacroValidation
+
       - name: Prepare signing credentials
         run: scripts/ci-sign.sh
 
       - name: Archive
         run: >-
-          brew install xcodegen && xcodegen && xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
+          xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -configuration Release -destination 'generic/platform=iOS'
           -archivePath build/WinnowApp.xcarchive
           -allowProvisioningUpdates

@@ -54,6 +54,21 @@ jobs:
           xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -destination 'generic/platform=iOS Simulator'
           -skipPackagePluginValidation -skipMacroValidation build
+      - name: App unit tests (required)
+        run: |
+          SIMULATOR_ID="$(xcrun simctl list devices available -j | ruby -rjson -e '
+            json = JSON.parse(STDIN.read)
+            runtimes = json.fetch("devices").keys.grep(/\.iOS-/).sort.reverse
+            device = runtimes.lazy.flat_map { |runtime| json["devices"][runtime] }
+              .find { |entry| entry["isAvailable"] && entry["name"].start_with?("iPhone") }
+            abort "no available iPhone simulator" unless device
+            puts device.fetch("udid")
+          ')"
+          test -n "$SIMULATOR_ID"
+          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -only-testing:WinnowAppTests \
+            -skipPackagePluginValidation -skipMacroValidation
       - name: Build and inspect release app
         run: |
           xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp \
