@@ -218,8 +218,7 @@ struct VaultFlowTests {
         var combined = try partialA.combined(with: [partialC])
         #expect(combined.inputs[0].tapScriptSignatures.count == 2)
         // A hostile combiner may append an unrelated but structurally parsed
-        // leaf. It must not shadow a later valid committed leaf and turn a
-        // fully signed spend into a permanent finalization failure.
+        // leaf. The vault boundary rejects that policy mutation atomically.
         let realLeaf = try #require(combined.inputs[0].tapLeafScripts.first)
         let bogusControl = Taproot.ControlBlock(
             leafVersion: realLeaf.leafVersion,
@@ -229,9 +228,27 @@ struct VaultFlowTests {
         let bogusLeaf = PSBT.TapLeafScript(controlBlock: bogusControl,
                                            script: realLeaf.script,
                                            leafVersion: realLeaf.leafVersion)
-        combined.inputs[0].tapLeafScripts = [bogusLeaf, realLeaf]
-        #expect(combined.inputs[0].tapLeafScripts.first?.controlBlock.internalKey
+        var hostile = combined
+        hostile.inputs[0].tapLeafScripts = [bogusLeaf, realLeaf]
+        #expect(hostile.inputs[0].tapLeafScripts.first?.controlBlock.internalKey
             == Data(repeating: 0, count: 32))
+        let hostileBeforeReview = hostile
+        #expect(throws: VaultError.self) {
+            _ = try vault.finalizeSpend(&hostile, knownUTXOs: [utxo],
+                                        ownedOutputCoordinates: ownedCoordinates)
+        }
+        #expect(hostile == hostileBeforeReview)
+
+        // The generic PSBT finalizer has a different boundary: it proves the
+        // document is self-consistent, so an unrelated leaf must not shadow a
+        // later leaf that actually commits to the declared witness UTXO.
+        var generic = hostile
+        try generic.finalize()
+        let genericSigned = try generic.extractedTransaction()
+        #expect(try verifyMultisigSpend(
+            tx: genericSigned, inputIndex: 0,
+            spentOutputs: [utxo.spentOutput]).validSignatures == 2)
+
         let signed = try vault.finalizeSpend(&combined, knownUTXOs: [utxo],
                                              ownedOutputCoordinates: ownedCoordinates)
 
