@@ -1,0 +1,44 @@
+#!/bin/bash
+# Proves that a built release executable does not contain Winnow's test/story
+# activation surface. The full E2E implementation is compiled only with DEBUG;
+# these stable markers make accidental reintroduction fail CI.
+set -euo pipefail
+
+if [ "$#" -ne 1 ] || { [ ! -f "$1" ] && [ ! -d "$1" ]; }; then
+  echo "usage: scripts/verify-release-e2e-exclusion <WinnowApp.app or executable>" >&2
+  exit 2
+fi
+
+artifact="$1"
+scan_file=$(mktemp "${TMPDIR:-/tmp}/winnow-release-strings.XXXXXX")
+trap 'rm -f "$scan_file"' EXIT
+
+if [ -d "$artifact" ]; then
+  # Scan every bundled binary/resource, including a future framework or dylib,
+  # rather than assuming all application code lives in the main executable.
+  find "$artifact" -type f -exec strings {} \; >"$scan_file" 2>/dev/null
+else
+  strings "$artifact" >"$scan_file"
+fi
+
+markers=(
+  WINNOW_E2E
+  WINNOW_STORY_PERSONA
+  story-events.jsonl
+  BTCSwiftE2E
+  org.btc-swift.wallet.e2e
+)
+
+found=0
+for marker in "${markers[@]}"; do
+  if grep -F -q "$marker" "$scan_file"; then
+    echo "release artifact contains forbidden test marker: $marker" >&2
+    found=1
+  fi
+done
+
+if [ "$found" -ne 0 ]; then
+  exit 1
+fi
+
+echo "release artifact contains no E2E/story activation markers"

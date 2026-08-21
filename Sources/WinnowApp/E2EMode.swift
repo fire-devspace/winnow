@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import Security
 
+#if DEBUG
 /// Launch-environment hooks for the XCUITest end-to-end suite (UITests/).
 /// Entirely inert unless the app is launched with WINNOW_E2E=1: a normal
 /// launch never reads any of this and behaves exactly as before.
@@ -172,3 +173,35 @@ struct E2EMode {
         return entropy
     }
 }
+#else
+/// A deliberately uninhabitable release-build stand-in.
+///
+/// The complete E2E implementation, including its environment-variable
+/// parser, deterministic entropy injection, storage reset, custom peer, and
+/// event journal, is removed by conditional compilation. Keeping only this
+/// type-shaped stand-in lets shared application code use optional chaining
+/// without placing a test activation path in a distributed binary.
+struct E2EMode {
+    static let current: E2EMode? = nil
+
+    private init() {}
+
+    var peer: String? { unavailable() }
+    var entropy: Data? { unavailable() }
+    var clipboard: String? { unavailable() }
+    var forcedNetwork: BitcoinNetwork? { unavailable() }
+    var initialTab: String? { unavailable() }
+    var requireDeviceAuthentication: Bool { unavailable() }
+    var keychainService: String { unavailable() }
+    var defaults: UserDefaults { unavailable() }
+    var networkParams: NetworkParams? { unavailable() }
+    var storageDirectoryName: String { unavailable() }
+
+    func wipeIfRequested() { unavailable() }
+    func journal(_: String, fields _: [String: String] = [:]) { unavailable() }
+
+    private func unavailable() -> Never {
+        fatalError("Test mode is not present in release builds")
+    }
+}
+#endif
