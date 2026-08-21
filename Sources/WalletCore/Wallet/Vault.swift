@@ -62,6 +62,10 @@ public struct Vault: Sendable {
         public var inputTotal: Int64
         public var outputTotal: Int64
         public var fee: Int64
+        public var sighashTypes: [UInt32]
+        public var transactionVersion: Int32
+        public var fallbackLocktime: UInt32
+        public var sequences: [UInt32]
     }
 
     /// The two supported vault policies.
@@ -163,18 +167,25 @@ public struct Vault: Sendable {
         let maxMoney: Int64 = 2_100_000_000_000_000
         guard !psbt.inputs.isEmpty else { throw VaultError.invalidSpend("it has no inputs") }
         guard !psbt.outputs.isEmpty else { throw VaultError.invalidSpend("it has no outputs") }
+        guard psbt.txVersion == 1 || psbt.txVersion == 2 else {
+            throw VaultError.invalidSpend("transaction version \(psbt.txVersion) is not supported")
+        }
 
-        var seenOutpoints: [Transaction.Outpoint] = []
+        var seenOutpoints: Set<Data> = []
         var inputTotal: Int64 = 0
+        var sighashTypes: [UInt32] = []
+        var sequences: [UInt32] = []
         for (inputIndex, input) in psbt.inputs.enumerated() {
             guard let txid = input.previousTxid, txid.count == 32, let vout = input.outputIndex else {
                 throw VaultError.invalidSpend("input \(inputIndex + 1) has no complete outpoint")
             }
             let outpoint = Transaction.Outpoint(txid: txid, vout: vout)
-            guard !seenOutpoints.contains(outpoint) else {
+            var outpointID = txid
+            var littleEndianVout = vout.littleEndian
+            withUnsafeBytes(of: &littleEndianVout) { outpointID.append(contentsOf: $0) }
+            guard seenOutpoints.insert(outpointID).inserted else {
                 throw VaultError.invalidSpend("input \(inputIndex + 1) repeats an earlier outpoint")
             }
-            seenOutpoints.append(outpoint)
             guard let known = knownUTXOs.first(where: { $0.outpoint == outpoint }) else {
                 throw VaultError.invalidSpend("input \(inputIndex + 1) is not an available vault coin")
             }
@@ -189,6 +200,8 @@ public struct Vault: Sendable {
             guard rawSighash == 0 || rawSighash == 1 else {
                 throw VaultError.invalidSpend("input \(inputIndex + 1) does not commit to every output")
             }
+            sighashTypes.append(rawSighash)
+            sequences.append(input.sequence ?? 0xFFFF_FFFF)
             try validatePolicyFields(input, inputIndex: inputIndex, utxo: known)
             let (sum, overflow) = inputTotal.addingReportingOverflow(known.amount)
             guard !overflow, sum <= maxMoney else {
@@ -224,8 +237,20 @@ public struct Vault: Sendable {
         guard outputTotal <= inputTotal else {
             throw VaultError.invalidSpend("outputs exceed its known inputs")
         }
+        let fee = inputTotal - outputTotal
+        // A vault proposal is untrusted input. Refuse to sign away more than
+        // ten percent of the known coins as miner fee; the owner can construct
+        // a replacement proposal instead of approving an accidental drain.
+        guard fee <= inputTotal / 10 else {
+            throw VaultError.invalidSpend(
+                "the \(fee)-sat fee exceeds the 10% safety limit for these inputs")
+        }
         return SpendReview(outputs: reviewedOutputs, inputTotal: inputTotal,
-                           outputTotal: outputTotal, fee: inputTotal - outputTotal)
+                           outputTotal: outputTotal, fee: fee,
+                           sighashTypes: sighashTypes,
+                           transactionVersion: psbt.txVersion,
+                           fallbackLocktime: psbt.fallbackLocktime,
+                           sequences: sequences)
     }
 
     private func validatePolicyFields(_ input: PSBT.Input, inputIndex: Int,

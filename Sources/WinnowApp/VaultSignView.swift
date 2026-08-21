@@ -32,6 +32,8 @@ struct VaultSignView: View {
 
     @State private var pasted = ""
     @State private var working: PSBT?
+    @State private var spendReview: Vault.SpendReview?
+    @State private var spendReviewError: String?
     @State private var output: String?
     @State private var error: String?
     @State private var broadcastTxid: Data?
@@ -61,9 +63,15 @@ struct VaultSignView: View {
     private var minSignatures: Int { working?.inputs.map(\.tapScriptSignatures.count).min() ?? 0 }
     private var minNonces: Int { working?.inputs.map(\.musig2PubNonces.count).min() ?? 0 }
     private var minPartialSigs: Int { working?.inputs.map(\.musig2PartialSigs.count).min() ?? 0 }
-    private var workingInputsRemainAvailable: Bool {
-        guard let working else { return false }
-        return (try? validateSpend(working)) != nil
+    private var workingInputsRemainAvailable: Bool { spendReview != nil }
+
+    /// Re-evaluate the cached review when either the proposal or trusted local
+    /// coin set changes. Rendering never performs cryptographic validation.
+    private var spendReviewIdentity: String {
+        let coins = record?.utxos.map {
+            "\($0.txid.hex):\($0.vout):\($0.amount):\($0.chain.rawValue):\($0.index)"
+        }.joined(separator: "|") ?? "missing-record"
+        return "\(working?.base64 ?? "missing-psbt")|\(coins)"
     }
 
     var body: some View {
@@ -116,6 +124,9 @@ struct VaultSignView: View {
                 }
             }
             .navigationTitle("Sign / combine")
+            .task(id: spendReviewIdentity) {
+                refreshSpendReview()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -151,7 +162,7 @@ struct VaultSignView: View {
     /// Outputs the spend pays. Vault ownership comes from matching each actual
     /// locking script against locally expected descriptor derivations.
     private var outputLines: [OutputLine] {
-        guard let working, let review = try? validateSpend(working) else { return [] }
+        guard let review = spendReview else { return [] }
         return review.outputs.map {
             OutputLine(destination: destination(forScript: $0.scriptPubKey),
                        amount: $0.amount, isVaultOwned: $0.isVaultOwned)
@@ -159,56 +170,72 @@ struct VaultSignView: View {
     }
 
     private var feeAmount: Int64? {
-        guard let working else { return nil }
-        return try? validateSpend(working).fee
+        spendReview?.fee
     }
 
-    private var sighashRaw: UInt32 { working?.inputs.first?.sighashType ?? 0 }
-    private var sighashSafe: Bool { sighashRaw == 0 || sighashRaw == 1 }
     private var sighashLabel: String {
-        switch sighashRaw {
-        case 0: "DEFAULT — commits to all outputs"
-        case 1: "ALL — commits to all outputs"
-        default: "UNUSUAL (0x\(String(sighashRaw, radix: 16))) — does not commit to all outputs"
+        guard let types = spendReview?.sighashTypes else { return "unavailable" }
+        let unique = Set(types)
+        if unique == Set([UInt32(0)]) { return "DEFAULT — all inputs commit to every output" }
+        if unique == Set([UInt32(1)]) { return "ALL — all inputs commit to every output" }
+        if unique == Set([UInt32(0), UInt32(1)]) {
+            return "DEFAULT / ALL — all inputs commit to every output"
         }
+        return "unavailable"
+    }
+
+    private var locktimeLabel: String {
+        guard let locktime = spendReview?.fallbackLocktime else { return "unavailable" }
+        return locktime == 0 ? "none" : String(locktime)
+    }
+
+    private var sequenceLabel: String {
+        guard let sequences = spendReview?.sequences else { return "unavailable" }
+        return sequences.contains(where: { $0 < 0xFFFF_FFFE }) ? "replaceable (RBF)" : "final"
     }
 
     @ViewBuilder
     private var reviewSection: some View {
         Section {
-            ForEach(outputLines.indices, id: \.self) { index in
-                let line = outputLines[index]
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(line.isVaultOwned ? "Vault-owned output" : "Pays")
-                            .font(.caption)
-                            .foregroundStyle(line.isVaultOwned ? Color.secondary : Color.primary)
-                        Spacer()
-                        Text("\(line.amount) sat")
-                            .font(.system(.callout, design: .monospaced))
+            if spendReview != nil {
+                ForEach(outputLines.indices, id: \.self) { index in
+                    let line = outputLines[index]
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(line.isVaultOwned ? "Vault-owned output" : "Pays")
+                                .font(.caption)
+                                .foregroundStyle(line.isVaultOwned ? Color.secondary : Color.primary)
+                            Spacer()
+                            Text("\(line.amount) sat")
+                                .font(.system(.callout, design: .monospaced))
+                        }
+                        Text(line.destination)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
-                    Text(line.destination)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    .padding(.vertical, 1)
                 }
-                .padding(.vertical, 1)
-            }
-            if let feeAmount {
-                LabeledContent("Fee", value: "\(feeAmount) sat")
+                if let feeAmount {
+                    LabeledContent("Fee", value: "\(feeAmount) sat")
+                }
+                LabeledContent("Sighash", value: sighashLabel)
+                LabeledContent("Version", value: String(spendReview?.transactionVersion ?? 0))
+                LabeledContent("Locktime", value: locktimeLabel)
+                LabeledContent("Sequence", value: sequenceLabel)
             } else {
-                LabeledContent("Fee", value: "unavailable (missing input amounts)")
-            }
-            LabeledContent("Sighash") {
-                Text(sighashLabel)
+                Label("Winnow cannot safely review this proposal", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text(spendReviewError ?? "The vault or proposal is unavailable.")
                     .font(.footnote)
-                    .foregroundStyle(sighashSafe ? Color.secondary : Color.red)
-                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(.red)
             }
         } header: {
             Text("Review — what you are signing")
         } footer: {
-            Text("A cosigner can propose any transaction. Winnow verifies known inputs and vault-owned output scripts; your signature authorizes exactly the destinations and fee shown here.")
+            Text(spendReview == nil
+                 ? "Signing and broadcasting remain disabled until the proposal passes every check."
+                 : "A cosigner can propose any transaction. Winnow verifies known inputs and vault-owned output scripts; your signature authorizes exactly the destinations and fee shown here.")
         }
     }
 
@@ -289,12 +316,28 @@ struct VaultSignView: View {
                                      ownedOutputCoordinates: coordinates)
     }
 
+    private func refreshSpendReview() {
+        guard let working else {
+            spendReview = nil
+            spendReviewError = nil
+            return
+        }
+        do {
+            spendReview = try validateSpend(working)
+            spendReviewError = nil
+        } catch {
+            spendReview = nil
+            spendReviewError = error.localizedDescription
+        }
+    }
+
     private func addPasted() {
         error = nil
         do {
             let incoming = try PSBT(base64: pasted.trimmingCharacters(in: .whitespacesAndNewlines))
             let candidate = try working?.combined(with: [incoming]) ?? incoming
-            _ = try validateSpend(candidate)
+            spendReview = try validateSpend(candidate)
+            spendReviewError = nil
             working = candidate
             if let working { model.journalPSBT(stage: "vault-psbt-combined", psbt: working) }
             pasted = ""

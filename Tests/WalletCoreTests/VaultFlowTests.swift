@@ -246,6 +246,10 @@ struct VaultFlowTests {
             created, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
         #expect(review.inputTotal == 100_000)
         #expect(review.outputTotal + review.fee == review.inputTotal)
+        #expect(review.sighashTypes == [0])
+        #expect(review.transactionVersion == 2)
+        #expect(review.fallbackLocktime == 0)
+        #expect(review.sequences == [0xFFFF_FFFD])
         #expect(review.outputs.first { $0.scriptPubKey == destination }?.isVaultOwned == false)
         #expect(review.outputs.first { $0.scriptPubKey != destination }?.isVaultOwned == true)
 
@@ -280,6 +284,26 @@ struct VaultFlowTests {
         #expect(throws: VaultError.self) {
             _ = try vault.reviewSpend(
                 changedPolicy, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        }
+
+        var absurdFee = created
+        let paymentIndex = try #require(absurdFee.outputs.firstIndex { $0.script == destination })
+        absurdFee.outputs[paymentIndex].amount = 1
+        let vaultOutputIndex = try #require(absurdFee.outputs.firstIndex { $0.script != destination })
+        absurdFee.outputs[vaultOutputIndex].amount = 1
+        #expect(throws: VaultError.self) {
+            _ = try vault.reviewSpend(
+                absurdFee, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
+        }
+
+        var unsupportedVersion = created
+        unsupportedVersion.globals.removeAll { $0.type == PSBT.GlobalType.txVersion }
+        unsupportedVersion.globals.append(PSBT.KeyValue(
+            type: PSBT.GlobalType.txVersion,
+            value: Data([3, 0, 0, 0])))
+        #expect(throws: VaultError.self) {
+            _ = try vault.reviewSpend(
+                unsupportedVersion, knownUTXOs: [utxo], ownedOutputCoordinates: [changeCoordinate])
         }
     }
 
