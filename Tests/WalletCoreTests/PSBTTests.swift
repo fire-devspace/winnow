@@ -201,8 +201,47 @@ struct PSBTTests {
             $0.type == PSBT.InType.outputIndex
         })
         malformedInput.inputs[0].pairs[outputIndex].value = Data()
+        #expect(malformedInput.inputs[0].outputIndex == nil)
         #expect(throws: PSBTError.malformed("input field \(PSBT.InType.outputIndex) must be 4 bytes")) {
             _ = try PSBT(serialized: malformedInput.serialized)
         }
+
+        // Public in-memory construction and mutable pairs cannot turn a
+        // short fixed-width field into an out-of-bounds load either.
+        func replaceInput(_ type: UInt8, with value: Data, in psbt: inout PSBT) throws {
+            let index = try #require(psbt.inputs[0].pairs.firstIndex { $0.type == type })
+            psbt.inputs[0].pairs[index].value = value
+        }
+        var shortFields = try PSBT(unsignedTx: fixture.tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        try replaceInput(PSBT.InType.previousTxid, with: Data(repeating: 0, count: 31), in: &shortFields)
+        try replaceInput(PSBT.InType.sequence, with: Data(repeating: 0, count: 3), in: &shortFields)
+        try replaceInput(PSBT.InType.sighashType, with: Data(repeating: 0, count: 3), in: &shortFields)
+        let amountIndex = try #require(shortFields.outputs[0].pairs.firstIndex {
+            $0.type == PSBT.OutType.amount
+        })
+        shortFields.outputs[0].pairs[amountIndex].value = Data(repeating: 0, count: 7)
+        #expect(shortFields.inputs[0].previousTxid == nil)
+        #expect(shortFields.inputs[0].sequence == nil)
+        #expect(shortFields.inputs[0].sighashType == nil)
+        #expect(shortFields.outputs[0].amount == nil)
+    }
+
+    @Test("a map at the field-count limit parses without quadratic duplicate scans")
+    func denseMapBudget() throws {
+        let fixture = try Fixture()
+        var psbt = try PSBT(unsignedTx: fixture.tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        let existingCount = psbt.inputs[0].pairs.count
+        for index in 0 ..< (PSBT.maxMapPairs - existingCount) {
+            let keyData = Data([
+                UInt8(truncatingIfNeeded: index),
+                UInt8(truncatingIfNeeded: index >> 8),
+                UInt8(truncatingIfNeeded: index >> 16),
+                UInt8(truncatingIfNeeded: index >> 24),
+            ])
+            psbt.inputs[0].pairs.append(.init(type: 0xFC, keyData: keyData, value: Data()))
+        }
+
+        let parsed = try PSBT(serialized: psbt.serialized)
+        #expect(parsed.inputs[0].pairs.count == PSBT.maxMapPairs)
     }
 }

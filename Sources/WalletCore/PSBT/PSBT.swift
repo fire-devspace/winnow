@@ -206,13 +206,21 @@ public struct PSBT: Equatable, Sendable {
 
         /// PSBT_IN_PREVIOUS_TXID — 32 bytes, internal byte order.
         public var previousTxid: Data? {
-            get { pair(type: InType.previousTxid)?.value }
+            get {
+                guard let value = pair(type: InType.previousTxid)?.value,
+                      value.count == 32 else { return nil }
+                return value
+            }
             set { set(KeyValue(type: InType.previousTxid, value: newValue ?? Data())) }
         }
 
         /// PSBT_IN_OUTPUT_INDEX — uint32 LE.
         public var outputIndex: UInt32? {
-            get { pair(type: InType.outputIndex)?.value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian } }
+            get {
+                guard let value = pair(type: InType.outputIndex)?.value,
+                      value.count == MemoryLayout<UInt32>.size else { return nil }
+                return value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
+            }
             set {
                 var value = Data()
                 value.appendUInt32(newValue ?? 0)
@@ -222,7 +230,11 @@ public struct PSBT: Equatable, Sendable {
 
         /// PSBT_IN_SEQUENCE — uint32 LE.
         public var sequence: UInt32? {
-            get { pair(type: InType.sequence)?.value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian } }
+            get {
+                guard let value = pair(type: InType.sequence)?.value,
+                      value.count == MemoryLayout<UInt32>.size else { return nil }
+                return value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
+            }
             set {
                 var value = Data()
                 value.appendUInt32(newValue ?? 0)
@@ -232,7 +244,11 @@ public struct PSBT: Equatable, Sendable {
 
         /// PSBT_IN_SIGHASH_TYPE — uint32 LE (BIP341 hash_type).
         public var sighashType: UInt32? {
-            get { pair(type: InType.sighashType)?.value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian } }
+            get {
+                guard let value = pair(type: InType.sighashType)?.value,
+                      value.count == MemoryLayout<UInt32>.size else { return nil }
+                return value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
+            }
             set {
                 var value = Data()
                 value.appendUInt32(newValue ?? 0)
@@ -453,7 +469,11 @@ public struct PSBT: Equatable, Sendable {
 
         /// PSBT_OUT_AMOUNT — int64 LE sats (BIP370).
         public var amount: Int64? {
-            get { pair(type: OutType.amount)?.value.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).littleEndian } }
+            get {
+                guard let value = pair(type: OutType.amount)?.value,
+                      value.count == MemoryLayout<Int64>.size else { return nil }
+                return value.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).littleEndian }
+            }
             set {
                 var value = Data()
                 value.appendInt64(newValue ?? 0)
@@ -615,6 +635,7 @@ public struct PSBT: Equatable, Sendable {
 
         func readMap() throws -> [KeyValue] {
             var pairs: [KeyValue] = []
+            var seenKeys = Set<Data>()
             while true {
                 let keyLength = try reader.readVarInt()
                 guard keyLength > 0 else { return pairs } // separator
@@ -630,7 +651,7 @@ public struct PSBT: Equatable, Sendable {
                     throw PSBTError.malformed("map value length \(valueLength) is out of bounds")
                 }
                 let value = try reader.readBytes(Int(valueLength))
-                guard !pairs.contains(where: { $0.key == key }) else { throw PSBTError.duplicateKey(key) }
+                guard seenKeys.insert(key).inserted else { throw PSBTError.duplicateKey(key) }
                 pairs.append(KeyValue(key: key, value: value))
             }
         }
