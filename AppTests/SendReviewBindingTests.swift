@@ -54,4 +54,19 @@ final class SendReviewBindingTests: XCTestCase {
         XCTAssertEqual(captured.amount, 10_000)
         XCTAssertNotEqual(captured, edited)
     }
+
+    func testFeeBumpReviewBindsTransactionAndRequestedRate() {
+        let txid = Data(repeating: 0x11, count: 32)
+        let baseline = FeeBumpReviewInputs(txid: txid, targetRateText: " 2.5 ")
+
+        XCTAssertEqual(baseline.targetRate, 2.5)
+        XCTAssertNotEqual(
+            baseline,
+            FeeBumpReviewInputs(txid: Data(repeating: 0x22, count: 32), targetRateText: " 2.5 ")
+        )
+        XCTAssertNotEqual(
+            baseline,
+            FeeBumpReviewInputs(txid: txid, targetRateText: "3.0")
+        )
+    }
 }
