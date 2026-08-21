@@ -47,6 +47,11 @@ jobs:
           -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           -skipPackagePluginValidation -skipMacroValidation archive
 
+      - name: Verify shipped archive excludes E2E controls
+        run: >-
+          scripts/verify-release-e2e-exclusion
+          build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
+
       - name: Upload to App Store Connect
         run: |
           mkdir -p build
