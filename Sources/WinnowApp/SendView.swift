@@ -131,7 +131,7 @@ struct SendView: View {
                     Section("Review") {
                         LabeledContent("Pays", value: !preview.silentPayments.isEmpty
                                        ? "silent payment (derived P2TR output)"
-                                       : String(preview.destination.prefix(24)) + "…")
+                                       : abbreviated(preview.destination))
                         LabeledContent("Amount", value: satsText(preview.payments.map(\.amount).reduce(0, +)
                                                                    + preview.silentPayments.map(\.amount).reduce(0, +)))
                         LabeledContent("Fee", value: satsText(preview.fee))
@@ -210,6 +210,11 @@ struct SendView: View {
     /// Recomputes the resolved rate when priority/override/floor change.
     private var feeInputs: String {
         "\(priority.rawValue)|\(overrideText)|\(model.status.feeFloorSatPerVByte ?? -1)"
+    }
+
+    private func abbreviated(_ destination: String) -> String {
+        guard destination.count > 32 else { return destination }
+        return "\(destination.prefix(16))…\(destination.suffix(12))"
     }
 
     private func review() {

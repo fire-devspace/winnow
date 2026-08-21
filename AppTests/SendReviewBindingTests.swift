@@ -69,4 +69,47 @@ final class SendReviewBindingTests: XCTestCase {
             FeeBumpReviewInputs(txid: txid, targetRateText: "3.0")
         )
     }
+
+    func testBuiltSendMustMatchReviewedFeeChangeAndInputs() {
+        let reviewedOutpoint = Transaction.Outpoint(
+            txid: Data(repeating: 0x11, count: 32), vout: 1)
+        let changeScript = Data([0x51, 0x20]) + Data(repeating: 0x22, count: 32)
+        let destinationScript = Data([0x00, 0x14]) + Data(repeating: 0x33, count: 20)
+        let preview = AppModel.SendPreview(
+            destination: "tb1q-reviewed",
+            payments: [Payment(amount: 20_000, scriptPubKey: destinationScript)],
+            silentPayments: [],
+            feeRateSatPerVByte: 2,
+            fee: 500,
+            changeAmount: 79_500,
+            inputCount: 1,
+            selectedOutpoints: [.init(txid: reviewedOutpoint.txid, vout: reviewedOutpoint.vout)],
+            change: Payment(amount: 79_500, scriptPubKey: changeScript)
+        )
+        func built(fee: Int64 = 500, changeAmount: Int64? = 79_500,
+                   outpoint: Transaction.Outpoint = reviewedOutpoint,
+                   overrideChangeScript: Data? = nil) -> BuiltTransaction {
+            let actualChangeScript = overrideChangeScript ?? changeScript
+            let transaction = Transaction(
+                version: 2,
+                inputs: [.init(previousOutput: outpoint, scriptSig: Data(), sequence: 0xFFFF_FFFD)],
+                outputs: [
+                    .init(value: 20_000, scriptPubKey: destinationScript),
+                    .init(value: 79_500, scriptPubKey: actualChangeScript),
+                ],
+                locktime: 0
+            )
+            return BuiltTransaction(psbt: PSBT(globals: [], inputs: [], outputs: []),
+                                    transaction: transaction, fee: fee,
+                                    changeAmount: changeAmount)
+        }
+
+        XCTAssertTrue(preview.authorizes(built()))
+        XCTAssertFalse(preview.authorizes(built(fee: 501)))
+        XCTAssertFalse(preview.authorizes(built(changeAmount: nil)))
+        XCTAssertFalse(preview.authorizes(built(
+            outpoint: .init(txid: Data(repeating: 0x44, count: 32), vout: 1))))
+        XCTAssertFalse(preview.authorizes(built(
+            overrideChangeScript: Data([0x51, 0x20]) + Data(repeating: 0x55, count: 32))))
+    }
 }

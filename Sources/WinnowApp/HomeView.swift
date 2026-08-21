@@ -280,8 +280,9 @@ private struct FeeBumpView: View {
             let suggestedRate = ceil(rate + 1)
             targetRateText = String(format: "%.0f", suggestedRate)
             let requested = reviewInputs
+            guard let targetRate = requested.targetRate else { return }
             let candidate = try await model.previewFeeBump(
-                txid: requested.txid, feeRateSatPerVByte: suggestedRate)
+                txid: requested.txid, feeRateSatPerVByte: targetRate)
             guard requested == reviewInputs else { return }
             reviewedFeeBump = ReviewedFeeBump(request: requested, preview: candidate)
         } catch {
