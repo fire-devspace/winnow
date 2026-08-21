@@ -8,6 +8,37 @@ public enum CoinSelectionError: Error, Equatable {
     case invalidFeeRate(Double)
     /// A payment output is below the dust relay threshold and would not relay.
     case dustOutput(value: Int64, threshold: Int64)
+    /// A payment or stored coin is outside Bitcoin's monetary range.
+    case invalidAmount(Int64)
+    /// The same outpoint appeared more than once in the spendable set.
+    case duplicateUTXO
+    /// A stored coin did not carry a 32-byte transaction ID.
+    case invalidOutpoint
+    /// A raw locking script or change script was empty.
+    case emptyScript
+    /// A caller supplied an impossible witness-size estimate.
+    case invalidWitnessSize(Int)
+    /// Summing amounts or calculating a fee exceeded the safe monetary range.
+    case amountOverflow
+}
+
+extension CoinSelectionError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .noUTXOs: "There are no spendable coins."
+        case let .insufficientFunds(available, required):
+            "Insufficient funds: \(available) sats are available, but \(required) sats are required."
+        case let .invalidFeeRate(rate): "Invalid fee rate: \(rate) sat/vB."
+        case let .dustOutput(value, threshold):
+            "The \(value)-sat payment is below the \(threshold)-sat relay minimum."
+        case let .invalidAmount(amount): "Invalid Bitcoin amount: \(amount) sats."
+        case .duplicateUTXO: "The wallet contains the same coin more than once. Rescan before spending."
+        case .invalidOutpoint: "A wallet coin has an invalid transaction ID. Rescan before spending."
+        case .emptyScript: "A payment has no Bitcoin locking script."
+        case let .invalidWitnessSize(size): "Invalid transaction witness estimate: \(size) bytes."
+        case .amountOverflow: "The transaction amounts exceed Bitcoin's monetary range."
+        }
+    }
 }
 
 /// The outcome of a coin selection: which UTXOs to spend, the fee at the
@@ -62,6 +93,10 @@ public enum CoinSelection {
                               changeScriptPubKey: Data, feeRateSatPerVByte: Double,
                               witnessBytesPerInput: Int = 66) throws -> Selection {
         guard !utxos.isEmpty else { throw CoinSelectionError.noUTXOs }
+        guard !changeScriptPubKey.isEmpty else { throw CoinSelectionError.emptyScript }
+        guard (0 ... 100_000).contains(witnessBytesPerInput) else {
+            throw CoinSelectionError.invalidWitnessSize(witnessBytesPerInput)
+        }
         // A negative/zero/NaN feerate underflows the fee (inflating change past
         // the inputs into an invalid tx); an absurd one silently burns the
         // balance. Core's sendrawtransaction ceiling is 0.10 BTC/kvB = 10 000
@@ -73,38 +108,78 @@ public enum CoinSelection {
         // Payment outputs must clear their own dust threshold — the change
         // output is guarded below, but a sub-dust payment builds a tx no peer
         // will relay, stranding the (locally committed) inputs.
+        var target: Int64 = 0
         for payment in payments {
+            guard payment.amount > 0, payment.amount <= BitcoinAmount.maximum else {
+                throw CoinSelectionError.invalidAmount(payment.amount)
+            }
+            guard !payment.scriptPubKey.isEmpty else { throw CoinSelectionError.emptyScript }
             let threshold = dustThreshold(scriptPubKey: payment.scriptPubKey)
             guard payment.amount >= threshold else {
                 throw CoinSelectionError.dustOutput(value: payment.amount, threshold: threshold)
             }
+            let (sum, overflow) = target.addingReportingOverflow(payment.amount)
+            guard !overflow, sum <= BitcoinAmount.maximum else {
+                throw CoinSelectionError.amountOverflow
+            }
+            target = sum
         }
-        let target = payments.reduce(Int64(0)) { $0 + $1.amount }
+
+        var seenOutpoints: Set<Transaction.Outpoint> = []
+        for utxo in utxos {
+            guard utxo.txid.count == 32 else { throw CoinSelectionError.invalidOutpoint }
+            guard utxo.amount > 0, utxo.amount <= BitcoinAmount.maximum else {
+                throw CoinSelectionError.invalidAmount(utxo.amount)
+            }
+            guard !utxo.scriptPubKey.isEmpty else { throw CoinSelectionError.emptyScript }
+            guard seenOutpoints.insert(utxo.outpoint).inserted else {
+                throw CoinSelectionError.duplicateUTXO
+            }
+        }
         let paymentOutputs = payments.map {
             Transaction.Output(value: $0.amount, scriptPubKey: $0.scriptPubKey)
         }
         let changeOutput = Transaction.Output(value: 0, scriptPubKey: changeScriptPubKey)
 
-        func fee(inputCount: Int, withChange: Bool) -> Int64 {
+        func fee(inputCount: Int, withChange: Bool) throws -> Int64 {
             let outputs = withChange ? paymentOutputs + [changeOutput] : paymentOutputs
             let vsize = TransactionBuilder.signedVSize(inputCount: inputCount, outputs: outputs,
                                                        witnessBytesPerInput: witnessBytesPerInput)
-            return Int64((Double(vsize) * feeRateSatPerVByte).rounded(.up))
+            let calculated = (Double(vsize) * feeRateSatPerVByte).rounded(.up)
+            guard calculated.isFinite, calculated <= Double(BitcoinAmount.maximum) else {
+                throw CoinSelectionError.amountOverflow
+            }
+            return Int64(calculated)
+        }
+
+        func checkedAdd(_ amount: Int64, _ fee: Int64) throws -> Int64 {
+            let (sum, overflow) = amount.addingReportingOverflow(fee)
+            guard !overflow, sum <= BitcoinAmount.maximum else {
+                throw CoinSelectionError.amountOverflow
+            }
+            return sum
         }
 
         var selected: [WalletUTXO] = []
         var total: Int64 = 0
         for utxo in utxos.sorted(by: { $0.amount > $1.amount }) {
             selected.append(utxo)
-            total += utxo.amount
+            let (sum, overflow) = total.addingReportingOverflow(utxo.amount)
+            guard !overflow, sum <= BitcoinAmount.maximum else {
+                throw CoinSelectionError.amountOverflow
+            }
+            total = sum
             // Try with a change output first — that's the shape the tx will have.
-            if total >= target + fee(inputCount: selected.count, withChange: true) { break }
+            let required = try checkedAdd(target, fee(inputCount: selected.count, withChange: true))
+            if total >= required { break }
         }
 
-        let feeWithChange = fee(inputCount: selected.count, withChange: true)
-        guard total >= target + fee(inputCount: selected.count, withChange: false) else {
-            throw CoinSelectionError.insufficientFunds(available: total,
-                                                       required: target + fee(inputCount: selected.count, withChange: false))
+        let feeWithChange = try fee(inputCount: selected.count, withChange: true)
+        let requiredWithoutChange = try checkedAdd(
+            target, fee(inputCount: selected.count, withChange: false))
+        guard total >= requiredWithoutChange else {
+            throw CoinSelectionError.insufficientFunds(
+                available: total, required: requiredWithoutChange)
         }
 
         let change = total - target - feeWithChange

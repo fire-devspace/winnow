@@ -4,7 +4,7 @@ import Foundation
 /// without witness) and hash. txid = SHA256d of the legacy serialization,
 /// wtxid = SHA256d of the segwit serialization (BIP141/144).
 public struct Transaction: Equatable, Sendable {
-    public struct Outpoint: Equatable, Sendable {
+    public struct Outpoint: Equatable, Hashable, Sendable {
         public var txid: Data // 32 bytes, internal order
         public var vout: UInt32
 

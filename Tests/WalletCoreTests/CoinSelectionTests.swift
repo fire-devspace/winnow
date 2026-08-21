@@ -144,4 +144,46 @@ struct CoinSelectionTests {
         #expect(selection.fee == Int64(2 * vsize))
         #expect(selection.changeAmount == 240_000 - 200_000 - Int64(2 * vsize))
     }
+
+    @Test("hostile amounts and malformed wallet coins fail without arithmetic traps")
+    func hostileAmountsAndCoins() {
+        let valid = utxo(1_000_000)
+
+        #expect(throws: CoinSelectionError.invalidAmount(Int64.max)) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [Payment(amount: Int64.max, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+        #expect(throws: CoinSelectionError.amountOverflow) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [
+                    Payment(amount: BitcoinAmount.maximum, scriptPubKey: p2tr),
+                    Payment(amount: 330, scriptPubKey: p2tr),
+                ], changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+        #expect(throws: CoinSelectionError.duplicateUTXO) {
+            _ = try CoinSelection.select(
+                utxos: [valid, valid], payments: [Payment(amount: 10_000, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+
+        var badOutpoint = valid
+        badOutpoint.txid = Data(repeating: 0x11, count: 31)
+        #expect(throws: CoinSelectionError.invalidOutpoint) {
+            _ = try CoinSelection.select(
+                utxos: [badOutpoint], payments: [Payment(amount: 10_000, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+        #expect(throws: CoinSelectionError.emptyScript) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [Payment(amount: 10_000, scriptPubKey: Data())],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+        #expect(throws: CoinSelectionError.invalidWitnessSize(-1)) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [Payment(amount: 10_000, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1,
+                witnessBytesPerInput: -1)
+        }
+    }
 }

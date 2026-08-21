@@ -20,3 +20,9 @@
 public enum WalletCore {
     public static let version = "0.1"
 }
+
+/// Consensus monetary range used at wallet authorization boundaries.
+public enum BitcoinAmount {
+    /// 21 million BTC in satoshis (`MAX_MONEY` in Bitcoin Core).
+    public static let maximum: Int64 = 2_100_000_000_000_000
+}

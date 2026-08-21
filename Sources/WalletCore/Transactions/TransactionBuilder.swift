@@ -6,6 +6,26 @@ public enum TxBuildError: Error, Equatable {
     case noInputs
     case noOutputs
     case invalidAmount(Int64)
+    case amountOverflow
+    case emptyScript
+    case invalidOutpoint
+    case duplicateInput
+    case invalidChangePosition(Int)
+}
+
+extension TxBuildError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .noInputs: "A Bitcoin transaction needs at least one input."
+        case .noOutputs: "A Bitcoin transaction needs at least one output."
+        case let .invalidAmount(amount): "Invalid Bitcoin output amount: \(amount) sats."
+        case .amountOverflow: "The transaction outputs exceed Bitcoin's monetary range."
+        case .emptyScript: "A transaction output has no Bitcoin locking script."
+        case .invalidOutpoint: "A transaction input has an invalid transaction ID."
+        case .duplicateInput: "A transaction cannot spend the same coin twice."
+        case let .invalidChangePosition(position): "Invalid change-output position: \(position)."
+        }
+    }
 }
 
 /// A payment target: an amount plus its destination scriptPubKey.
@@ -39,15 +59,31 @@ public enum TransactionBuilder {
                              change: Payment? = nil, changePosition: Int? = nil,
                              sequence: UInt32 = defaultSequence, locktime: UInt32 = 0) throws -> Transaction {
         guard !inputs.isEmpty else { throw TxBuildError.noInputs }
+        var seenInputs: Set<Transaction.Outpoint> = []
+        for input in inputs {
+            guard input.txid.count == 32 else { throw TxBuildError.invalidOutpoint }
+            guard seenInputs.insert(input).inserted else { throw TxBuildError.duplicateInput }
+        }
         var outputs = payments.map { Transaction.Output(value: $0.amount, scriptPubKey: $0.scriptPubKey) }
         if let change {
             let position = changePosition ?? Int.random(in: 0 ... outputs.count)
-            precondition(position >= 0 && position <= outputs.count)
+            guard position >= 0, position <= outputs.count else {
+                throw TxBuildError.invalidChangePosition(position)
+            }
             outputs.insert(Transaction.Output(value: change.amount, scriptPubKey: change.scriptPubKey),
                            at: position)
         }
         guard !outputs.isEmpty else { throw TxBuildError.noOutputs }
-        for output in outputs where output.value <= 0 { throw TxBuildError.invalidAmount(output.value) }
+        var outputTotal: Int64 = 0
+        for output in outputs {
+            guard output.value > 0, output.value <= BitcoinAmount.maximum else {
+                throw TxBuildError.invalidAmount(output.value)
+            }
+            guard !output.scriptPubKey.isEmpty else { throw TxBuildError.emptyScript }
+            let (sum, overflow) = outputTotal.addingReportingOverflow(output.value)
+            guard !overflow, sum <= BitcoinAmount.maximum else { throw TxBuildError.amountOverflow }
+            outputTotal = sum
+        }
         let txInputs = inputs.map {
             Transaction.Input(previousOutput: $0, scriptSig: Data(), sequence: sequence)
         }

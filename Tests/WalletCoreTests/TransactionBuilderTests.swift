@@ -95,4 +95,39 @@ struct TransactionBuilderTests {
         }
         #expect(TransactionBuilder.vsize(of: tx) == estimate)
     }
+
+    @Test("builder rejects malformed inputs, positions, scripts, and monetary overflow")
+    func hostileBuilderInputs() {
+        let input = Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32), vout: 0)
+        let script = Data([0x51, 0x20] + repeatElement(0x22, count: 32))
+        let payment = Payment(amount: 50_000, scriptPubKey: script)
+
+        #expect(throws: TxBuildError.duplicateInput) {
+            _ = try TransactionBuilder.build(inputs: [input, input], payments: [payment])
+        }
+        #expect(throws: TxBuildError.invalidOutpoint) {
+            _ = try TransactionBuilder.build(
+                inputs: [Transaction.Outpoint(txid: Data(repeating: 0x11, count: 31), vout: 0)],
+                payments: [payment])
+        }
+        #expect(throws: TxBuildError.invalidChangePosition(2)) {
+            _ = try TransactionBuilder.build(
+                inputs: [input], payments: [payment],
+                change: Payment(amount: 10_000, scriptPubKey: script), changePosition: 2)
+        }
+        #expect(throws: TxBuildError.emptyScript) {
+            _ = try TransactionBuilder.build(
+                inputs: [input], payments: [Payment(amount: 50_000, scriptPubKey: Data())])
+        }
+        #expect(throws: TxBuildError.invalidAmount(Int64.max)) {
+            _ = try TransactionBuilder.build(
+                inputs: [input], payments: [Payment(amount: Int64.max, scriptPubKey: script)])
+        }
+        #expect(throws: TxBuildError.amountOverflow) {
+            _ = try TransactionBuilder.build(inputs: [input], payments: [
+                Payment(amount: BitcoinAmount.maximum, scriptPubKey: script),
+                Payment(amount: 1, scriptPubKey: script),
+            ])
+        }
+    }
 }
