@@ -88,6 +88,35 @@ struct TransactionTests {
         #expect(throws: WireError.self) { _ = try Transaction.decode(big) }
     }
 
+    @Test("empty transaction vectors fail closed")
+    func emptyTransactionsRejected() {
+        // SegWit marker + nonzero flag + zero vin. Accepting this used to
+        // produce a value whose canonical serialization could not be parsed.
+        var noInputs = Data()
+        noInputs.appendInt32(2)
+        noInputs.append(contentsOf: [0, 1, 0])
+        noInputs.append(1) // one output (unreachable)
+        noInputs.appendInt64(0)
+        noInputs.append(0)
+        noInputs.appendUInt32(0)
+        #expect(throws: WireError.malformed("tx has no inputs")) {
+            _ = try Transaction.decode(noInputs)
+        }
+
+        var noOutputs = Data()
+        noOutputs.appendInt32(2)
+        noOutputs.append(1)
+        noOutputs.append(Data(repeating: 0, count: 32))
+        noOutputs.appendUInt32(0)
+        noOutputs.append(0)
+        noOutputs.appendUInt32(UInt32.max)
+        noOutputs.append(0)
+        noOutputs.appendUInt32(0)
+        #expect(throws: WireError.malformed("tx has no outputs")) {
+            _ = try Transaction.decode(noOutputs)
+        }
+    }
+
     @Test("valid block merkle root verifies; a tampered tx set does not")
     func merkleRootVerification() {
         // Single-tx block: root == the sole txid (synthetic chain uses this).

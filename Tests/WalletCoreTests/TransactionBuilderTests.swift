@@ -52,6 +52,30 @@ struct TransactionBuilderTests {
         }
     }
 
+    @Test("unactivated witness versions cannot be funded")
+    func futureWitnessVersionsRejected() throws {
+        let p2mrShape = try SegwitAddress.encode(
+            hrp: "bc", version: 2, program: Data(repeating: 0x42, count: 32))
+        #expect(p2mrShape.hasPrefix("bc1z"))
+        #expect(throws: AddressError.unsupportedWitnessVersion(2)) {
+            _ = try AddressDecoder.scriptPubKey(for: p2mrShape, network: .mainnet)
+        }
+
+        let signet = try SegwitAddress.encode(
+            hrp: "tb", version: 2, program: Data(repeating: 0x42, count: 32))
+        #expect(throws: AddressError.unsupportedWitnessVersion(2)) {
+            _ = try AddressDecoder.scriptPubKey(for: signet, network: .signet)
+        }
+
+        // v1 is only activated as the 32-byte P2TR program. A different v1
+        // length is another unknown witness program, not a safe Taproot output.
+        let unknownV1 = try SegwitAddress.encode(
+            hrp: "bc", version: 1, program: Data(repeating: 0x24, count: 20))
+        #expect(throws: AddressError.unsupportedWitnessProgram(version: 1, length: 20)) {
+            _ = try AddressDecoder.scriptPubKey(for: unknownV1, network: .mainnet)
+        }
+    }
+
     // MARK: Building
 
     @Test("unsigned tx shape: version 2, empty scriptSigs, RBF sequence, change position")

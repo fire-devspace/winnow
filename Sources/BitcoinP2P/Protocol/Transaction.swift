@@ -101,6 +101,7 @@ public struct Transaction: Equatable, Sendable {
             segwit = true
             inputCount = try reader.readVarInt()
         }
+        guard inputCount > 0 else { throw WireError.malformed("tx has no inputs") }
         // A non-witness input is ≥ 41 bytes (36 outpoint + 1 script length + 4
         // sequence), so a genuine count cannot exceed the bytes remaining. This
         // bounds the allocation against a malicious oversized compactSize — and
@@ -117,6 +118,7 @@ public struct Transaction: Equatable, Sendable {
             inputs.append(Input(previousOutput: outpoint, scriptSig: scriptSig, sequence: sequence))
         }
         let outputCount = try reader.readVarInt()
+        guard outputCount > 0 else { throw WireError.malformed("tx has no outputs") }
         // An output is ≥ 9 bytes (8 value + 1 script length); same bound.
         guard outputCount <= UInt64(reader.remaining / 9) else {
             throw WireError.malformed("tx output count \(outputCount)")
