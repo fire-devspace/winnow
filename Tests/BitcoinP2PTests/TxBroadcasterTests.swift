@@ -23,7 +23,7 @@ struct TxBroadcasterTests {
         await pool.start()
         #expect(await pool.connectedPeers().count == 3)
 
-        let broadcaster = TxBroadcaster(pool: pool, storageURL: store,
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
                                         rebroadcastBaseInterval: .seconds(3_600))
         let events = await broadcaster.events()
         let tx = makeFakeSegwitTx()
@@ -76,10 +76,10 @@ struct TxBroadcasterTests {
         }.count == 3)
 
         // Pending tx survives a restart (JSON persistence).
-        let reloaded = TxBroadcaster(pool: pool, storageURL: store)
+        let reloaded = try TxBroadcaster(pool: pool, storageURL: store)
         #expect(await reloaded.pendingTxids == [txid])
 
-        await broadcaster.markConfirmed(txid)
+        try await broadcaster.markConfirmed(txid)
         #expect(await broadcaster.pendingTxids.isEmpty)
 
         await pool.stop()
@@ -89,7 +89,7 @@ struct TxBroadcasterTests {
     @Test("broadcasting malformed raw tx data throws")
     func malformedTx() async throws {
         let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let broadcaster = TxBroadcaster(pool: pool)
+        let broadcaster = try TxBroadcaster(pool: pool)
         await #expect(throws: (any Error).self) {
             try await broadcaster.broadcast(Data([0x01, 0x02, 0x03]))
         }
@@ -105,7 +105,7 @@ struct TxBroadcasterTests {
         let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
         await pool.start()
 
-        let broadcaster = TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(3_600))
+        let broadcaster = try TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(3_600))
         let seen = EventCollector()
         let events = await broadcaster.events()
         let consumer = Task { for await event in events { seen.add(event) } }
@@ -149,7 +149,7 @@ struct TxBroadcasterTests {
         await pool.start()
         #expect(await pool.connectedPeers().count == 3)
 
-        let broadcaster = TxBroadcaster(pool: pool,
+        let broadcaster = try TxBroadcaster(pool: pool,
                                         rebroadcastBaseInterval: .milliseconds(150),
                                         maxRebroadcastInterval: .milliseconds(600),
                                         maxAnnouncementsPerPeer: 2,
@@ -191,7 +191,7 @@ struct TxBroadcasterTests {
         await pool.start()
 
         // 100ms base, doubling, capped at 250ms → gaps 100, 200, 250, 250.
-        let broadcaster = TxBroadcaster(pool: pool,
+        let broadcaster = try TxBroadcaster(pool: pool,
                                         rebroadcastBaseInterval: .milliseconds(100),
                                         maxRebroadcastInterval: .milliseconds(250),
                                         announcementTimeout: .seconds(30))
@@ -226,7 +226,7 @@ struct TxBroadcasterTests {
         let store = tempFileURL("pending-txs.json")
         defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
 
-        let broadcaster = TxBroadcaster(pool: pool, storageURL: store,
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
                                         rebroadcastBaseInterval: .milliseconds(100))
         let tx = makeFakeSegwitTx()
         let rawTx = tx.serialized(includeWitness: true)
@@ -242,25 +242,26 @@ struct TxBroadcasterTests {
         #expect(record?["feeRateSatPerVByte"] as? Double == 2.5)
         #expect(record?["attempt"] as? Int == 1)
         #expect(record?["nextAttemptAt"] as? Double != nil)
+        #expect(json?["version"] as? Int == 1)
 
         // A fresh broadcaster restores tx, feerate and schedule.
-        let restored = TxBroadcaster(pool: pool, storageURL: store,
+        let restored = try TxBroadcaster(pool: pool, storageURL: store,
                                      rebroadcastBaseInterval: .milliseconds(100))
         #expect(await restored.pendingTxids == [txid])
         #expect(await restored.attemptCount(txid) == 1)
         #expect(await restored.nextAttemptDate(txid) != nil)
 
-        await broadcaster.cancel(txid)
-        await restored.cancel(txid)
+        try await broadcaster.cancel(txid)
+        try await restored.cancel(txid)
 
         // The pre-backoff format (txid → rawTx) still loads, due immediately.
         let legacyStore = tempFileURL("pending-legacy.json")
         defer { try? FileManager.default.removeItem(at: legacyStore.deletingLastPathComponent()) }
         let legacy = #"{"transactions": {"\#(txid.hex)": "\#(rawTx.hex)"}}"#
         try Data(legacy.utf8).write(to: legacyStore)
-        let legacyLoaded = TxBroadcaster(pool: pool, storageURL: legacyStore)
+        let legacyLoaded = try TxBroadcaster(pool: pool, storageURL: legacyStore)
         #expect(await legacyLoaded.pendingTxids == [txid])
-        await legacyLoaded.cancel(txid)
+        try await legacyLoaded.cancel(txid)
     }
 
     @Test("stops rebroadcasting on confirmation and on explicit cancel")
@@ -273,7 +274,7 @@ struct TxBroadcasterTests {
         let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
         await pool.start()
 
-        let broadcaster = TxBroadcaster(pool: pool,
+        let broadcaster = try TxBroadcaster(pool: pool,
                                         rebroadcastBaseInterval: .milliseconds(150),
                                         maxRebroadcastInterval: .milliseconds(600),
                                         announcementTimeout: .seconds(30))
@@ -285,7 +286,7 @@ struct TxBroadcasterTests {
         // Confirmed tx: no further invs.
         let txid1 = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
         #expect(await node.nextMessage(command: "inv") != nil)
-        await broadcaster.markConfirmed(txid1)
+        try await broadcaster.markConfirmed(txid1)
         #expect(await broadcaster.pendingTxids.isEmpty)
         #expect(await node.nextMessage(command: "inv", timeout: .milliseconds(700)) == nil)
         #expect(seen.events.contains { $0 == .confirmed(txid: txid1) })
@@ -293,12 +294,176 @@ struct TxBroadcasterTests {
         // Cancelled tx: no further invs either.
         let txid2 = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
         #expect(await node.nextMessage(command: "inv") != nil)
-        await broadcaster.cancel(txid2)
+        try await broadcaster.cancel(txid2)
         #expect(await broadcaster.pendingTxids.isEmpty)
         #expect(await node.nextMessage(command: "inv", timeout: .milliseconds(700)) == nil)
         #expect(seen.events.contains { $0 == .cancelled(txid: txid2) })
 
         await pool.stop()
+    }
+
+    @Test("missing, disabled, and loaded persistence are distinguished")
+    func persistenceState() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-state.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        let disabled = try TxBroadcaster(pool: pool)
+        #expect(disabled.persistenceState == .disabled)
+        let missing = try TxBroadcaster(pool: pool, storageURL: store)
+        #expect(missing.persistenceState == .missing)
+
+        let tx = makeFakeSegwitTx()
+        _ = try await missing.broadcast(tx.serialized(includeWitness: true))
+        let loaded = try TxBroadcaster(pool: pool, storageURL: store)
+        #expect(loaded.persistenceState == .loaded(transactionCount: 1))
+    }
+
+    @Test("damaged persistence is rejected as a whole and never rewritten")
+    func damagedPersistenceFailsClosed() throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-damaged.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let tx = makeFakeSegwitTx()
+        let raw = tx.serialized(includeWitness: true)
+        let otherTxid = Data(repeating: 0x42, count: 32).hex
+        let bytes = Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw.hex)","attempt":0,"nextAttemptAt":1},"\#(otherTxid)":{"rawTx":"00","attempt":0,"nextAttemptAt":1}}}"#.utf8)
+        try bytes.write(to: store)
+
+        #expect(throws: TxBroadcasterStorageError.self) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+        #expect(try Data(contentsOf: store) == bytes)
+    }
+
+    @Test("txid mismatch, unsupported versions, and hostile retry metadata are rejected")
+    func invalidStoredMetadata() throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-hostile.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let tx = makeFakeSegwitTx()
+        let raw = tx.serialized(includeWitness: true).hex
+        let wrongTxid = Data(repeating: 0x24, count: 32).hex
+
+        try Data(#"{"version":2,"transactions":{}}"#.utf8).write(to: store)
+        #expect(throws: TxBroadcasterStorageError.unsupportedVersion(2)) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+
+        try Data(#"{"version":1,"transactions":{"\#(wrongTxid)":{"rawTx":"\#(raw)","attempt":0,"nextAttemptAt":1}}}"#.utf8).write(to: store)
+        #expect(throws: TxBroadcasterStorageError.self) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+
+        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","feeRateSatPerVByte":0,"attempt":0,"nextAttemptAt":1}}}"#.utf8).write(to: store)
+        #expect(throws: TxBroadcasterStorageError.self) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+
+        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","attempt":64,"nextAttemptAt":1}}}"#.utf8).write(to: store)
+        #expect(throws: TxBroadcasterStorageError.self) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+
+        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","attempt":0,"nextAttemptAt":999999999999}}}"#.utf8).write(to: store)
+        #expect(throws: TxBroadcasterStorageError.self) {
+            _ = try TxBroadcaster(pool: pool, storageURL: store)
+        }
+    }
+
+    @Test("invalid fee rates and failed initial writes never create pending relay state")
+    func broadcastPersistenceIsTransactional() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("missing-parent/pending.json")
+        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store)
+        let raw = makeFakeSegwitTx().serialized(includeWitness: true)
+
+        await #expect(throws: TxBroadcasterError.invalidFeeRate) {
+            try await broadcaster.broadcast(raw, feeRateSatPerVByte: .nan)
+        }
+        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
+            try await broadcaster.broadcast(raw, feeRateSatPerVByte: 1)
+        }
+        #expect(await broadcaster.pendingTxids.isEmpty)
+    }
+
+    @Test("failed confirmation and cancellation writes retain pending state and emit no success")
+    func removalPersistenceIsTransactional() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-removal.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        let events = await broadcaster.events()
+        let seen = EventCollector()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+        let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
+
+        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
+            try await broadcaster.markConfirmed(txid)
+        }
+        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
+            try await broadcaster.cancel(txid)
+        }
+        #expect(await broadcaster.pendingTxids == [txid])
+        #expect(!seen.events.contains { $0 == .confirmed(txid: txid) })
+        #expect(!seen.events.contains { $0 == .cancelled(txid: txid) })
+    }
+
+    @Test("failed retry persistence halts automatic announcements and reports the error")
+    func retryPersistenceFailureStopsLoop() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-retry.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .milliseconds(100))
+        let events = await broadcaster.events()
+        let seen = EventCollector()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+        let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
+
+        #expect(await pollUntil {
+            seen.events.contains { if case .persistenceFailed = $0 { return true }; return false }
+        })
+        #expect(await broadcaster.attemptCount(txid) == 0)
+        let announcementCount = seen.events.filter {
+            if case let .announced(id, _) = $0 { return id == txid }
+            return false
+        }.count
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(seen.events.filter {
+            if case let .announced(id, _) = $0 { return id == txid }
+            return false
+        }.count == announcementCount)
+    }
+
+    @Test("shutdown clears only the live session and leaves durable relay state for reconnect")
+    func shutdownPreservesStore() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-shutdown.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        let raw = makeFakeSegwitTx().serialized(includeWitness: true)
+        let txid = try await broadcaster.broadcast(raw)
+
+        await broadcaster.shutdown()
+        #expect(await broadcaster.pendingTxids.isEmpty)
+        await #expect(throws: TxBroadcasterError.stopped) {
+            try await broadcaster.broadcast(raw)
+        }
+        await #expect(throws: TxBroadcasterError.stopped) {
+            try await broadcaster.cancel(txid)
+        }
+
+        let reconnected = try TxBroadcaster(pool: pool, storageURL: store)
+        #expect(await reconnected.pendingTxids == [txid])
+        try await reconnected.cancel(txid)
     }
 
     @Test("emits feeFloorExceeded when every peer's feefilter exceeds the tx feerate")
@@ -314,7 +479,7 @@ struct TxBroadcasterTests {
         let pool = PeerPool(params: params, peerCount: 2, manualPeers: endpoints)
         await pool.start()
 
-        let broadcaster = TxBroadcaster(pool: pool,
+        let broadcaster = try TxBroadcaster(pool: pool,
                                         rebroadcastBaseInterval: .milliseconds(150),
                                         maxRebroadcastInterval: .milliseconds(600),
                                         announcementTimeout: .seconds(30))

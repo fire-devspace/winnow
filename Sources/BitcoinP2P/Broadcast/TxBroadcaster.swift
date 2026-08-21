@@ -1,5 +1,42 @@
 import Foundation
 
+public enum TxBroadcasterError: LocalizedError, Equatable, Sendable {
+    case invalidFeeRate
+    case stopped
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidFeeRate:
+            "The transaction fee rate must be a positive, finite number within Bitcoin's monetary range."
+        case .stopped:
+            "This transaction relay session has stopped. Reconnect before changing relay state."
+        }
+    }
+}
+
+public enum TxBroadcasterStorageError: LocalizedError, Equatable, Sendable {
+    case unreadable
+    case tooLarge(maxBytes: Int)
+    case damaged(String)
+    case unsupportedVersion(Int)
+    case writeFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .unreadable:
+            "Winnow could not read its pending-transaction file. Relay is stopped until local storage is available."
+        case let .tooLarge(maxBytes):
+            "The pending-transaction file is unexpectedly large (limit: \(maxBytes) bytes). Relay is stopped to protect the wallet."
+        case let .damaged(reason):
+            "The pending-transaction file is damaged (\(reason)). Relay is stopped; Winnow will not discard or replay its entries."
+        case let .unsupportedVersion(version):
+            "The pending-transaction file uses unsupported version \(version). Update Winnow before relaying transactions."
+        case .writeFailed:
+            "Winnow could not safely save pending transaction state. The relay change was not accepted."
+        }
+    }
+}
+
 /// P2P transaction relay (docs/write-side.md §7): announce via
 /// `inv(MSG_WITNESS_TX)` to connected peers (pool default: 3), answer
 /// `getdata` with the raw transaction, and re-announce on an exponential
@@ -17,6 +54,12 @@ import Foundation
 ///   will relay it), `.feeFloorExceeded` is emitted once per crossing; the
 ///   caller decides whether to bump the fee.
 public actor TxBroadcaster {
+    public enum PersistenceState: Equatable, Sendable {
+        case disabled
+        case missing
+        case loaded(transactionCount: Int)
+    }
+
     public enum Event: Equatable, Sendable {
         /// The tx was inv-announced to this many peers.
         case announced(txid: Data, peerCount: Int)
@@ -35,6 +78,9 @@ public actor TxBroadcaster {
         /// The minimum BIP133 feefilter across connected peers (sat/kvB)
         /// rose above this tx's feerate — no peer will relay it as-is.
         case feeFloorExceeded(txid: Data, floor: Int64)
+        /// A scheduled retry could not be durably recorded, so automatic
+        /// relay stopped instead of looping with an in-memory-only state.
+        case persistenceFailed(reason: String)
     }
 
     /// Per-peer relay progress for one pending transaction.
@@ -64,6 +110,7 @@ public actor TxBroadcaster {
 
     /// JSON persistence shape: txid hex → relay record.
     private struct StoredPending: Codable {
+        var version: Int
         struct StoredTx: Codable {
             var rawTx: String
             var feeRateSatPerVByte: Double?
@@ -72,6 +119,11 @@ public actor TxBroadcaster {
             var nextAttemptAt: TimeInterval
         }
         var transactions: [String: StoredTx]
+    }
+
+    /// Store shape written before the explicit format version was added.
+    private struct UnversionedStoredPending: Codable {
+        var transactions: [String: StoredPending.StoredTx]
     }
 
     /// Pre-backoff store shape (txid hex → raw tx hex), still accepted on load.
@@ -88,17 +140,28 @@ public actor TxBroadcaster {
     /// marked `failed` (and retried on the next backoff attempt).
     private let announcementTimeout: Duration
     private let now: @Sendable () -> Date
+    public nonisolated let persistenceState: PersistenceState
     private var pending: [Data: Pending] = [:]
     private var rebroadcastTask: Task<Void, Never>?
+    private var persistenceBlocked = false
     private var listenedPeers: Set<String> = []
     private var subscribers: [UUID: AsyncStream<Event>.Continuation] = [:]
+    private var stopped = false
+
+    private static let storageVersion = 1
+    private static let maximumStoredTransactions = 4_096
+    private static let maximumStorageBytes = 64 * 1_024 * 1_024
+    private static let maximumRawTransactionBytes = 4_000_000
+    private static let maximumAttempt = 63
+    private static let maximumFeeRate = 2_100_000_000_000_000.0
+    private static let maximumFutureSchedule: TimeInterval = 366 * 24 * 60 * 60
 
     public init(pool: PeerPool, storageURL: URL? = nil,
                 rebroadcastBaseInterval: Duration = .seconds(60),
                 maxRebroadcastInterval: Duration = .seconds(3_600),
                 maxAnnouncementsPerPeer: Int = 3,
                 announcementTimeout: Duration = .seconds(120),
-                now: @Sendable @escaping () -> Date = { Date() }) {
+                now: @Sendable @escaping () -> Date = { Date() }) throws {
         self.pool = pool
         self.storageURL = storageURL
         self.rebroadcastBaseInterval = rebroadcastBaseInterval
@@ -106,29 +169,12 @@ public actor TxBroadcaster {
         self.maxAnnouncementsPerPeer = maxAnnouncementsPerPeer
         self.announcementTimeout = announcementTimeout
         self.now = now
-        if let storageURL,
-           let data = try? Data(contentsOf: storageURL) {
-            if let stored = try? JSONDecoder().decode(StoredPending.self, from: data) {
-                for (txidHex, record) in stored.transactions {
-                    guard let txid = Data(hex: txidHex), let rawTx = Data(hex: record.rawTx),
-                          let transaction = try? Transaction.decode(rawTx), transaction.txid == txid
-                    else { continue }
-                    pending[txid] = Pending(rawTx: rawTx, transaction: transaction,
-                                            feeRateSatPerVByte: record.feeRateSatPerVByte,
-                                            attempt: record.attempt,
-                                            nextAttemptAt: Date(timeIntervalSince1970: record.nextAttemptAt))
-                }
-            } else if let legacy = try? JSONDecoder().decode(LegacyStoredPending.self, from: data) {
-                for (txidHex, rawHex) in legacy.transactions {
-                    guard let txid = Data(hex: txidHex), let rawTx = Data(hex: rawHex),
-                          let transaction = try? Transaction.decode(rawTx), transaction.txid == txid
-                    else { continue }
-                    // Due immediately: the restored loop re-announces at once.
-                    pending[txid] = Pending(rawTx: rawTx, transaction: transaction,
-                                            feeRateSatPerVByte: nil, attempt: 0,
-                                            nextAttemptAt: now())
-                }
-            }
+        if let storageURL {
+            let result = try Self.load(storageURL: storageURL, now: now())
+            persistenceState = result.state
+            pending = result.pending
+        } else {
+            persistenceState = .disabled
         }
         // Restored transactions resume their backoff schedule; an overdue
         // attempt fires as soon as the loop runs.
@@ -150,18 +196,36 @@ public actor TxBroadcaster {
         }
     }
 
+    /// Ends this relay session without changing its durable pending set. A
+    /// replacement broadcaster may reload the same store (reconnect), or the
+    /// caller may deliberately remove the store while changing wallets.
+    public func shutdown() {
+        guard !stopped else { return }
+        stopped = true
+        rebroadcastTask?.cancel()
+        rebroadcastTask = nil
+        pending.removeAll()
+        for subscriber in subscribers.values { subscriber.finish() }
+        subscribers.removeAll()
+    }
+
     /// Validates, stores and announces a raw signed transaction.
     /// `feeRateSatPerVByte` enables the BIP133 fee-floor events.
     /// Returns its txid (internal byte order).
     @discardableResult
     public func broadcast(_ rawTx: Data, feeRateSatPerVByte: Double? = nil) async throws -> Data {
-        let transaction = try Transaction.decode(rawTx)
+        guard !stopped else { throw TxBroadcasterError.stopped }
+        let transaction = try Self.validatedTransaction(rawTx)
+        try Self.validateFeeRate(feeRateSatPerVByte)
         let txid = transaction.txid
-        pending[txid] = Pending(rawTx: rawTx, transaction: transaction,
-                                feeRateSatPerVByte: feeRateSatPerVByte,
-                                attempt: 0,
-                                nextAttemptAt: now() + Self.timeInterval(backoffInterval(attempt: 0)))
-        try persist()
+        var candidate = pending
+        candidate[txid] = Pending(rawTx: rawTx, transaction: transaction,
+                                  feeRateSatPerVByte: feeRateSatPerVByte,
+                                  attempt: 0,
+                                  nextAttemptAt: now() + Self.timeInterval(backoffInterval(attempt: 0)))
+        try persist(candidate)
+        pending = candidate
+        persistenceBlocked = false
         await ensurePeerListeners()
         await announce(txid: txid)
         await checkFeeFloors()
@@ -170,22 +234,30 @@ public actor TxBroadcaster {
     }
 
     /// Called when the tx is seen in a matched block (or otherwise confirmed).
-    public func markConfirmed(_ txid: Data) {
-        if pending.removeValue(forKey: txid) != nil {
-            try? persist()
-            emit(.confirmed(txid: txid))
-            scheduleRebroadcast()
-        }
+    public func markConfirmed(_ txid: Data) throws {
+        guard !stopped else { throw TxBroadcasterError.stopped }
+        guard pending[txid] != nil else { return }
+        var candidate = pending
+        candidate.removeValue(forKey: txid)
+        try persist(candidate)
+        pending = candidate
+        persistenceBlocked = false
+        emit(.confirmed(txid: txid))
+        scheduleRebroadcast()
     }
 
     /// Stops relaying a pending tx without a confirmation (e.g. the user
     /// replaced it with a fee-bumped transaction).
-    public func cancel(_ txid: Data) {
-        if pending.removeValue(forKey: txid) != nil {
-            try? persist()
-            emit(.cancelled(txid: txid))
-            scheduleRebroadcast()
-        }
+    public func cancel(_ txid: Data) throws {
+        guard !stopped else { throw TxBroadcasterError.stopped }
+        guard pending[txid] != nil else { return }
+        var candidate = pending
+        candidate.removeValue(forKey: txid)
+        try persist(candidate)
+        pending = candidate
+        persistenceBlocked = false
+        emit(.cancelled(txid: txid))
+        scheduleRebroadcast()
     }
 
     /// Per-peer relay state for a pending tx, keyed by endpoint description.
@@ -221,6 +293,162 @@ public actor TxBroadcaster {
     private static func timeInterval(_ duration: Duration) -> TimeInterval {
         let components = duration.components
         return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
+
+    private static func load(storageURL: URL, now: Date) throws
+        -> (state: PersistenceState, pending: [Data: Pending])
+    {
+        guard FileManager.default.fileExists(atPath: storageURL.path) else {
+            return (.missing, [:])
+        }
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: storageURL.path)
+        } catch {
+            throw TxBroadcasterStorageError.unreadable
+        }
+        if let size = attributes[.size] as? NSNumber,
+           size.int64Value > Int64(maximumStorageBytes) {
+            throw TxBroadcasterStorageError.tooLarge(maxBytes: maximumStorageBytes)
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: storageURL, options: .mappedIfSafe)
+        } catch {
+            throw TxBroadcasterStorageError.unreadable
+        }
+        guard data.count <= maximumStorageBytes else {
+            throw TxBroadcasterStorageError.tooLarge(maxBytes: maximumStorageBytes)
+        }
+        guard !data.isEmpty else {
+            throw TxBroadcasterStorageError.damaged("the file is empty")
+        }
+
+        let topLevel: [String: Any]
+        do {
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw TxBroadcasterStorageError.damaged("the top level is not an object")
+            }
+            topLevel = object
+        } catch let error as TxBroadcasterStorageError {
+            throw error
+        } catch {
+            throw TxBroadcasterStorageError.damaged("the JSON is invalid")
+        }
+
+        let decoder = JSONDecoder()
+        if let rawVersion = topLevel["version"] {
+            guard let number = rawVersion as? NSNumber,
+                  number.doubleValue.isFinite,
+                  number.doubleValue.rounded(.towardZero) == number.doubleValue else {
+                throw TxBroadcasterStorageError.damaged("the format version is invalid")
+            }
+            let version = number.intValue
+            guard version == storageVersion else {
+                throw TxBroadcasterStorageError.unsupportedVersion(version)
+            }
+            let stored: StoredPending
+            do {
+                stored = try decoder.decode(StoredPending.self, from: data)
+            } catch {
+                throw TxBroadcasterStorageError.damaged("a versioned relay record is invalid")
+            }
+            let result = try validatedRecords(stored.transactions, now: now)
+            return (.loaded(transactionCount: result.count), result)
+        }
+
+        if let unversioned = try? decoder.decode(UnversionedStoredPending.self, from: data) {
+            let result = try validatedRecords(unversioned.transactions, now: now)
+            return (.loaded(transactionCount: result.count), result)
+        }
+        if let legacy = try? decoder.decode(LegacyStoredPending.self, from: data) {
+            guard legacy.transactions.count <= maximumStoredTransactions else {
+                throw TxBroadcasterStorageError.damaged("there are too many pending transactions")
+            }
+            var result: [Data: Pending] = [:]
+            result.reserveCapacity(legacy.transactions.count)
+            for (txidHex, rawHex) in legacy.transactions {
+                let (txid, rawTx, transaction) = try validatedRecordIdentity(
+                    txidHex: txidHex, rawHex: rawHex)
+                result[txid] = Pending(rawTx: rawTx, transaction: transaction,
+                                       feeRateSatPerVByte: nil, attempt: 0,
+                                       nextAttemptAt: now)
+            }
+            return (.loaded(transactionCount: result.count), result)
+        }
+        throw TxBroadcasterStorageError.damaged("the relay record format is not recognized")
+    }
+
+    private static func validatedRecords(_ records: [String: StoredPending.StoredTx], now: Date) throws
+        -> [Data: Pending]
+    {
+        guard records.count <= maximumStoredTransactions else {
+            throw TxBroadcasterStorageError.damaged("there are too many pending transactions")
+        }
+        var result: [Data: Pending] = [:]
+        result.reserveCapacity(records.count)
+        for (txidHex, record) in records {
+            let (txid, rawTx, transaction) = try validatedRecordIdentity(
+                txidHex: txidHex, rawHex: record.rawTx)
+            do {
+                try validateFeeRate(record.feeRateSatPerVByte)
+            } catch {
+                throw TxBroadcasterStorageError.damaged("transaction \(txid.displayHex) has an invalid fee rate")
+            }
+            guard (0 ... maximumAttempt).contains(record.attempt) else {
+                throw TxBroadcasterStorageError.damaged("transaction \(txid.displayHex) has an invalid retry count")
+            }
+            guard record.nextAttemptAt.isFinite,
+                  record.nextAttemptAt >= 0,
+                  record.nextAttemptAt <= now.timeIntervalSince1970 + maximumFutureSchedule else {
+                throw TxBroadcasterStorageError.damaged("transaction \(txid.displayHex) has an invalid retry time")
+            }
+            result[txid] = Pending(rawTx: rawTx, transaction: transaction,
+                                   feeRateSatPerVByte: record.feeRateSatPerVByte,
+                                   attempt: record.attempt,
+                                   nextAttemptAt: Date(timeIntervalSince1970: record.nextAttemptAt))
+        }
+        return result
+    }
+
+    private static func validatedRecordIdentity(txidHex: String, rawHex: String) throws
+        -> (Data, Data, Transaction)
+    {
+        guard txidHex.utf8.count == 64, let txid = Data(hex: txidHex), txid.count == 32 else {
+            throw TxBroadcasterStorageError.damaged("a transaction ID is invalid")
+        }
+        guard rawHex.utf8.count <= maximumRawTransactionBytes * 2,
+              let rawTx = Data(hex: rawHex) else {
+            throw TxBroadcasterStorageError.damaged("transaction \(txid.displayHex) has invalid raw bytes")
+        }
+        let transaction: Transaction
+        do {
+            transaction = try validatedTransaction(rawTx)
+        } catch {
+            throw TxBroadcasterStorageError.damaged("transaction \(txid.displayHex) cannot be decoded")
+        }
+        guard transaction.txid == txid else {
+            throw TxBroadcasterStorageError.damaged("a transaction ID does not match its raw bytes")
+        }
+        return (txid, rawTx, transaction)
+    }
+
+    private static func validatedTransaction(_ rawTx: Data) throws -> Transaction {
+        guard !rawTx.isEmpty, rawTx.count <= maximumRawTransactionBytes else {
+            throw WireError.malformed("raw transaction size \(rawTx.count)")
+        }
+        let transaction = try Transaction.decode(rawTx)
+        guard transaction.serialized(includeWitness: true) == rawTx else {
+            throw WireError.malformed("non-canonical transaction encoding")
+        }
+        return transaction
+    }
+
+    private static func validateFeeRate(_ feeRate: Double?) throws {
+        guard let feeRate else { return }
+        guard feeRate.isFinite, feeRate > 0, feeRate <= maximumFeeRate else {
+            throw TxBroadcasterError.invalidFeeRate
+        }
     }
 
     /// inv-announces one pending tx to every eligible peer. State reads and
@@ -317,7 +545,7 @@ public actor TxBroadcaster {
     /// pending set or its schedule changes; stops when nothing is pending.
     private func scheduleRebroadcast() {
         rebroadcastTask?.cancel()
-        guard !pending.isEmpty else {
+        guard !stopped, !pending.isEmpty, !persistenceBlocked else {
             rebroadcastTask = nil
             return
         }
@@ -330,34 +558,53 @@ public actor TxBroadcaster {
                     try? await Task.sleep(for: .seconds(wait))
                     guard !Task.isCancelled else { return }
                 }
-                await self.fireDueAttempts()
+                guard await self.fireDueAttempts() else { return }
             }
         }
     }
 
     /// Announces every tx whose backoff attempt is due, then advances its
     /// schedule and persists.
-    private func fireDueAttempts() async {
+    private func fireDueAttempts() async -> Bool {
         await ensurePeerListeners()
         let firedAt = now()
-        var fired = false
-        for txid in pending.keys.sorted(by: { $0.hex < $1.hex }) {
-            guard let entry = pending[txid], entry.nextAttemptAt <= firedAt else { continue }
+        let dueTxids = pending.keys.sorted(by: { $0.hex < $1.hex }).filter {
+            pending[$0]?.nextAttemptAt ?? .distantFuture <= firedAt
+        }
+        guard !dueTxids.isEmpty else { return true }
+
+        // Advance the retry schedule durably before any network side effect.
+        // A failed write leaves both memory and disk untouched, and stops the
+        // loop rather than repeatedly announcing from an uncommitted state.
+        var candidate = pending
+        for txid in dueTxids {
+            guard var updated = candidate[txid] else { continue }
+            updated.attempt = min(updated.attempt + 1, Self.maximumAttempt)
+            updated.nextAttemptAt = firedAt + Self.timeInterval(backoffInterval(attempt: updated.attempt))
+            candidate[txid] = updated
+        }
+        do {
+            try persist(candidate)
+            pending = candidate
+            persistenceBlocked = false
+        } catch {
+            persistenceBlocked = true
+            emit(.persistenceFailed(reason: error.localizedDescription))
+            return false
+        }
+
+        for txid in dueTxids {
             expireStaleAnnouncements(txid: txid)
             await announce(txid: txid)
-            guard var updated = pending[txid] else { continue } // confirmed/cancelled mid-announce
-            updated.attempt += 1
-            updated.nextAttemptAt = firedAt + Self.timeInterval(backoffInterval(attempt: updated.attempt))
-            pending[txid] = updated
-            fired = true
         }
-        if fired { try? persist() }
         await checkFeeFloors()
+        return true
     }
 
     /// Subscribes to getdata/feefilter traffic on every connected peer
     /// (once per peer).
     private func ensurePeerListeners() async {
+        guard !stopped else { return }
         for peer in await pool.connectedPeers() {
             let key = peer.endpoint.description
             guard !listenedPeers.contains(key) else { continue }
@@ -370,6 +617,7 @@ public actor TxBroadcaster {
         let stream = await peer.events()
         do {
             for try await event in stream {
+                guard !stopped else { return }
                 switch event {
                 case let .message(message):
                     switch message {
@@ -416,16 +664,30 @@ public actor TxBroadcaster {
         }
     }
 
-    private func persist() throws {
+    private func persist(_ state: [Data: Pending]) throws {
         guard let storageURL else { return }
-        let stored = StoredPending(transactions: Dictionary(uniqueKeysWithValues:
-            pending.map { txid, entry in
+        guard state.count <= Self.maximumStoredTransactions else {
+            throw TxBroadcasterStorageError.writeFailed
+        }
+        let stored = StoredPending(version: Self.storageVersion,
+                                   transactions: Dictionary(uniqueKeysWithValues:
+            state.map { txid, entry in
                 (txid.hex, StoredPending.StoredTx(rawTx: entry.rawTx.hex,
                                                   feeRateSatPerVByte: entry.feeRateSatPerVByte,
                                                   attempt: entry.attempt,
                                                   nextAttemptAt: entry.nextAttemptAt.timeIntervalSince1970))
             }))
-        let data = try JSONEncoder().encode(stored)
-        try data.write(to: storageURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(stored)
+            guard data.count <= Self.maximumStorageBytes else {
+                throw TxBroadcasterStorageError.writeFailed
+            }
+            try data.write(to: storageURL,
+                           options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch let error as TxBroadcasterStorageError {
+            throw error
+        } catch {
+            throw TxBroadcasterStorageError.writeFailed
+        }
     }
 }

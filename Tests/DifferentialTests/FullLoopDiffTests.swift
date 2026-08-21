@@ -99,7 +99,7 @@ struct FullLoopDiffTests {
                 "vsize agreement")
 
         // 6. Relay via our TxBroadcaster (inv → node's getdata → tx).
-        let broadcaster = TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(5))
+        let broadcaster = try TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(5))
         let originalTxid = try await broadcaster.broadcast(Data(hex: rawHex)!)
         var inMempool = false
         for _ in 0 ..< 15 {
@@ -131,7 +131,7 @@ struct FullLoopDiffTests {
             feeRateSatPerVByte: Double(replacement.built.fee)
                 / Double(TransactionBuilder.vsize(of: replacement.built.transaction)))
         try await wallet.commitFeeBump(replacement)
-        await broadcaster.cancel(originalTxid)
+        try await broadcaster.cancel(originalTxid)
         var replacementInMempool = false
         for _ in 0 ..< 15 {
             if (try? BitcoinCLI.runObject(["getmempoolentry", replacementTxid.displayHex])) != nil {
@@ -160,7 +160,7 @@ struct FullLoopDiffTests {
             }
         }
         #expect(confirmed, "replacement never confirmed")
-        await broadcaster.markConfirmed(replacementTxid)
+        try await broadcaster.markConfirmed(replacementTxid)
 
         let history = await wallet.history
         #expect(history.first { $0.txid == originalTxid }?.replacedBy == replacementTxid)

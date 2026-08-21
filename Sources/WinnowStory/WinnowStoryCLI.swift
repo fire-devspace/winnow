@@ -300,7 +300,7 @@ public enum WinnowStoryCLI {
                 let peersURL = store.paths.runDirectory.appending(path: "companion-peers.json")
                 let pool = PeerPool(params: .signet, peersFileURL: peersURL)
                 await pool.start()
-                let broadcaster = TxBroadcaster(pool: pool)
+                let broadcaster = try TxBroadcaster(pool: pool)
                 let txid = try await broadcaster.broadcast(raw, feeRateSatPerVByte: feeRate)
                 let deadline = ContinuousClock.now + .seconds(20)
                 var served = 0
@@ -380,7 +380,7 @@ public enum WinnowStoryCLI {
                 let peersURL = store.paths.runDirectory.appending(path: "companion-peers.json")
                 let pool = PeerPool(params: .signet, peersFileURL: peersURL)
                 await pool.start()
-                let broadcaster = TxBroadcaster(pool: pool)
+                let broadcaster = try TxBroadcaster(pool: pool)
                 let txid = try await broadcaster.broadcast(raw, feeRateSatPerVByte: actualFeeRate)
                 let deadline = ContinuousClock.now + .seconds(20)
                 var served = 0

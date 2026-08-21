@@ -187,6 +187,7 @@ final class AppModel {
 
     private var syncTask: Task<Void, Never>?
     private var phaseTask: Task<Void, Never>?
+    private var broadcasterEventTask: Task<Void, Never>?
     private var isActive = false
     private var buildingStack = false
     /// Prevents the E2E journal from repeating an identical wallet/vault
@@ -446,15 +447,32 @@ final class AppModel {
                     return try HeaderChain(params: params, storageURL: headersURL, start: start)
                 }
             }.value
-            let broadcaster = TxBroadcaster(pool: pool, storageURL: dir.appending(path: "broadcast.json"))
+            let broadcaster = try TxBroadcaster(
+                pool: pool, storageURL: dir.appending(path: "broadcast.json"))
             var newStack = SyncStack(pool: pool, chain: chain, filters: nil, broadcaster: broadcaster)
             if let wallet {
                 newStack.filters = try await makeFilterSync(pool: pool, chain: chain,
                                                             startHeight: wallet.nextScanHeight)
             }
             stack = newStack
+            observeBroadcasterFailures(broadcaster)
         } catch {
             status.lastSyncError = error.localizedDescription
+        }
+    }
+
+    /// Scheduled relay retries happen independently of the foreground send
+    /// sheet. Keep storage failures visible at the app level even when that
+    /// sheet is closed; otherwise relay could be halted with no explanation.
+    private func observeBroadcasterFailures(_ broadcaster: TxBroadcaster) {
+        broadcasterEventTask?.cancel()
+        broadcasterEventTask = Task { [weak self] in
+            for await event in await broadcaster.events() {
+                guard !Task.isCancelled else { return }
+                if case let .persistenceFailed(reason) = event {
+                    self?.status.lastSyncError = reason
+                }
+            }
         }
     }
 
@@ -520,12 +538,12 @@ final class AppModel {
             try await filters.sync(watchScripts: scripts, extraScripts: extraScripts) { match in
                 let walletEffect = try await wallet.apply(match: match)
                 for discarded in walletEffect.discardedReplacements {
-                    await broadcaster.cancel(discarded)
+                    try await broadcaster.cancel(discarded)
                 }
                 try await vaultStore.apply(match: match, network: network)
                 let pending = await broadcaster.pendingTxids
                 for tx in match.block.transactions where pending.contains(tx.txid) {
-                    await broadcaster.markConfirmed(tx.txid)
+                    try await broadcaster.markConfirmed(tx.txid)
                 }
             }
             // apply() does not move the wallet frontier — FilterSync is
@@ -731,6 +749,11 @@ final class AppModel {
     /// `finishOnboarding` (the mnemonic backup must be confirmed first).
     /// `startSync: false` defers the sync loop (import verifies first).
     private func adopt(wallet: Wallet, startSync: Bool = true) async throws {
+        syncTask?.cancel()
+        syncTask = nil
+        await stack?.broadcaster.shutdown()
+        broadcasterEventTask?.cancel()
+        broadcasterEventTask = nil
         if let dir = storageDirectory() {
             for name in ["filters.json", "broadcast.json", "vaults.json"] {
                 try? FileManager.default.removeItem(at: dir.appending(path: name))
@@ -744,22 +767,29 @@ final class AppModel {
         self.wallet = wallet
         walletID = await wallet.id
         walletDescriptor = await wallet.descriptor
-        if var stack {
+        if let existingStack = stack {
+            // The old stack is unusable after shutdown. Clear the property
+            // before any throwing rebuild step so a failure cannot strand a
+            // stopped broadcaster behind a seemingly valid stack.
+            stack = nil
             // An imported wallet can be older than the chain we are holding —
             // its filters live in blocks a checkpoint start skipped, and those
             // filters are fetched by block hash, so they are simply not
             // reachable. Drop the stack and rebuild from genesis rather than
             // scan a range that cannot answer.
-            if await stack.chain.startHeight > (await wallet.nextScanHeight) {
-                syncTask?.cancel()
-                syncTask = nil
-                await stack.pool.stop()
-                self.stack = nil
+            if await existingStack.chain.startHeight > (await wallet.nextScanHeight) {
+                await existingStack.pool.stop()
                 await buildStackIfNeeded()
             } else {
-                stack.filters = try await makeFilterSync(pool: stack.pool, chain: stack.chain,
-                                                         startHeight: wallet.nextScanHeight)
-                self.stack = stack
+                let filters = try await makeFilterSync(pool: existingStack.pool,
+                                                       chain: existingStack.chain,
+                                                       startHeight: wallet.nextScanHeight)
+                guard let dir = storageDirectory() else { throw AppError.noStack }
+                let broadcaster = try TxBroadcaster(
+                    pool: existingStack.pool, storageURL: dir.appending(path: "broadcast.json"))
+                self.stack = SyncStack(pool: existingStack.pool, chain: existingStack.chain,
+                                       filters: filters, broadcaster: broadcaster)
+                observeBroadcasterFailures(broadcaster)
             }
         }
         await refresh()
@@ -846,6 +876,9 @@ final class AppModel {
         syncTask?.cancel()
         syncTask = nil
         await stack?.pool.stop()
+        await stack?.broadcaster.shutdown()
+        broadcasterEventTask?.cancel()
+        broadcasterEventTask = nil
         stack = nil
 
         // Key first: a throw after this must not leave a wallet file whose
@@ -1060,10 +1093,10 @@ final class AppModel {
         do {
             try await wallet.commitFeeBump(prepared)
         } catch {
-            await broadcaster.cancel(replacementTxid)
+            try await broadcaster.cancel(replacementTxid)
             throw error
         }
-        await broadcaster.cancel(preview.originalTxid)
+        try await broadcaster.cancel(preview.originalTxid)
         await refresh()
         e2e?.journal("transaction.replaced", fields: [
             "original": preview.originalTxid.displayHex,
@@ -1229,6 +1262,9 @@ final class AppModel {
         syncTask?.cancel()
         syncTask = nil
         await stack?.pool.stop()
+        await stack?.broadcaster.shutdown()
+        broadcasterEventTask?.cancel()
+        broadcasterEventTask = nil
         stack = nil
         wallet = nil
         walletID = nil
@@ -1289,6 +1325,9 @@ final class AppModel {
         syncTask?.cancel()
         syncTask = nil
         await stack?.pool.stop()
+        await stack?.broadcaster.shutdown()
+        broadcasterEventTask?.cancel()
+        broadcasterEventTask = nil
         stack = nil
         await activate()
         await refresh()
