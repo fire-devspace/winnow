@@ -28,21 +28,67 @@ struct VaultRecord: Codable, Equatable, Identifiable, Sendable {
     var balance: Int64 { utxos.reduce(0) { $0 + $1.amount } }
 }
 
+enum VaultStorageOpenResult: Equatable, Sendable {
+    case missing
+    case loaded
+    case damaged(String)
+}
+
+enum VaultStorageError: Error, Equatable, LocalizedError {
+    case invalidState(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidState(reason):
+            "Invalid vault storage: \(reason)"
+        }
+    }
+}
+
 /// App-side vault bookkeeping: the persisted records plus the UTXO tracking
 /// that `Wallet` performs for the single-sig wallet. Fed by the same combined
 /// filter scan — a vault is just another set of watched scripts.
 actor VaultStore {
+    /// Prevents a forged persisted index from turning startup into billions of
+    /// child-key derivations. Winnow is a bounded mobile wallet; reaching this
+    /// operational ceiling requires migration instead of unbounded startup work.
+    static let maximumWatchCount: UInt32 = 10_000
+    static let maximumNextIndex = maximumWatchCount - 2
+
     private var records: [VaultRecord] = []
     private var storageURL: URL?
+    private var network: BitcoinNetwork = .signet
+    private let writeData: @Sendable (Data, URL) throws -> Void
+
+    init(writeData: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+        try data.write(to: url, options: .atomic)
+    }) {
+        self.writeData = writeData
+    }
 
     /// Points the store at its JSON file, loading any existing records.
-    func configure(storageURL: URL?) {
+    @discardableResult
+    func configure(storageURL: URL?, network: BitcoinNetwork) -> VaultStorageOpenResult {
         self.storageURL = storageURL
-        guard let storageURL, let data = try? Data(contentsOf: storageURL) else {
+        self.network = network
+        guard let storageURL else {
             records = []
-            return
+            return .missing
         }
-        records = (try? JSONDecoder().decode([VaultRecord].self, from: data)) ?? []
+        guard FileManager.default.fileExists(atPath: storageURL.path) else {
+            records = []
+            return .missing
+        }
+        do {
+            let data = try Data(contentsOf: storageURL)
+            let decoded = try JSONDecoder().decode([VaultRecord].self, from: data)
+            try Self.validate(decoded, network: network)
+            records = decoded
+            return .loaded
+        } catch {
+            records = []
+            return .damaged(Self.damagedStorageMessage)
+        }
     }
 
     var all: [VaultRecord] { records }
@@ -60,27 +106,56 @@ actor VaultStore {
         }
         let record = VaultRecord(id: id, name: name, descriptor: serialized,
                                  createdAtHeight: createdAtHeight)
+        let oldRecords = records
         records.append(record)
-        try persist()
+        do {
+            try Self.validate(records, network: network)
+            try persist()
+        } catch {
+            records = oldRecords
+            throw error
+        }
         return record
     }
 
     func remove(id: String) throws {
+        let oldRecords = records
         records.removeAll { $0.id == id }
-        try persist()
+        do {
+            try persist()
+        } catch {
+            records = oldRecords
+            throw error
+        }
     }
 
     /// Receive/change scripts of every vault, for the combined filter scan.
-    func watchScripts(network: BitcoinNetwork) -> [Data] {
-        records.flatMap { record in
-            (try? Vault(record.descriptor, network: network)
-                .watchScripts(upTo: watchCount(for: record))) ?? []
+    func watchScripts(network: BitcoinNetwork) throws -> [Data] {
+        guard network == self.network else {
+            throw VaultStorageError.invalidState("vault network does not match the open wallet")
+        }
+        return try records.flatMap { record in
+            try Vault(record.descriptor, network: network)
+                .watchScripts(upTo: watchCount(for: record))
         }
     }
 
     /// Consumes one matched block like `Wallet.apply`: pays to vault scripts
     /// become UTXOs (advancing the index bookkeeping), spends shrink the set.
     func apply(match: BlockMatch, network: BitcoinNetwork) throws {
+        guard network == self.network else {
+            throw VaultStorageError.invalidState("vault network does not match the open wallet")
+        }
+        let oldRecords = records
+        do {
+            try applyValidated(match: match, network: network)
+        } catch {
+            records = oldRecords
+            throw error
+        }
+    }
+
+    private func applyValidated(match: BlockMatch, network: BitcoinNetwork) throws {
         var changed = false
         for recordIndex in records.indices {
             let vault = try Vault(records[recordIndex].descriptor, network: network)
@@ -102,6 +177,9 @@ actor VaultStore {
                 }
                 for (vout, output) in tx.outputs.enumerated() {
                     guard let (choice, index) = owner[output.scriptPubKey] else { continue }
+                    guard vout <= Int(UInt32.max) else {
+                        throw VaultStorageError.invalidState("transaction output index is out of range")
+                    }
                     if let existing = records[recordIndex].utxos.firstIndex(where: {
                         $0.txid == txid && $0.vout == UInt32(vout)
                     }) {
@@ -124,14 +202,26 @@ actor VaultStore {
                 }
             }
         }
-        if changed { try persist() }
+        if changed {
+            try Self.validate(records, network: network)
+            try persist()
+        }
     }
 
     /// Marks the next receive index used ("New address" in the UI).
     func advanceReceiveIndex(id: String) throws {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        guard records[index].nextReceiveIndex < Self.maximumNextIndex else {
+            throw VaultStorageError.invalidState("receive address index is out of range")
+        }
+        let oldRecords = records
         records[index].nextReceiveIndex += 1
-        try persist()
+        do {
+            try persist()
+        } catch {
+            records = oldRecords
+            throw error
+        }
     }
 
     /// After a vault spend is broadcast: the selected inputs leave the set at
@@ -143,13 +233,45 @@ actor VaultStore {
     func recordSpend(id: String, transaction: Transaction, changeScriptPubKey: Data?,
                      changeIndex: UInt32) throws -> Bool {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return false }
-        let txid = transaction.txid
+        let vault = try Vault(records[index].descriptor, network: network)
+        if let changeScriptPubKey {
+            guard changeIndex <= Self.maximumNextIndex,
+                  try vault.scriptPubKey(index: changeIndex, choice: AddressChain.change.rawValue)
+                    == changeScriptPubKey
+            else {
+                throw VaultStorageError.invalidState("vault change output does not belong to this vault")
+            }
+            let matches = transaction.outputs.enumerated().filter {
+                $0.element.scriptPubKey == changeScriptPubKey
+            }
+            guard matches.count == 1,
+                  matches[0].offset <= Int(UInt32.max),
+                  matches[0].element.value > 0,
+                  matches[0].element.value <= BitcoinAmount.maximum
+            else {
+                throw VaultStorageError.invalidState("vault change output is missing or invalid")
+            }
+        }
         let spendsKnownInput = transaction.inputs.contains { input in
             records[index].utxos.contains {
                 $0.txid == input.previousOutput.txid && $0.vout == input.previousOutput.vout
             }
         }
         guard spendsKnownInput else { return false }
+        let oldRecords = records
+        do {
+            return try recordValidatedSpend(
+                recordIndex: index, transaction: transaction,
+                changeScriptPubKey: changeScriptPubKey, changeIndex: changeIndex)
+        } catch {
+            records = oldRecords
+            throw error
+        }
+    }
+
+    private func recordValidatedSpend(recordIndex index: Int, transaction: Transaction,
+                                      changeScriptPubKey: Data?, changeIndex: UInt32) throws -> Bool {
+        let txid = transaction.txid
         for input in transaction.inputs {
             records[index].utxos.removeAll {
                 $0.txid == input.previousOutput.txid && $0.vout == input.previousOutput.vout
@@ -164,6 +286,7 @@ actor VaultStore {
                 index: changeIndex, height: 0))
             records[index].nextChangeIndex = changeIndex + 1
         }
+        try Self.validate(records, network: network)
         try persist()
         return true
     }
@@ -173,9 +296,65 @@ actor VaultStore {
         max(record.nextReceiveIndex, record.nextChangeIndex, 1) + 2
     }
 
+    private static let damagedStorageMessage =
+        "Winnow found local vault data but could not safely read it. The file and protected keys were left untouched. Retry; if this continues, restore from a known-good wallet bundle or ask for help before changing anything."
+
+    private static func validate(_ records: [VaultRecord], network: BitcoinNetwork) throws {
+        var recordIDs = Set<String>()
+        var outpoints = Set<Transaction.Outpoint>()
+        var aggregate: Int64 = 0
+
+        for record in records {
+            guard recordIDs.insert(record.id).inserted else {
+                throw VaultStorageError.invalidState("duplicate vault identifier")
+            }
+            let descriptor = try Descriptor(record.descriptor)
+            let canonical = descriptor.serialized()
+            guard canonical == record.descriptor,
+                  canonical.split(separator: "#").last.map(String.init) == record.id
+            else {
+                throw VaultStorageError.invalidState("vault descriptor identifier does not match")
+            }
+            let vault = try Vault(descriptor: descriptor, network: network)
+            _ = try vault.scriptPubKey(index: 0, choice: AddressChain.receive.rawValue)
+            _ = try vault.scriptPubKey(index: 0, choice: AddressChain.change.rawValue)
+            guard record.nextReceiveIndex <= maximumNextIndex,
+                  record.nextChangeIndex <= maximumNextIndex
+            else {
+                throw VaultStorageError.invalidState("vault address index is out of range")
+            }
+
+            for utxo in record.utxos {
+                guard utxo.txid.count == 32,
+                      utxo.amount > 0, utxo.amount <= BitcoinAmount.maximum,
+                      utxo.silentPaymentTweak == nil,
+                      utxo.index < maximumWatchCount
+                else {
+                    throw VaultStorageError.invalidState("vault output metadata is invalid")
+                }
+                let nextIndex = utxo.chain == .receive
+                    ? record.nextReceiveIndex : record.nextChangeIndex
+                guard utxo.index < nextIndex,
+                      try vault.scriptPubKey(index: utxo.index, choice: utxo.chain.rawValue)
+                        == utxo.scriptPubKey
+                else {
+                    throw VaultStorageError.invalidState("vault output does not belong to its descriptor")
+                }
+                guard outpoints.insert(utxo.outpoint).inserted else {
+                    throw VaultStorageError.invalidState("duplicate vault output")
+                }
+                let sum = aggregate.addingReportingOverflow(utxo.amount)
+                guard !sum.overflow, sum.partialValue <= BitcoinAmount.maximum else {
+                    throw VaultStorageError.invalidState("vault balance is outside Bitcoin's monetary range")
+                }
+                aggregate = sum.partialValue
+            }
+        }
+    }
+
     private func persist() throws {
         guard let storageURL else { return }
         let data = try JSONEncoder().encode(records)
-        try data.write(to: storageURL, options: .atomic)
+        try writeData(data, storageURL)
     }
 }

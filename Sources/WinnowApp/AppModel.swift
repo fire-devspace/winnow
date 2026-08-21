@@ -36,6 +36,7 @@ final class AppModel {
         case wrongNetwork(String)
         case duplicateVault
         case sendReviewChanged
+        case storageDamaged(String)
         case deviceAuthUnavailable
         case deviceAuthFailed
 
@@ -49,6 +50,7 @@ final class AppModel {
             case let .wrongNetwork(network): "This bundle is for \(network); switch the network in Settings first."
             case .duplicateVault: "A vault with this descriptor already exists."
             case .sendReviewChanged: "The available coins, fee, or change changed. Review the payment again before signing."
+            case let .storageDamaged(message): message
             case .deviceAuthUnavailable: "Set a device passcode first — the recovery phrase only shows after device authentication."
             case .deviceAuthFailed: "Device authentication failed."
             }
@@ -221,7 +223,12 @@ final class AppModel {
         if let clipboard = e2e?.clipboard {
             UIPasteboard.general.string = clipboard
         }
-        await vaultStore.configure(storageURL: vaultsURL())
+        if case let .damaged(message) = await vaultStore.configure(
+            storageURL: vaultsURL(), network: network)
+        {
+            stage = .storageDamaged(message)
+            return
+        }
         guard let walletURL = walletURL() else {
             stage = .storageDamaged(
                 "Winnow could not access its protected local storage. No wallet files or keys were changed.")
@@ -471,7 +478,7 @@ final class AppModel {
         defer { status.syncing = false }
         do {
             var scripts = try await wallet.watchScripts()
-            scripts.append(contentsOf: await vaultStore.watchScripts(network: network))
+            scripts.append(contentsOf: try await vaultStore.watchScripts(network: network))
             // Silent payments ride the same filter stream. Deliberately
             // fail-closed: enabled without a server, or with one that errors,
             // aborts the sync visibly instead of silently skipping heights a
@@ -695,7 +702,11 @@ final class AppModel {
                 try? FileManager.default.removeItem(at: dir.appending(path: name))
             }
         }
-        await vaultStore.configure(storageURL: vaultsURL())
+        if case let .damaged(message) = await vaultStore.configure(
+            storageURL: vaultsURL(), network: network)
+        {
+            throw AppError.storageDamaged(message)
+        }
         self.wallet = wallet
         walletID = await wallet.id
         walletDescriptor = await wallet.descriptor
@@ -832,7 +843,12 @@ final class AppModel {
         walletDescriptor = nil
         status = Status()
         syncPhase = .idle
-        await vaultStore.configure(storageURL: vaultsURL())
+        if case let .damaged(message) = await vaultStore.configure(
+            storageURL: vaultsURL(), network: network)
+        {
+            stage = .storageDamaged(message)
+            throw AppError.storageDamaged(message)
+        }
         vaults = await vaultStore.all
         stage = .onboarding
         e2e?.journal("wallet.destroyed", fields: ["walletID": walletID])
@@ -1182,7 +1198,12 @@ final class AppModel {
         walletDescriptor = nil
         network = newNetwork
         defaults.set(newNetwork.rawValue, forKey: DefaultsKey.network)
-        await vaultStore.configure(storageURL: vaultsURL())
+        if case let .damaged(message) = await vaultStore.configure(
+            storageURL: vaultsURL(), network: network)
+        {
+            stage = .storageDamaged(message)
+            return
+        }
         guard let walletURL = walletURL() else {
             stage = .storageDamaged(
                 "Winnow could not access its protected local storage. No wallet files or keys were changed.")
