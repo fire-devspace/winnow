@@ -168,4 +168,41 @@ struct PSBTTests {
         duplicate.append(contentsOf: [0x01, 0xFB, 0x01, 0x02, 0x01, 0xFB, 0x01, 0x02, 0x00])
         #expect(throws: PSBTError.duplicateKey(Data([0xFB]))) { _ = try PSBT(serialized: duplicate) }
     }
+
+    @Test("hostile PSBT lengths and fixed-width fields fail closed")
+    func hostileLengths() throws {
+        let oversized = Data(repeating: 0, count: PSBT.maxSerializedSize + 1)
+        #expect(throws: PSBTError.malformed("document exceeds \(PSBT.maxSerializedSize) bytes")) {
+            _ = try PSBT(serialized: oversized)
+        }
+        let oversizedBase64 = String(repeating: "A", count: PSBT.maxBase64Length + 1)
+        #expect(throws: PSBTError.malformed("Base64 text exceeds \(PSBT.maxBase64Length) bytes")) {
+            _ = try PSBT(base64: oversizedBase64)
+        }
+
+        // A CompactSize UInt64.max used to trap while converting to Int.
+        var impossibleKey = Data([0x70, 0x73, 0x62, 0x74, 0xFF, 0xFF])
+        impossibleKey.append(contentsOf: repeatElement(UInt8(0xFF), count: 8))
+        #expect(throws: PSBTError.malformed("map key length \(UInt64.max) is out of bounds")) {
+            _ = try PSBT(serialized: impossibleKey)
+        }
+
+        // Fixed-width fields are validated before any computed property can
+        // load beyond the supplied bytes.
+        var badVersion = Data([0x70, 0x73, 0x62, 0x74, 0xFF])
+        badVersion.append(contentsOf: [0x01, PSBT.GlobalType.version, 0x00, 0x00])
+        #expect(throws: PSBTError.malformed("global version must be four bytes")) {
+            _ = try PSBT(serialized: badVersion)
+        }
+
+        let fixture = try Fixture()
+        var malformedInput = try PSBT(unsignedTx: fixture.tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        let outputIndex = try #require(malformedInput.inputs[0].pairs.firstIndex {
+            $0.type == PSBT.InType.outputIndex
+        })
+        malformedInput.inputs[0].pairs[outputIndex].value = Data()
+        #expect(throws: PSBTError.malformed("input field \(PSBT.InType.outputIndex) must be 4 bytes")) {
+            _ = try PSBT(serialized: malformedInput.serialized)
+        }
+    }
 }

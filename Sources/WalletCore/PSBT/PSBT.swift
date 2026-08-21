@@ -2,7 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 
-public enum PSBTError: Error, Equatable {
+public enum PSBTError: Error, Equatable, LocalizedError {
     case invalidMagic
     case truncated
     /// Keys must be unique within a map (BIP370).
@@ -14,12 +14,42 @@ public enum PSBTError: Error, Equatable {
     case inconsistentCounts
     /// Combiner role: the same key carries different values in two PSBTs.
     case conflict(Data)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidMagic:
+            "That text is not a valid PSBT."
+        case .truncated:
+            "The PSBT ended before all of its data could be read."
+        case .duplicateKey:
+            "The PSBT repeats a field that must appear only once."
+        case let .unsupportedVersion(version):
+            "This PSBT uses unsupported version \(version). Winnow requires PSBTv2."
+        case let .missingField(field):
+            "The PSBT is missing required data (\(field))."
+        case let .malformed(reason):
+            "The PSBT is malformed (\(reason))."
+        case .inconsistentCounts:
+            "The PSBT's input or output count does not match its transaction."
+        case .conflict:
+            "The PSBTs disagree about a field and cannot be combined safely."
+        }
+    }
 }
 
 /// PSBTv2 (BIP370) with the BIP371 Taproot fields needed for key-path P2TR
 /// spends. The key-value maps are stored generically — unknown pair types
 /// round-trip verbatim so Phase 5 (MuSig2/multisig) can layer its fields on.
 public struct PSBT: Equatable, Sendable {
+    /// A PSBT is an interchange document, not an arbitrary file container.
+    /// Four megabytes matches Winnow's P2P payload budget and is an explicit
+    /// mobile resource policy for the Taproot transaction shapes it supports.
+    /// It is not a Bitcoin consensus limit on PSBT documents.
+    public static let maxSerializedSize = 4_000_000
+    public static let maxBase64Length = 5_333_336
+    static let maxMapKeySize = 10_000
+    static let maxMapPairs = 10_000
+    static let maxInputOutputCount = 100_000
     /// BIP174/370 global key types.
     public enum GlobalType {
         public static let unsignedTx: UInt8 = 0x00 // v0 only; rejected here
@@ -530,17 +560,20 @@ public struct PSBT: Equatable, Sendable {
 
     /// PSBT_GLOBAL_VERSION — must be 2 (BIP370).
     public var version: UInt32? {
-        globalPair(type: GlobalType.version)?.value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
+        guard let value = globalPair(type: GlobalType.version)?.value, value.count == 4 else { return nil }
+        return value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
     }
 
     /// PSBT_GLOBAL_TX_VERSION — int32 LE, defaults to 2 (BIP370).
     public var txVersion: Int32 {
-        globalPair(type: GlobalType.txVersion)?.value.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).littleEndian } ?? 2
+        guard let value = globalPair(type: GlobalType.txVersion)?.value, value.count == 4 else { return 2 }
+        return value.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).littleEndian }
     }
 
     /// PSBT_GLOBAL_FALLBACK_LOCKTIME — uint32 LE, defaults to 0 (BIP370).
     public var fallbackLocktime: UInt32 {
-        globalPair(type: GlobalType.fallbackLocktime)?.value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian } ?? 0
+        guard let value = globalPair(type: GlobalType.fallbackLocktime)?.value, value.count == 4 else { return 0 }
+        return value.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian }
     }
 
     // MARK: - Serialization (BIP174/BIP370 wire format)
@@ -573,6 +606,9 @@ public struct PSBT: Equatable, Sendable {
     /// global version must be 2, and the input/output counts must match the
     /// map counts.
     public init(serialized data: Data) throws {
+        guard data.count <= Self.maxSerializedSize else {
+            throw PSBTError.malformed("document exceeds \(Self.maxSerializedSize) bytes")
+        }
         var reader = ByteReader(data)
         let magic = try reader.readBytes(5)
         guard magic == Data([0x70, 0x73, 0x62, 0x74, 0xFF]) else { throw PSBTError.invalidMagic }
@@ -582,8 +618,17 @@ public struct PSBT: Equatable, Sendable {
             while true {
                 let keyLength = try reader.readVarInt()
                 guard keyLength > 0 else { return pairs } // separator
+                guard pairs.count < Self.maxMapPairs else {
+                    throw PSBTError.malformed("map exceeds \(Self.maxMapPairs) fields")
+                }
+                guard keyLength <= UInt64(Self.maxMapKeySize),
+                      keyLength <= UInt64(reader.remaining)
+                else { throw PSBTError.malformed("map key length \(keyLength) is out of bounds") }
                 let key = try reader.readBytes(Int(keyLength))
                 let valueLength = try reader.readVarInt()
+                guard valueLength <= UInt64(reader.remaining) else {
+                    throw PSBTError.malformed("map value length \(valueLength) is out of bounds")
+                }
                 let value = try reader.readBytes(Int(valueLength))
                 guard !pairs.contains(where: { $0.key == key }) else { throw PSBTError.duplicateKey(key) }
                 pairs.append(KeyValue(key: key, value: value))
@@ -592,7 +637,11 @@ public struct PSBT: Equatable, Sendable {
 
         let globals = try readMap()
         func global(_ type: UInt8) -> KeyValue? { globals.first { $0.type == type } }
-        let version = global(GlobalType.version)?.value.withUnsafeBytes {
+        let versionPair = global(GlobalType.version)
+        guard versionPair == nil || versionPair?.value.count == 4 else {
+            throw PSBTError.malformed("global version must be four bytes")
+        }
+        let version = versionPair?.value.withUnsafeBytes {
             $0.loadUnaligned(as: UInt32.self).littleEndian
         }
         guard version == 2 else { throw PSBTError.unsupportedVersion(version ?? 0) }
@@ -605,6 +654,9 @@ public struct PSBT: Equatable, Sendable {
             var valueReader = ByteReader(pair.value)
             let count = try valueReader.readVarInt()
             try valueReader.requireEnd()
+            guard count <= UInt64(Self.maxInputOutputCount) else {
+                throw PSBTError.malformed("input/output count \(count) exceeds \(Self.maxInputOutputCount)")
+            }
             return Int(count)
         }
         let inputCount = try count(GlobalType.inputCount)
@@ -614,11 +666,75 @@ public struct PSBT: Equatable, Sendable {
         for _ in 0 ..< inputCount { inputs.append(Input(pairs: try readMap())) }
         for _ in 0 ..< outputCount { outputs.append(Output(pairs: try readMap())) }
         try reader.requireEnd()
+        try Self.validateKnownFields(globals: globals, inputs: inputs, outputs: outputs)
         self.init(globals: globals, inputs: inputs, outputs: outputs)
     }
 
     public init(base64: String) throws {
+        guard base64.utf8.count <= Self.maxBase64Length else {
+            throw PSBTError.malformed("Base64 text exceeds \(Self.maxBase64Length) bytes")
+        }
         guard let data = Data(base64Encoded: base64) else { throw PSBTError.invalidMagic }
         try self.init(serialized: data)
+    }
+
+    private static func validateKnownFields(globals: [KeyValue], inputs: [Input],
+                                            outputs: [Output]) throws {
+        func requireSingleton(_ pair: KeyValue, length: Int? = nil, name: String) throws {
+            guard pair.key.count == 1 else {
+                throw PSBTError.malformed("\(name) must not carry key data")
+            }
+            if let length, pair.value.count != length {
+                throw PSBTError.malformed("\(name) must be \(length) bytes")
+            }
+        }
+
+        for pair in globals {
+            switch pair.type {
+            case GlobalType.version, GlobalType.txVersion, GlobalType.fallbackLocktime:
+                try requireSingleton(pair, length: 4, name: "global field \(pair.type)")
+            case GlobalType.inputCount, GlobalType.outputCount:
+                try requireSingleton(pair, name: "global field \(pair.type)")
+            default:
+                break
+            }
+        }
+
+        for input in inputs {
+            for pair in input.pairs {
+                switch pair.type {
+                case InType.previousTxid:
+                    try requireSingleton(pair, length: 32, name: "previous transaction ID")
+                case InType.outputIndex, InType.sequence, InType.sighashType:
+                    try requireSingleton(pair, length: 4, name: "input field \(pair.type)")
+                case InType.tapInternalKey:
+                    try requireSingleton(pair, length: 32, name: "Taproot internal key")
+                case InType.tapKeySignature:
+                    try requireSingleton(pair, name: "Taproot key signature")
+                    guard pair.value.count == 64 || pair.value.count == 65 else {
+                        throw PSBTError.malformed("Taproot key signature must be 64 or 65 bytes")
+                    }
+                case InType.witnessUTXO, InType.finalScriptWitness:
+                    try requireSingleton(pair, name: "input field \(pair.type)")
+                default:
+                    break
+                }
+            }
+        }
+
+        for output in outputs {
+            for pair in output.pairs {
+                switch pair.type {
+                case OutType.amount:
+                    try requireSingleton(pair, length: 8, name: "output amount")
+                case OutType.tapInternalKey:
+                    try requireSingleton(pair, length: 32, name: "output Taproot internal key")
+                case OutType.script, OutType.tapTree:
+                    try requireSingleton(pair, name: "output field \(pair.type)")
+                default:
+                    break
+                }
+            }
+        }
     }
 }
