@@ -35,3 +35,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test   # unit, pr
 Default network for development is signet. Point the app at your own
 filter-serving node (Settings → Manual peers); the node needs
 `blockfilterindex=1` and `peerblockfilters=1`.
+
+## License
+
+Winnow is available under the [MIT License](LICENSE).
