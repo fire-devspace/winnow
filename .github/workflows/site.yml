@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          lfs: true
       - name: Deploy docs/ to Cloudflare Pages
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
@@ -60,6 +61,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          lfs: true
 
       # Any --branch other than main is a Cloudflare *preview* deployment:
       # it never touches the production domain.

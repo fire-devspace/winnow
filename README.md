@@ -63,6 +63,20 @@ Default network for development is signet. Point the app at your own
 filter-serving node (Settings → Manual peers); the node needs
 `blockfilterindex=1` and `peerblockfilters=1`.
 
+## Screenshots
+
+Screenshot PNGs in `docs/screenshots/` are stored in Git LFS. After cloning,
+install Git LFS and download the image objects before viewing or publishing them:
+
+```sh
+git lfs install --local
+git lfs pull
+```
+
+The site and node-test workflows fetch LFS objects during checkout. Self-hosted
+node-test runners need Git LFS installed. Capture tools continue writing PNGs
+to the same paths; Git stores pointers when the files are added.
+
 ## License
 
 Winnow is available under the [MIT License](LICENSE).
