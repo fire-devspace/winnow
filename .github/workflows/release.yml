@@ -63,14 +63,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen
 
-      - name: App test suite (gate)
-        run: |
-          DEVICE=$(xcrun simctl list devices available | grep -m1 -o 'iPhone [^(]*' | sed 's/ $//')
-          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
-            -destination "platform=iOS Simulator,name=$DEVICE" \
-            -skipPackagePluginValidation -skipMacroValidation \
-            -only-testing:WinnowAppTests
-
       - name: App unit tests (gate)
         run: |
           SIMULATOR_ID="$(xcrun simctl list devices available -j | ruby -rjson -e '

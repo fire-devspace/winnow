@@ -1,6 +1,6 @@
 name: Node e2e (manual)
 
-# Optional node-backed suites (differential + UI e2e). These are deliberately
+# Optional app UI e2e. Library differential tests run in btc-swift. These are
 # excluded from push and pull-request CI: Winnow itself is a direct-P2P client,
 # and ordinary development must not depend on a bitcoind running on an owner's
 # workstation. Enable this workflow only after provisioning a dedicated runner
@@ -46,6 +46,7 @@ jobs:
       WINNOW_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
       WINNOW_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
       WINNOW_FIXTURE_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
+      WINNOW_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -170,6 +171,7 @@ jobs:
         run: >-
           xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp
           -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.sim-name }}'
+          -only-testing:WinnowAppUITests
           -skipPackagePluginValidation -skipMacroValidation
 
       - name: Kill the simulator test runner (issue #35)

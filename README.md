@@ -34,7 +34,7 @@ The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. H
 
 The Bitcoin implementation lives in its own repository,
 [btc-swift](https://github.com/winnowwallet/btc-swift) — keys to broadcast
-in ~10,600 lines with one dependency, plus the differential battery against
+with one dependency, plus the differential battery against
 Bitcoin Core, the soak driver, and a scriptable CLI. This repository is the
 wallet that wears it: the app pins the exact
 [btc-swift 0.1.0 release](https://github.com/winnowwallet/btc-swift/releases/tag/v0.1.0)
@@ -46,7 +46,7 @@ logic may move into `WinnowApp` — if the UI needs something, expose it from
 btc-swift.
 
 - `Sources/WinnowApp` — the iOS app (SwiftUI, iOS 17+)
-- `AppTests/` — app-hosted suites (Keychain, privacy, journal redaction, …)
+- `AppTests/` — app state, privacy, journal redaction, and integration suites
 - `UITests/` — the simulator e2e against the signet fixture node
 - `docs/` — public design papers, the security register, and the site
 - `scripts/` — App Store Connect tooling and the TestFlight pipeline
@@ -60,6 +60,11 @@ open WinnowApp.xcodeproj
 ```
 
 Build the `WinnowApp` scheme and run `WinnowAppTests` on an available iPhone simulator. Library builds and unit/protocol/vector tests belong in [winnowwallet/btc-swift](https://github.com/winnowwallet/btc-swift); this app repository has no root Swift package. The app's exact library release version is in [`project.yml`](project.yml).
+
+The library also owns the three Keychain attribute tests, hosted in its own
+minimal iOS test app, and publishes categorized LOC reports. App CI tests the
+consumer integration; the manual node workflow runs only `WinnowAppUITests`.
+App Store releases run the app unit suite once before signing and delivery.
 
 Mainnet is the default network, and the app starts in beginner mode: Wallet,
 Send, People, Settings. Turn on Advanced mode in Settings for the test
