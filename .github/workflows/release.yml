@@ -36,12 +36,17 @@ jobs:
         # 161: freshness tracks releases rather than someone remembering.
         # The peer list lives in btc-swift now, so the app release cannot
         # regenerate it — instead it refuses to ship a stale one: if the
-        # pinned revision's FallbackPeersGenerated.swift was last touched
-        # more than 30 days ago, regenerate there, bump the pin, re-tag.
+        # pinned release's FallbackPeersGenerated.swift was last touched
+        # more than 30 days ago, publish a refreshed library release and
+        # bump the app's exact version before tagging the app again.
         run: |
-          PIN=$(grep -A2 'btc-swift:' project.yml | grep 'revision:' | awk '{print $2}')
-          echo "pinned btc-swift: $PIN"
-          LAST=$(curl -sf "https://api.github.com/repos/winnowwallet/btc-swift/commits?path=Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift&sha=$PIN&per_page=1"             | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"]["committer"]["date"])')
+          LIBRARY_VERSION=$(ruby -ryaml -e 'puts YAML.load_file("project.yml").fetch("packages").fetch("btc-swift").fetch("exactVersion")')
+          LIBRARY_TAG="v$LIBRARY_VERSION"
+          echo "pinned btc-swift release: $LIBRARY_TAG"
+          curl --fail --silent --show-error "https://api.github.com/repos/winnowwallet/btc-swift/releases/tags/$LIBRARY_TAG" \
+            | python3 -c 'import json,sys; release=json.load(sys.stdin); sys.exit("library release must be published and stable" if release["draft"] or release["prerelease"] else 0)'
+          LAST=$(curl --fail --silent --show-error "https://api.github.com/repos/winnowwallet/btc-swift/commits?path=Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift&sha=$LIBRARY_TAG&per_page=1" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"]["committer"]["date"])')
           echo "peer list last regenerated: $LAST"
           python3 - "$LAST" <<'PYCHECK'
           import datetime, sys

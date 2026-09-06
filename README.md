@@ -35,8 +35,9 @@ The Bitcoin implementation lives in its own repository,
 [btc-swift](https://github.com/winnowwallet/btc-swift) — keys to broadcast
 in ~10,600 lines with one dependency, plus the differential battery against
 Bitcoin Core, the soak driver, and a scriptable CLI. This repository is the
-wallet that wears it: the app pins an exact btc-swift revision and bumps it
-deliberately.
+wallet that wears it: the app pins the exact
+[btc-swift 0.1.0 release](https://github.com/winnowwallet/btc-swift/releases/tag/v0.1.0)
+and bumps library versions deliberately. Library and app releases are versioned independently.
 
 Architecture invariant: **all logic lives in the library, where it is
 tested; the app target is a thin shell.** No wallet, protocol, or crypto
@@ -57,7 +58,7 @@ xcodegen
 open WinnowApp.xcodeproj
 ```
 
-Build the `WinnowApp` scheme and run `WinnowAppTests` on an available iPhone simulator. Library builds and unit/protocol/vector tests belong in [winnowwallet/btc-swift](https://github.com/winnowwallet/btc-swift); this app repository has no root Swift package. The app's pinned library revision is in [`project.yml`](project.yml).
+Build the `WinnowApp` scheme and run `WinnowAppTests` on an available iPhone simulator. Library builds and unit/protocol/vector tests belong in [winnowwallet/btc-swift](https://github.com/winnowwallet/btc-swift); this app repository has no root Swift package. The app's exact library release version is in [`project.yml`](project.yml).
 
 Default network for development is signet. Point the app at your own
 filter-serving node (Settings → Manual peers); the node needs
