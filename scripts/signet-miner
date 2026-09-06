@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""BIP325 signet miner for the winnow dev fixture.
+
+Shell port of Tests/DifferentialTests/SignetMiner.swift (Core 31.1's
+generatetoaddress does not sign custom-signet blocks, so we run the whole
+cycle: getblocktemplate -> coinbase -> BIP325 signature -> PoW grind via
+bitcoin-util -> submitblock). Same logic, callable from a shell: the Swift
+original only runs inside the test harness.
+
+Needs the `ecdsa` pip package (pure Python; one signature per block, so
+speed does not matter) and bitcoin-util next to bitcoin-cli.
+
+Usage: scripts/signet-miner <payout-address> <nblocks> [wallet]
+"""
+import hashlib
+import json
+import os
+import subprocess
+import sys
+
+DATADIR = os.environ.get("WINNOW_DATADIR",
+                         os.path.expanduser("~/.bitcoin-mysignet"))
+RPCPORT = os.environ.get("WINNOW_RPC_PORT", "38400")
+# Published dev constants from scripts/signet-fixture; the chain holds nothing.
+CHALLENGE_HEX = ("512102d4d3dfe322ab358061c7e08beebb48dc06a4c175"
+                 "342b975ecd0d55a79e6d6cdc51ae")
+WIF = "cU5G84sozM6AUeMTmh6M6E6bUZ8fkFAw7gyhLiQoxjQEQgM6HnhM"
+
+SIGNET_HEADER = bytes([0xEC, 0xC7, 0xDA, 0xA2])
+CHALLENGE = bytes.fromhex(CHALLENGE_HEX)
+
+
+def cli(*args, wallet=None):
+    cmd = ["bitcoin-cli", f"-datadir={DATADIR}", f"-rpcport={RPCPORT}"]
+    if wallet:
+        cmd.append(f"-rpcwallet={wallet}")
+    cmd += [str(a) for a in args]
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(f"cli {args}: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+def sha256d(b: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+
+
+def push(data: bytes) -> bytes:
+    n = len(data)
+    if n == 0:
+        return b"\x00"
+    if n <= 75:
+        return bytes([n]) + data
+    return bytes([0x4C, n]) + data
+
+
+def varint(n: int) -> bytes:
+    if n < 0xFD:
+        return bytes([n])
+    if n <= 0xFFFF:
+        return b"\xfd" + n.to_bytes(2, "little")
+    if n <= 0xFFFFFFFF:
+        return b"\xfe" + n.to_bytes(4, "little")
+    return b"\xff" + n.to_bytes(8, "little")
+
+
+def vardata(b: bytes) -> bytes:
+    return varint(len(b)) + b
+
+
+def height_push(height: int) -> bytes:
+    if height == 0:
+        return b"\x00\x00"
+    if 1 <= height <= 16:
+        return bytes([0x50 + height, 0x00])
+    b = bytearray()
+    v = height
+    while v > 0:
+        b.append(v & 0xFF)
+        v >>= 8
+    if b[-1] & 0x80:
+        b.append(0)
+    return push(bytes(b))
+
+
+def merkle_root(hashes):
+    level = list(hashes)
+    while len(level) > 1:
+        if len(level) % 2 == 1:
+            level.append(level[-1])
+        level = [sha256d(level[i] + level[i + 1]) for i in range(0, len(level), 2)]
+    return level[0]
+
+
+def ser_tx(version, inputs, outputs, locktime, with_witness=False):
+    """inputs/outputs are dicts; inputs may carry a 'witness' list of byte strings."""
+    out = version.to_bytes(4, "little", signed=True)
+    if with_witness and any(i.get("witness") for i in inputs):
+        out += b"\x00\x01"
+    out += varint(len(inputs))
+    for i in inputs:
+        out += i["prevout"] + i["vout"].to_bytes(4, "little")
+        out += vardata(i["scriptSig"])
+        out += i["sequence"].to_bytes(4, "little")
+    out += varint(len(outputs))
+    for o in outputs:
+        out += o["value"].to_bytes(8, "little", signed=True)
+        out += vardata(o["scriptPubKey"])
+    if with_witness and any(i.get("witness") for i in inputs):
+        for i in inputs:
+            w = i.get("witness") or []
+            out += varint(len(w))
+            for item in w:
+                out += vardata(item)
+    out += locktime.to_bytes(4, "little")
+    return out
+
+
+def wif_to_secret(wif: str) -> bytes:
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    n = 0
+    for c in wif:
+        n = n * 58 + alphabet.index(c)
+    payload = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    payload = b"\x00" * (len(wif) - len(wif.lstrip("1"))) + payload
+    body, check = payload[:-4], payload[-4:]
+    assert sha256d(body)[:4] == check, "bad WIF checksum"
+    assert body[0] == 0xEF and body[-1] == 0x01
+    return body[1:-1]
+
+
+SECRET = wif_to_secret(WIF)
+
+
+def sign_der(digest: bytes) -> bytes:
+    import ecdsa
+    sk = ecdsa.SigningKey.from_string(SECRET, curve=ecdsa.SECP256k1)
+    n = ecdsa.SECP256k1.order
+    sig = sk.sign_digest(digest, sigencode=ecdsa.util.sigencode_der)
+    # Enforce low-S (BIP62 / Core policy), re-encoding if the lib didn't.
+    r, s = ecdsa.util.sigdecode_der(sig, n)
+    if s > n // 2:
+        s = n - s
+        sig = ecdsa.util.sigencode_der(r, s, n)
+    return sig
+
+
+def grind(header: bytes) -> bytes:
+    out = subprocess.run(
+        ["bitcoin-util", "-signet", f"-signetchallenge={CHALLENGE_HEX}",
+         "grind", header.hex()],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(f"grind failed: {out.stderr.strip()}")
+    return bytes.fromhex(out.stdout.strip())
+
+
+def mine_block(payout_script: bytes) -> str:
+    template = json.loads(cli("getblocktemplate", '{"rules":["segwit","signet"]}'))
+    height = template["height"]
+    bits = int(template["bits"], 16)
+    version = template["version"]
+    if version >= 2**31:
+        version -= 2**32
+    prev_hash = bytes.fromhex(template["previousblockhash"])[::-1]
+    prev_time = json.loads(cli("getblockheader", template["previousblockhash"]))["time"]
+    time = max(template["curtime"], prev_time + 1)
+    coinbase_value = template["coinbasevalue"]
+    reserved = bytes(32)
+
+    entries = template["transactions"]
+    txs = [bytes.fromhex(e["data"]) for e in entries]
+    txids = [bytes.fromhex(e["txid"])[::-1] for e in entries]
+    wtxids = [bytes.fromhex(e["hash"])[::-1] for e in entries]
+
+    witness_root = merkle_root([bytes(32)] + wtxids)
+    commitment = bytes([0xAA, 0x21, 0xA9, 0xED]) + sha256d(witness_root + reserved)
+    unsigned_commitment = b"\x6a" + push(commitment)
+
+    def make_coinbase(commitment_script):
+        return dict(
+            version=1,
+            inputs=[dict(prevout=bytes(32), vout=0xFFFFFFFF,
+                         scriptSig=height_push(height), sequence=0xFFFFFFFF,
+                         witness=[reserved])],
+            outputs=[dict(value=coinbase_value, scriptPubKey=payout_script),
+                     dict(value=0, scriptPubKey=commitment_script)],
+            locktime=0)
+
+    coinbase = make_coinbase(unsigned_commitment + push(SIGNET_HEADER))
+    cb_ser = ser_tx(**coinbase, with_witness=False)
+    signet_merkle = merkle_root([sha256d(cb_ser)] + txids)
+
+    block_data = (version.to_bytes(4, "little", signed=True) + prev_hash
+                  + signet_merkle + time.to_bytes(4, "little"))
+
+    to_spend = ser_tx(0,
+                      [dict(prevout=bytes(32), vout=0xFFFFFFFF,
+                            scriptSig=b"\x00" + push(block_data), sequence=0)],
+                      [dict(value=0, scriptPubKey=CHALLENGE)], 0)
+    to_spend_txid = sha256d(to_spend)
+
+    preimage = ser_tx(0,
+                      [dict(prevout=to_spend_txid, vout=0,
+                            scriptSig=CHALLENGE, sequence=0)],
+                      [dict(value=0, scriptPubKey=b"\x6a")], 0)
+    preimage += (1).to_bytes(4, "little")  # SIGHASH_ALL
+    sighash = sha256d(preimage)
+
+    sig = sign_der(sighash) + b"\x01"
+    solution_script_sig = b"\x00" + push(sig)
+    section = SIGNET_HEADER + vardata(solution_script_sig) + varint(0)
+
+    final_coinbase = make_coinbase(unsigned_commitment + push(section))
+    cb_ser = ser_tx(**final_coinbase, with_witness=False)
+    merkle = merkle_root([sha256d(cb_ser)] + txids)
+
+    header = (version.to_bytes(4, "little", signed=True) + prev_hash + merkle
+              + time.to_bytes(4, "little") + bits.to_bytes(4, "little")
+              + (0).to_bytes(4, "little"))
+    ground = grind(header)
+
+    block = ground + varint(len(txs) + 1)
+    block += ser_tx(**final_coinbase, with_witness=True)
+    for tx in txs:
+        block += tx
+
+    answer = cli("submitblock", block.hex())  # empty stdout == connected
+    if answer and answer not in ("inconclusive", "duplicate-inconclusive"):
+        raise RuntimeError(f"submitblock rejected: {answer}")
+    return hashlib.sha256(hashlib.sha256(ground).digest()).digest()[::-1].hex()
+
+
+def main():
+    address, nblocks = sys.argv[1], int(sys.argv[2])
+    wallet = sys.argv[3] if len(sys.argv) > 3 else "federation"
+    payout_script = bytes.fromhex(
+        json.loads(cli("getaddressinfo", address, wallet=wallet))["scriptPubKey"])
+    for i in range(nblocks):
+        h = mine_block(payout_script)
+        print(f"mined {i + 1}/{nblocks}: {h}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
