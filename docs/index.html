@@ -179,6 +179,9 @@
   }
   .counters b{color:var(--night-ink);font-weight:600}
   .counters .zero b{color:var(--good)}
+  .night-shots{display:flex;flex-wrap:wrap;gap:2rem 2.5rem;justify-content:center;margin-top:clamp(2.5rem,5vw,3.5rem)}
+  .night-shots figure{display:flex;flex-direction:column;gap:.8rem;max-width:13rem;margin:0}
+  .night-shots figcaption{font-size:.8rem;line-height:1.5;color:var(--night-ink-2);text-align:center}
 
   /* ── flow (3-up) ────────────────────────────────────────── */
   .flow{
@@ -257,6 +260,7 @@
   .roadmap-step h3{font-size:1.3rem;line-height:1.2}
   .roadmap-step p{margin-top:.7rem;max-width:43rem;color:var(--ink-2)}
   .roadmap-step .roadmap-detail{font-size:.95rem}
+  .roadmap-step.done .roadmap-version{color:var(--good)}
   @media(min-width:40rem){.roadmap-step{grid-template-columns:8rem minmax(0,1fr)}}
 
   /* ── footer ─────────────────────────────────────────────── */
@@ -292,6 +296,8 @@
   .beat-media{position:relative}
   .beat-media .device{max-width:14rem}
   .beat-media .caption{font-size:.78rem;color:var(--ink-3);text-align:center;margin-top:.8rem}
+  .beat-media .pair{display:flex;gap:1rem;justify-content:center;align-items:flex-start}
+  .beat-media .pair .device{flex:1;min-width:0;max-width:11.5rem;margin-inline:0}
   .policy-card{border:1px solid var(--rule);border-radius:1.2rem;background:var(--card);padding:1.5rem;box-shadow:0 18px 45px rgba(0,0,0,.06)}
   .policy-line{display:flex;align-items:center;gap:.65rem;padding:.75rem 0;border-bottom:1px solid var(--rule)}
   .policy-line:last-child{border-bottom:0}
@@ -500,9 +506,9 @@
             <a class="more" href="/custody">How this works</a>
           </div>
           <div class="device" style="margin-top:1.3rem"><div class="island"></div><div class="screen">
-            <img src="screenshots/10-vault-create.png" width="1320" height="2868" loading="lazy" alt="Winnow's vault creation screen, choosing how many keys must sign.">
+            <img src="screenshots/24-group-spend-created.png" width="1206" height="2622" loading="lazy" alt="Winnow's create-spend screen for a 2-of-3 vault: the amount available, a destination address, an amount, and a button to create the spend as a PSBT.">
           </div></div>
-          <p class="caption">Any two of the three can move money. None of them can alone.</p>
+          <p class="caption">Drawing up a payment from a 2-of-3 vault. It leaves as a PSBT for another holder to sign.</p>
         </div>
         <div class="beat-copy">
           <span class="persona" style="--persona:#62896b">Three keys</span>
@@ -516,10 +522,15 @@
 
       <article class="beat">
         <div class="beat-media">
-          <div class="device"><div class="island"></div><div class="screen">
-            <img src="screenshots/14-import-report.png" width="1320" height="2868" loading="lazy" alt="Winnow import report showing a replacement phone's verified wallet data.">
-          </div></div>
-          <p class="caption">A new phone, picking up where the old one left off.</p>
+          <div class="pair">
+            <div class="device"><div class="island"></div><div class="screen">
+              <img src="screenshots/16-export-watch-only.png" width="1320" height="2868" loading="lazy" alt="Winnow's export sheet. The recovery phrase is off by default, so the bundle restores history and the descriptor but not the ability to spend.">
+            </div></div>
+            <div class="device"><div class="island"></div><div class="screen">
+              <img src="screenshots/14-import-report.png" width="1320" height="2868" loading="lazy" alt="Winnow import report showing a replacement phone's verified wallet data.">
+            </div></div>
+          </div>
+          <p class="caption">The export on the old phone, and the import report on the new one.</p>
         </div>
         <div class="beat-copy">
           <span class="persona" style="--persona:#e59b3a">Moving phones</span>
@@ -550,6 +561,20 @@
       The last counter is the point: standard wallet discovery does not send an address to a wallet server.
       <a href="/architecture" style="color:var(--mark)">See the architecture move →</a>
     </p>
+    <div class="night-shots">
+      <figure>
+        <div class="device"><div class="island"></div><div class="screen">
+          <img src="screenshots/04-home-funded.png" width="1320" height="2868" loading="lazy" alt="Winnow's wallet screen after a sync: a confirmed balance, a filter scan that has reached the chain tip, one connected peer, and a list of received payments.">
+        </div></div>
+        <figcaption>Filters checked on the phone; one connected peer, no wallet server.</figcaption>
+      </figure>
+      <figure>
+        <div class="device"><div class="island"></div><div class="screen">
+          <img src="screenshots/12-settings-peers.png" width="1320" height="2868" loading="lazy" alt="Winnow's settings screen: a switch to verify the chain from genesis, and the connected peer with its software version, height and fee floor.">
+        </div></div>
+        <figcaption>Settings shows connected peers and a switch to verify headers from genesis instead of starting at the built-in checkpoint.</figcaption>
+      </figure>
+    </div>
   </div>
 </section>
 
@@ -563,19 +588,26 @@
       <p class="roadmap-status">Available now: <a href="https://testflight.apple.com/join/83djpNE7">early access on TestFlight</a>. These are planned milestones; readiness sets the schedule.</p>
     </div>
     <ol class="roadmap-list" role="list">
+      <li class="roadmap-step done">
+        <div class="roadmap-version">0.5<span>Shipped · early access</span></div>
+        <div>
+          <h3>What runs today</h3>
+          <p>A pure-P2P Taproot wallet that syncs from compact block filters. MuSig2 and 2-of-3 script-path vaults coordinated over PSBT, including the <a href="/core-cosigner">Bitcoin Core cosigner ceremony</a> and the group vault. A history-carrying export that a replacement phone restores from.</p>
+        </div>
+      </li>
       <li class="roadmap-step">
         <div class="roadmap-version">0.7<span>Next milestone</span></div>
         <div>
           <h3>The P2WSH Safe</h3>
-          <p>Add an opt-in Safe that keeps fresh spending public keys hidden while coins are parked. It uses Bitcoin's existing P2WSH rules and ordinary compact filters, with private backups, fresh change, and a complete restore-and-withdraw flow.</p>
-          <p class="roadmap-detail">This protects parked coins against slow quantum key recovery when the keys stay private. Spending reveals the key, so withdrawal still needs to confirm before an attacker can recover it. It is not full post-quantum signing.</p>
+          <p>Add an opt-in Safe that keeps fresh spending public keys hidden while coins are parked. It uses Bitcoin's existing P2WSH rules and ordinary compact filters, with private backups, fresh change, exposure tracking, and a complete restore-and-withdraw flow.</p>
+          <p class="roadmap-detail">This protects parked coins against slow quantum key recovery when the keys stay private. Spending reveals the key, so withdrawal still needs to confirm before an attacker can recover it. It is not full post-quantum signing. <a href="https://github.com/winnowwallet/winnow/issues/6">Safe design and release criteria →</a></p>
         </div>
       </li>
       <li class="roadmap-step">
         <div class="roadmap-version">0.8<span>Planned</span></div>
         <div>
           <h3>Stabilization</h3>
-          <p>Focus on reliable backup and recovery, offline catch-up, withdrawals and fee bumps. Exercise interrupted syncs and chain reorganizations, fix regressions, and measure memory, bandwidth and battery use on supported iPhones.</p>
+          <p>Exercise interrupted syncs, stale backups, withdrawals, fee bumps and chain reorganizations. Fix regressions, and measure bandwidth, memory and battery use on supported iPhones.</p>
         </div>
       </li>
       <li class="roadmap-step">
@@ -596,9 +628,9 @@
         <div class="roadmap-version">2.0<span>Next development phase</span></div>
         <div>
           <h3>Work on the next BIP options</h3>
-          <p>Begin research and prototypes for the next Bitcoin Improvement Proposals, including <a href="https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki">P2MR (BIP360)</a> and an opt-in path from existing Safes. Mainnet use depends on network activation and wallet readiness; merging a proposal alone does not enable it.</p>
-          <p>For full Silent Payments, the plan is compact public tweak data from compatible Bitcoin peers, matched locally on the phone. No dedicated servers or indexers, and no full-chain downloads. This requires new peer support; missing peers or history leave checks resumable, with no server fallback.</p>
-          <p class="roadmap-detail">Silent Payments adds payment privacy. P2MR addresses long-term public-key exposure. Full post-quantum spending remains separate future work.</p>
+          <p>Begin research and prototypes for the next Bitcoin Improvement Proposals, including <a href="https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki">P2MR (BIP360)</a> and an opt-in path from existing Safes. Mainnet use depends on network activation and wallet readiness; merging a proposal alone does not enable it. <a href="https://github.com/winnowwallet/winnow/issues/10">P2MR plan →</a></p>
+          <p>For <a href="https://github.com/winnowwallet/winnow/issues/11">full Silent Payments</a>, the plan is compact public tweak data from compatible Bitcoin peers, matched locally on the phone. No dedicated servers or indexers, and no full-chain downloads. This requires new peer support; missing peers or history leave checks resumable, with no server fallback.</p>
+          <p class="roadmap-detail">Silent Payments adds payment privacy. P2MR addresses long-term public-key exposure. Full post-quantum spending remains separate future work. <a href="https://github.com/winnowwallet/winnow/issues/7">Follow the full roadmap →</a></p>
         </div>
       </li>
     </ol>
