@@ -397,8 +397,9 @@ final class WinnowAppUITests: XCTestCase {
         Screenshots.capture(app, "12-settings-peers", testCase: self)
 
         // Esplora is a selectable external link only, never a wallet backend.
-        let explorerField = app.textFields["esploraURLField"]
-        XCTAssertTrue(scrollUntilExists(app, explorerField, up: true), "no explorer URL field")
+        // Presets show the provider picker; a URL field exists only for Custom.
+        let explorerPicker = app.buttons["explorerProviderPicker"]
+        XCTAssertTrue(scrollUntilExists(app, explorerPicker, up: true), "no explorer provider picker")
 
         // Opening a transaction is the privacy boundary: capture the warning
         // and cancel before iOS contacts the selected endpoint.
@@ -784,7 +785,7 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["exportBundleButton"].exists)
         XCTAssertFalse(scrollUntilExists(app, app.buttons["refreshPeersButton"], maxSwipes: 4),
                        "connected peers shown to a beginner")
-        XCTAssertFalse(app.textFields["esploraURLField"].exists, "explorer setting shown to a beginner")
+        XCTAssertFalse(app.buttons["explorerProviderPicker"].exists, "explorer setting shown to a beginner")
         XCTAssertFalse(app.switches["verifyFromGenesisToggle"].exists, "chain verification shown to a beginner")
         XCTAssertFalse(app.staticTexts["Manual peers"].exists, "manual peers shown with none configured")
         XCTAssertTrue(scrollUntilExists(app, app.buttons["deleteWalletButton"], maxSwipes: 4))
@@ -988,11 +989,18 @@ final class WinnowAppUITests: XCTestCase {
         let vaultRow = app.staticTexts[vaultName].firstMatch
         XCTAssertTrue(scrollUntilExists(app, vaultRow), "group vault row not reachable")
         vaultRow.tap()
-        let fundedRow = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "\(fundingTxid.prefix(16))")).firstMatch
+        // People opens the shared-savings detail, which shows a balance
+        // rather than the raw vault's individual coin rows.
+        let fundedBalance = app.staticTexts["savingsBalance"]
+        XCTAssertTrue(scrollUntilExists(app, fundedBalance), "no shared-savings balance")
         poll(timeout: 300, interval: 5, "group vault funding scanned in") {
+            if fundedBalance.exists, !fundedBalance.label.isEmpty, fundedBalance.label != "0 sats" {
+                return true
+            }
+            app.tabBars.buttons["Wallet"].tap()
             self.nudgeSync(app)
-            return fundedRow.exists
+            app.tabBars.buttons["People"].tap()
+            return false
         }
         XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT…"]))
         app.buttons["Create spend PSBT…"].tap()

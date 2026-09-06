@@ -2,9 +2,6 @@
 build/
 DerivedData/
 WinnowApp.xcodeproj/
-# Winnow is an application, so commit the resolved dependency revision. The
-# manifest's exact version is useful but does not by itself record the audited
-# source commit used by a build.
 *.xcuserstate
 .DS_Store
 

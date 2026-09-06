@@ -25,16 +25,13 @@ struct WinnowApp: App {
             .accessibilityHidden(shouldObscureWallet(for: scenePhase))
             .environment(model)
             .task { await model.boot() }
-            .onAppear {
-                PrivacyShield.shared.setObscured(shouldObscureWallet(for: scenePhase))
-            }
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
                 // A separate high-level UIWindow sits above SwiftUI sheets and
                 // full-screen covers. A cover inside this root hierarchy would
                 // remain behind presented recovery/signing sheets when iOS
                 // records its app-switcher snapshot.
                 PrivacyShield.shared.setObscured(shouldObscureWallet(for: phase))
-                model.scenePhaseChanged(phase)
+                Task { await model.scenePhaseChanged(phase) }
             }
         }
     }

@@ -1,74 +1,20 @@
 name: CI
 
-# Webpage-only changes skip this workflow. They run Site instead:
-# .github/workflows/site.yml — checkout + Cloudflare Pages, no Swift/Xcode.
-#
-# This cannot be a blanket "docs/**". project.yml bundles six files from docs/
-# into the app as resources — site.css and the five design papers — so editing
-# or renaming one of those has to build. They are deliberately absent below.
-# Keep this list in step with the resources block in project.yml.
-#
-# A deny list fails safe: a page added later is not listed, so it runs CI
-# (slow but correct) rather than silently skipping it.
 on:
-  # Manual re-runs after dropped push events (e.g. an Actions outage
-  # swallowing the push that added a job).
-  workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
-    paths-ignore: &site-only
-      - "docs/index.html"
-      - "docs/present.html"
-      - "docs/architecture.html"
-      - "docs/papers.html"
-      - "docs/custody.html"
-      - "docs/evidence.html"
-      - "docs/privacy.html"
-      - "docs/paper.md"
-      - ".github/internal/**"
-      - "docs/screenshots/**"
-      - "docs/og.png"
-      - "docs/present-qr.png"
-      - ".github/workflows/site.yml"
-      - ".github/workflows/appstore-submit.yml"
-      - ".github/agent-handoff.md"
-      - "docs/appstore-whats-new.txt"
-      - "docs/testflight-what-to-test.txt"
-  pull_request:
-    paths-ignore: *site-only
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  story-tests:
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Story package tests and wrapper checks
-        run: |
-          set -o pipefail
-          scripts/ci-story 2>&1 | tee "$RUNNER_TEMP/story-tests.log"
-      - name: Upload story test log
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: story-tests-${{ github.run_id }}
-          path: ${{ runner.temp }}/story-tests.log
-          if-no-files-found: error
-          retention-days: 14
-
-  # The complexity budget from .swiftlint.yml, enforced: SwiftLint exits
-  # nonzero on error-level violations (over 8 decision paths) and green on
-  # warnings — the single 8 slot is the ratchet's remaining headroom. As of
-  # the third pay-down every function in Sources/ is at 7 or under.
   complexity:
     runs-on: macos-latest
     timeout-minutes: 10
@@ -81,11 +27,99 @@ jobs:
           which swiftlint || brew install swiftlint
           swiftlint lint --quiet
 
-  # The package suites moved with the library to winnowwallet/btc-swift;
-  # this repo's CI covers what lives here: the app and its budget.
+  package-tests-intel:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, macos, x86_64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Swift package tests on x86_64
+        run: swift test
+
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Package and story tests
+        run: |
+          scripts/check-dependencies
+          swift test
+          scripts/ci-story
+
+      - name: Release-build production package and reject first-party warnings
+        run: >-
+          scripts/ci-production-warnings
+          "$RUNNER_TEMP/winnow-production-build"
+          "$RUNNER_TEMP/winnow-production-build.log"
+
+      - name: Exercise the release CLI
+        run: |
+          "$RUNNER_TEMP/winnow-production-build/release/btc-swift" musig-xpub \
+            0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798 \
+            02C6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
+          "$RUNNER_TEMP/winnow-production-build/release/btc-swift" derive \
+            "tr([00000000/86'/1'/0']tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp/0/*)" \
+            --network signet --count 3
+
+      - name: Generate deterministic SBOM and build provenance
+        run: |
+          scripts/generate-supply-chain-metadata \
+            --output-dir "$RUNNER_TEMP/supply-chain" \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/btc-swift" \
+            --subject-name btc-swift \
+            --builder-id "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.workflow_sha }}"
+          scripts/generate-supply-chain-metadata \
+            --output-dir "$RUNNER_TEMP/supply-chain-replay" \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/btc-swift" \
+            --subject-name btc-swift \
+            --builder-id "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.workflow_sha }}"
+          diff -ru "$RUNNER_TEMP/supply-chain" "$RUNNER_TEMP/supply-chain-replay"
+
+      - name: Upload build log, SBOM, and provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-supply-chain-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/winnow-production-build.log
+            ${{ runner.temp }}/supply-chain/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The development harness exercises the local Bitcoin modules.
+      # Deliberately a FIXED seed, unlike the sustained lane. This is the
+      # regression evidence: every pull request fuzzes the identical 9,000
+      # cases, so a newly-introduced parser bug shows up as this job turning
+      # red rather than as a corpus that happened to wander somewhere new.
+      # Rotation belongs in the scheduled lane; do not "fix" this one too.
+      - name: Bounded deterministic fuzz smoke
+        run: |
+          mkdir -p "$RUNNER_TEMP/winnow-fuzz-smoke"
+          set -o pipefail
+          swift run --scratch-path "$RUNNER_TEMP/winnow-production-build" \
+            --configuration release WinnowFuzz \
+            --iterations 1000 \
+            --seed 0x57494e4e4f575055 \
+            --max-input 16384 \
+            --artifact-dir "$RUNNER_TEMP/winnow-fuzz-smoke" \
+            2>&1 | tee "$RUNNER_TEMP/winnow-fuzz-smoke/run.log"
+
+      - name: Upload fuzz log and reproducer
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/winnow-fuzz-smoke/
+          if-no-files-found: warn
+          retention-days: 7
+
   app-build:
-    # GitHub-hosted: the self-hosted VMs are CLT-only for now (no Xcode.app).
-    # Move back to [self-hosted, macos, x86_64] once the VMs have full Xcode.
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -96,26 +130,10 @@ jobs:
         run: scripts/install-xcodegen
       - name: Generate Xcode project
         run: xcodegen
-      - name: Build app (iOS Simulator)
-        run: >-
-          xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
-          -destination 'generic/platform=iOS Simulator'
-          -skipPackagePluginValidation -skipMacroValidation build
       - name: App unit tests (required)
-        run: |
-          SIMULATOR_ID="$(xcrun simctl list devices available -j | ruby -rjson -e '
-            json = JSON.parse(STDIN.read)
-            runtimes = json.fetch("devices").keys.grep(/\.iOS-/).sort.reverse
-            device = runtimes.lazy.flat_map { |runtime| json["devices"][runtime] }
-              .find { |entry| entry["isAvailable"] && entry["name"].start_with?("iPhone") }
-            abort "no available iPhone simulator" unless device
-            puts device.fetch("udid")
-          ')"
-          test -n "$SIMULATOR_ID"
-          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-            -only-testing:WinnowAppTests \
-            -skipPackagePluginValidation -skipMacroValidation
+        run: scripts/ci-app-tests "$RUNNER_TEMP/app-tests"
+      - name: Verify resolved dependencies
+        run: scripts/check-dependencies --xcode "$RUNNER_TEMP/app-tests/DerivedData"
       - name: Build and inspect release app
         run: |
           set -o pipefail
@@ -126,8 +144,18 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO build \
             2>&1 | tee "$RUNNER_TEMP/winnow-release-build.log"
-          # The library runs the same gate over its own sources; this covers
-          # what lives here. Reads the build above rather than repeating it.
-          scripts/ci-app-warnings "$RUNNER_TEMP/winnow-release-build.log"
+          scripts/check-dependencies --xcode "$RUNNER_TEMP/winnow-release"
+          scripts/check-swift-warnings "$RUNNER_TEMP/winnow-release-build.log"
           scripts/verify-release-e2e-exclusion \
             "$RUNNER_TEMP/winnow-release/Build/Products/Release-iphonesimulator/WinnowApp.app"
+      - name: Upload app results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-tests-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/app-tests/app-tests.log
+            ${{ runner.temp }}/app-tests/AppTests.xcresult
+            ${{ runner.temp }}/winnow-release-build.log
+          if-no-files-found: error
+          retention-days: 14

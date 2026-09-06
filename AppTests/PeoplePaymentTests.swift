@@ -56,8 +56,8 @@ final class PeoplePaymentTests: XCTestCase {
             return "[\(String(format: "%08x", master.fingerprint))/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
         }
         let descriptor = try Vault.multiADescriptor(threshold: 2, cosigners: keys)
-        try await model.vaultStore.add(name: "Savings with Alice, Bob", descriptor: descriptor, createdAtHeight: 0)
-        await model.refresh()
+        let record = try await model.addVault(name: "Savings with Alice, Bob", descriptor: descriptor)
+        _ = try XCTUnwrap(model.sharedSavings.first, "new savings must be visible without a sync refresh")
 
         // No people yet: the vault still shows, with every signer unaccounted for.
         XCTAssertEqual(model.sharedSavings.count, 1)
@@ -98,6 +98,9 @@ final class PeoplePaymentTests: XCTestCase {
         XCTAssertEqual(model.people.first { $0.id == payOnly.id }?.nextPaymentIndex, 1)
         XCTAssertNotEqual(try model.nextPaymentAddress(for: model.people.first { $0.id == payOnly.id }!).address, address)
         XCTAssertEqual(model.personScripts().values.filter { $0 == "Carol" }.count, Int(1 + Wallet.gapLimit))
+
+        await model.removeVault(id: record.id)
+        XCTAssertTrue(model.sharedSavings.isEmpty, "removed savings must disappear without a sync refresh")
     }
 
     func testAnApprovalRequestForUnknownSavingsIsRefusedByName() async throws {

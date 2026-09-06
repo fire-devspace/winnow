@@ -29,7 +29,7 @@
 </header>
 <main>
   <h1 id="a-2-of-3-with-bitcoin-core">A 2-of-3 with Bitcoin Core</h1>
-  <p><em>A walkthrough of the ceremony the <a href="https://github.com/winnowwallet/btc-swift/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">interop suite</a> runs against a real Bitcoin Core node — every command below is the one the tests run, and both configurations end with a spend confirmed on signet.</em></p>
+  <p><em>A walkthrough of the ceremony the <a href="https://github.com/winnowwallet/winnow/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">interop suite</a> runs against a real Bitcoin Core node — every command below is the one the tests run, and both configurations end with a spend confirmed on signet.</em></p>
 
   <p>Two Winnow installations are not implementation diversity: they share every line of the code being trusted. Giving one or two of a vault's keys to <strong>Bitcoin Core's descriptor wallet</strong> — software written by other people, from the spec — means a signing bug in either implementation is survivable, because the other one has to agree before money moves. The vault is a <code>tr(NUMS, sortedmulti_a(2, &hellip;))</code> descriptor: script-path only, no key-path escape, and the PSBT file is the whole coordinator.</p>
 
@@ -142,7 +142,7 @@ $ bitcoin-cli -signet -rpcwallet=vault-signer-b walletprocesspsbt "$A" true "DEF
   <ul>
   <li><strong>On-chain visibility.</strong> A script-path spend shows its control block, leaf script, and both signatures. That is the honest price of k-of-n; the MuSig2 vaults pay interactivity instead.</li>
   <li><strong>MuSig2 is not included in this claim.</strong> Core contributes a BIP373 nonce but keys it differently than we do, so neither side can consume the other's — recorded in the same suite as unsupported rather than inferred from the script-path result.</li>
-  <li><strong>The evidence.</strong> Both ceremonies on this page run in <a href="https://github.com/winnowwallet/btc-swift/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">VaultInteropDiffTests</a> against a reproducible signet with a real Core node, on every dispatch of the node battery — fresh Core wallets each run, matured coinbase funding, and a confirmation as the last assert.</li>
+  <li><strong>The evidence.</strong> Both ceremonies on this page run in <a href="https://github.com/winnowwallet/winnow/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">VaultInteropDiffTests</a> against a reproducible signet with a real Core node, on every dispatch of the node battery — fresh Core wallets each run, matured coinbase funding, and a confirmation as the last assert.</li>
   </ul>
 </main>
 <footer>

@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export WINNOW_STORY_REPOSITORY="$PWD"
-exec swift run --package-path "$PWD/Tools/Story" --quiet winnow-story "$@"
+exec swift run --package-path "$PWD" --quiet winnow-story "$@"

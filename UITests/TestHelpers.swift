@@ -2,17 +2,17 @@ import Foundation
 import XCTest
 
 /// Screenshot capture: XCTAttachment on the test result AND a PNG copy on the
-/// host. Destination: $WINNOW_SCREENSHOT_DIR, else ~/src/btc-swift/docs/screenshots
+/// host. Destination: $WINNOW_SCREENSHOT_DIR, else ~/src/winnow/docs/screenshots
 /// (on the host — the runner's own home inside the simulator is a container).
 enum Screenshots {
     static let hostHome = ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
 
     static let directory: URL = {
-        if let path = ProcessInfo.processInfo.environment["WINNOW_SCREENSHOT_DIR"], !path.isEmpty {
+        if let path = BitcoinCLI.environmentValue("WINNOW_SCREENSHOT_DIR"), !path.isEmpty {
             return URL(fileURLWithPath: path)
         }
         return URL(fileURLWithPath: hostHome)
-            .appending(path: "src/btc-swift/docs/screenshots", directoryHint: .isDirectory)
+            .appending(path: "src/winnow/docs/screenshots", directoryHint: .isDirectory)
     }()
 
     @MainActor

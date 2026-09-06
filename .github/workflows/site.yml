@@ -1,116 +1,70 @@
-name: Site
+name: Website
 
-# Deploys docs/ to Cloudflare Pages.
-#   push to main  -> production (winnowwallet.com)
-#   pull request  -> a per-PR preview URL, commented on the PR
-#
-# docs/ is hand-written HTML with no build step. Do not add one.
-# Requires repo secrets: CF_API_TOKEN (Account -> Cloudflare Pages: Edit),
-# CF_ACCOUNT_ID. Project name: winnow. Custom domain: winnowwallet.com.
+# docs/ is the single static website source; five papers and site.css are also
+# bundled by project.yml. CI validates those app resources with the same tree.
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["docs/**", ".github/workflows/site.yml"]
+    paths: ['docs/**', 'scripts/check-site', '.github/workflows/site.yml']
   pull_request:
-    paths: ["docs/**", ".github/workflows/site.yml"]
+    paths: ['docs/**', 'scripts/check-site', '.github/workflows/site.yml']
 
 permissions:
   contents: read
 
-# Serialise deploys. Without this, merging several PRs in a row races their
-# deploys and the last one to *finish* wins even if it carries an older tree --
-# which is how production silently lost a paragraph on 2026-08-19.
 concurrency:
   group: site-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # -- production ----------------------------------------------
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          lfs: true
+      - name: Validate local links and LFS images
+        run: scripts/check-site
+
   deploy:
-    # Never on pull_request: this job publishes to the live domain.
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'website' || 'website-preview' }}
+      url: ${{ steps.deploy.outputs.deployment-url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           lfs: true
-      - name: Deploy docs/ to Cloudflare Pages
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          packageManager: npm
-          wranglerVersion: "4.125.0"
-          command: pages deploy docs --project-name=winnow --branch=main
-
-  # -- per-PR preview ------------------------------------------
-  preview:
-    # Fork PRs cannot read CF_API_TOKEN, so skip instead of failing opaquely.
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          lfs: true
-
-      # Any --branch other than main is a Cloudflare *preview* deployment:
-      # it never touches the production domain.
-      - name: Deploy preview to Cloudflare Pages
-        id: cf
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          packageManager: npm
-          wranglerVersion: "4.125.0"
-          command: >-
-            pages deploy docs --project-name=winnow
-            --branch=pr-${{ github.event.pull_request.number }}
-            --commit-dirty=true
-
-      - name: Comment the preview URL (one sticky comment, updated in place)
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      - name: Select production or preview
+        id: target
         env:
-          URL: ${{ steps.cf.outputs.deployment-url }}
-          PR: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            echo 'branch=main' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$PR_NUMBER" ]]; then
+            echo "branch=pr-$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=preview-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy the static website
+        id: deploy
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
-          script: |
-            const marker = '<!-- site-preview -->';
-            // Derive the branch alias from the deployment URL rather than
-            // hardcoding it: the Pages subdomain is winnow-avs, not winnow,
-            // so a guessed "<pr>.winnow.pages.dev" 404s.
-            const url = process.env.URL || '';
-            const apex = (url.match(/^https:\/\/[^.]+\.(.+)$/) || [])[1] || 'winnow-avs.pages.dev';
-            const alias = `https://pr-${process.env.PR}.${apex}`;
-            const pages = ['/', '/custody', '/architecture', '/present', '/paper.md', '/evidence']
-              .map(p => `[\`${p}\`](${alias}${p})`).join(' · ');
-            const body = [
-              marker,
-              `### 🔎 Site preview for \`${context.sha.slice(0,7)}\``,
-              '',
-              `**Stable alias:** ${alias} — always the newest build of this PR.`,
-              `**This build:** ${process.env.URL}`,
-              '',
-              pages,
-              '',
-              '_Preview only; the production domain is untouched until this merges._',
-            ].join('\n');
-            const {owner, repo} = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const {data: comments} = await github.rest.issues.listComments({owner, repo, issue_number});
-            const mine = comments.find(c => c.body && c.body.includes(marker));
-            if (mine) {
-              await github.rest.issues.updateComment({owner, repo, comment_id: mine.id, body});
-            } else {
-              await github.rest.issues.createComment({owner, repo, issue_number, body});
-            }
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          packageManager: npm
+          wranglerVersion: '4.125.0'
+          command: pages deploy docs --project-name=winnow --branch=${{ steps.target.outputs.branch }} --commit-dirty=true
+      - name: Show website URL
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          DEPLOYMENT_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          printf 'Website (%s): [%s](%s)\n' "$DEPLOYMENT_BRANCH" "$DEPLOYMENT_URL" "$DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"

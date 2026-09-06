@@ -1,0 +1,13 @@
+#!/bin/bash
+# Build and test the app and iOS Keychain attributes in one simulator host.
+set -euo pipefail
+APP_RESULTS="${1:?usage: ci-app-tests <fresh-results-directory>}"
+mkdir -p "$APP_RESULTS"
+SIMULATOR_ID=$(scripts/ios-simulator)
+xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
+  -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+  -derivedDataPath "$APP_RESULTS/DerivedData" \
+  -resultBundlePath "$APP_RESULTS/AppTests.xcresult" \
+  -only-testing:WinnowAppTests \
+  -skipPackagePluginValidation -skipMacroValidation \
+  2>&1 | tee "$APP_RESULTS/app-tests.log"

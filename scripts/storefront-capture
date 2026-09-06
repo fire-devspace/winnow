@@ -4,7 +4,7 @@
 # simulator (the 6.9-inch class App Store Connect asks for), then refuses to
 # succeed unless every expected PNG exists at 1320 x 2868.
 #
-# Needs the fixture up (scripts/signet-fixture up in winnowwallet/btc-swift)
+# Needs the fixture up (scripts/signet-fixture up from this checkout)
 # and bitcoin-cli on PATH.
 # Output directory: $WINNOW_SCREENSHOT_DIR, default docs/screenshots.
 set -euo pipefail
@@ -19,7 +19,7 @@ fi
 : "${WINNOW_DATADIR:=$HOME/.bitcoin-mysignet}"
 : "${WINNOW_RPC_PORT:=38400}"
 if ! bitcoin-cli -datadir="$WINNOW_DATADIR" -rpcport="$WINNOW_RPC_PORT" getblockcount >/dev/null 2>&1; then
-  echo "the signet fixture is not answering on RPC port $WINNOW_RPC_PORT; run scripts/signet-fixture up in winnowwallet/btc-swift" >&2
+  echo "the signet fixture is not answering on RPC port $WINNOW_RPC_PORT; run scripts/signet-fixture up from this checkout" >&2
   exit 1
 fi
 

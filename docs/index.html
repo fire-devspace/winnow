@@ -568,7 +568,7 @@
         <div>
           <h3>The P2WSH Safe</h3>
           <p>Add an opt-in Safe that keeps fresh spending public keys hidden while coins are parked. It uses Bitcoin's existing P2WSH rules and ordinary compact filters, with private backups, fresh change, and a complete restore-and-withdraw flow.</p>
-          <p class="roadmap-detail">This protects parked coins against slow quantum key recovery when the keys stay private. Spending reveals the key, so withdrawal still needs to confirm before an attacker can recover it. It is not full post-quantum signing. <a href="https://github.com/posix4e/winnow/issues/187">Safe design and release criteria →</a></p>
+          <p class="roadmap-detail">This protects parked coins against slow quantum key recovery when the keys stay private. Spending reveals the key, so withdrawal still needs to confirm before an attacker can recover it. It is not full post-quantum signing.</p>
         </div>
       </li>
       <li class="roadmap-step">
@@ -596,9 +596,9 @@
         <div class="roadmap-version">2.0<span>Next development phase</span></div>
         <div>
           <h3>Work on the next BIP options</h3>
-          <p>Begin research and prototypes for the next Bitcoin Improvement Proposals, including <a href="https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki">P2MR (BIP360)</a> and an opt-in path from existing Safes. Mainnet use depends on network activation and wallet readiness; merging a proposal alone does not enable it. <a href="https://github.com/posix4e/winnow/issues/123">P2MR plan →</a></p>
-          <p>For <a href="https://github.com/posix4e/winnow/issues/188">full Silent Payments</a>, the plan is compact public tweak data from compatible Bitcoin peers, matched locally on the phone. No dedicated servers or indexers, and no full-chain downloads. This requires new peer support; missing peers or history leave checks resumable, with no server fallback.</p>
-          <p class="roadmap-detail">Silent Payments adds payment privacy. P2MR addresses long-term public-key exposure. Full post-quantum spending remains separate future work. <a href="https://github.com/posix4e/winnow/issues/186">Follow the full roadmap →</a></p>
+          <p>Begin research and prototypes for the next Bitcoin Improvement Proposals, including <a href="https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki">P2MR (BIP360)</a> and an opt-in path from existing Safes. Mainnet use depends on network activation and wallet readiness; merging a proposal alone does not enable it.</p>
+          <p>For full Silent Payments, the plan is compact public tweak data from compatible Bitcoin peers, matched locally on the phone. No dedicated servers or indexers, and no full-chain downloads. This requires new peer support; missing peers or history leave checks resumable, with no server fallback.</p>
+          <p class="roadmap-detail">Silent Payments adds payment privacy. P2MR addresses long-term public-key exposure. Full post-quantum spending remains separate future work.</p>
         </div>
       </li>
     </ol>

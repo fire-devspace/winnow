@@ -3,22 +3,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 STORY_APP_ROOT="$PWD"
-python3 - <<'PY'
-import json, pathlib, re
-root = pathlib.Path.cwd()
-app = re.search(r'btc-swift:\s*\n\s*url: [^\n]+\n\s*exactVersion: ([^\s]+)',
-                (root / 'project.yml').read_text())
-story = re.search(r'btc-swift", exact: "([^"]+)"',
-                  (root / 'Tools/Story/Package.swift').read_text())
-if not app or not story or app[1] != story[1]:
-    raise SystemExit('story and app must pin the same exact btc-swift release')
-resolved = json.loads((root / 'Tools/Story/Package.resolved').read_text())
-pin = next(pin for pin in resolved['pins'] if pin['identity'] == 'btc-swift')
-if pin['state'].get('version') != app[1]:
-    raise SystemExit('story lockfile must resolve the app library version')
-print('App and story library version:', app[1])
-PY
-swift test --package-path Tools/Story
 STORY_CHECK_DIR="$(mktemp -d)"
 trap 'rm -rf "$STORY_CHECK_DIR"' EXIT
 cd "$STORY_CHECK_DIR"

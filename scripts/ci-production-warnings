@@ -1,0 +1,23 @@
+#!/bin/bash
+# Build only production SwiftPM products and reject warnings emitted by this
+# repository's Sources/. Dependency and test warnings remain visible in the
+# log, but do not make this focused gate noisy.
+#
+# Locally, pass a fresh scratch path or delete the default one before trusting
+# a pass. The build is incremental: a file that is not recompiled emits no
+# warning, so a second run after a failing first run reports clean without
+# anything having been fixed. CI is safe from this because RUNNER_TEMP starts
+# empty; a workstation is not.
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel)
+SCRATCH_PATH="${1:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/winnow-production-build}"
+LOG_PATH="${2:-$SCRATCH_PATH/production-build.log}"
+mkdir -p "$(dirname "$LOG_PATH")"
+
+# These are production code targets. Development drivers stay outside this gate.
+swift build --configuration release --product btc-swift --scratch-path "$SCRATCH_PATH" 2>&1 | tee "$LOG_PATH"
+swift build --configuration release --product WinnowSoak --scratch-path "$SCRATCH_PATH" 2>&1 | tee -a "$LOG_PATH"
+git -C "$ROOT" diff --exit-code -- Package.resolved
+
+"$ROOT/scripts/check-swift-warnings" "$LOG_PATH"

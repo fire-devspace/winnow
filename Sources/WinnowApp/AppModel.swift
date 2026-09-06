@@ -230,11 +230,14 @@ final class AppModel {
     private(set) var stage: Stage = .loading
     private(set) var status = Status()
     private(set) var syncPhase: SyncPhase = .idle
-    private(set) var vaults: [VaultRecord] = []
-    /// The address book for this network, and the vaults read as savings
-    /// shared with the people in it. Both are recomputed by `refresh()` and
-    /// after every people mutation.
-    private(set) var people: [PersonRecord] = []
+    // Keep the derived savings cache current at each input, including local
+    // mutations that do not trigger a network refresh.
+    private(set) var vaults: [VaultRecord] = [] {
+        didSet { recomputeSharedSavings() }
+    }
+    private(set) var people: [PersonRecord] = [] {
+        didSet { recomputeSharedSavings() }
+    }
     private(set) var sharedSavings: [SharedSavings] = []
     /// Set when `people.json` could not be read. Shown on the People tab;
     /// the store refuses mutations meanwhile. Never blocks boot.
@@ -247,7 +250,9 @@ final class AppModel {
     /// Copies of the wallet's id/descriptor for synchronous access (the Wallet
     /// actor's members need an await across the module boundary).
     private(set) var walletID: String?
-    private var walletDescriptor: Descriptor?
+    private var walletDescriptor: Descriptor? {
+        didSet { recomputeSharedSavings() }
+    }
 
     /// Secrets (the BIP39 mnemonic) live in the Keychain, this device only.
     /// E2E test mode (E2EMode) uses a separate Keychain service so test runs
@@ -262,7 +267,9 @@ final class AppModel {
     let e2e: E2EMode?
 
     // Settings (UserDefaults-persisted; see the mutating methods below).
-    private(set) var network: BitcoinNetwork
+    private(set) var network: BitcoinNetwork {
+        didSet { recomputeSharedSavings() }
+    }
     private(set) var manualPeers: [String] // "host:port"
     private(set) var esploraURLString: String
     private(set) var explorerProvider: ExplorerProvider
@@ -317,9 +324,9 @@ final class AppModel {
         static func backupPending(_ walletID: String) -> String { "backupPending.\(walletID)" }
     }
 
-    init(deviceAuthenticator: any DeviceAuthenticating = LocalDeviceAuthenticator()) {
+    init(deviceAuthenticator: any DeviceAuthenticating = LocalDeviceAuthenticator(),
+         e2e: E2EMode? = E2EMode.current) {
         self.deviceAuthenticator = deviceAuthenticator
-        let e2e = E2EMode.current
         self.e2e = e2e
         e2e?.wipeIfRequested()
         keyStore = e2e.map { KeychainStore(service: $0.keychainService) } ?? KeychainStore()
@@ -383,7 +390,6 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            recomputeSharedSavings()
             // A wallet whose backup was never confirmed re-enters onboarding:
             // the backup sheet resumes from the Keychain (#5).
             let backupPending = hasPendingBackup
@@ -402,6 +408,7 @@ final class AppModel {
             "walletID": walletID ?? "",
         ])
         await refresh()
+        if isActive { await activate() }
     }
 
     static func openPersistedWallet(at url: URL,
@@ -419,28 +426,29 @@ final class AppModel {
         guard case .storageDamaged = stage else { return }
         stage = .loading
         await boot()
-        if isActive { await activate() }
     }
 
     /// Sync-while-active: the stack runs only while the scene is foreground.
-    func scenePhaseChanged(_ phase: ScenePhase) {
+    func scenePhaseChanged(_ phase: ScenePhase) async {
         switch phase {
         case .active:
             isActive = true
-            Task { await activate() }
+            await activate()
         case .background:
             isActive = false
             syncTask?.cancel()
             syncTask = nil
             phaseTask?.cancel()
             phaseTask = nil
-            Task { await stack?.pool.stop() }
+            await stack?.pool.stop()
         default:
             break // .inactive: still foreground — keep syncing
         }
     }
 
     private func activate() async {
+        // Boot must attach the saved wallet before a stack chooses its filters.
+        guard stage != .loading else { return }
         if case .storageDamaged = stage { return }
         await buildStackIfNeeded()
         startPhasePolling()
@@ -875,7 +883,6 @@ final class AppModel {
         status = snapshot
         vaults = await vaultStore.all
         people = await peopleStore.all
-        recomputeSharedSavings()
         journalSnapshotIfChanged()
     }
 
@@ -1067,7 +1074,6 @@ final class AppModel {
         self.wallet = wallet
         walletID = await wallet.id
         walletDescriptor = await wallet.descriptor
-        recomputeSharedSavings()
         if let existingStack = stack {
             // The old stack is unusable after shutdown. Clear the property
             // before any throwing rebuild step so a failure cannot strand a
@@ -1661,14 +1667,13 @@ final class AppModel {
         }
         people = await peopleStore.all
         vaults = await vaultStore.all
-        recomputeSharedSavings()
     }
 
     /// Pairs every script-path vault with the people whose signer keys it
     /// carries. Order-independent (`sortedmulti_a`), self-healing for vaults
     /// made from pasted keys, and impossible to leave dangling when a person
     /// is removed.
-    func recomputeSharedSavings() {
+    private func recomputeSharedSavings() {
         var identities: [(person: PersonRecord, key: Data)] = []
         for person in people {
             guard let signerKey = person.signerKey,
@@ -1729,7 +1734,6 @@ final class AppModel {
     func addPerson(name: String, payTo: PersonPayTo?, signerKey: String?) async throws -> PersonRecord {
         let record = try await peopleStore.add(name: name, payTo: payTo, signerKey: signerKey)
         people = await peopleStore.all
-        recomputeSharedSavings()
         e2e?.journal("person.added", fields: [
             "name": record.name,
             "payToKind": record.payTo.map { $0.derivesFreshAddresses ? "descriptor" : "address" } ?? "none",
@@ -1741,7 +1745,6 @@ final class AppModel {
     func removePerson(id: String) async throws {
         try await peopleStore.remove(id: id)
         people = await peopleStore.all
-        recomputeSharedSavings()
     }
 
     /// The address the next payment to `person` derives, peeked without
@@ -2066,7 +2069,6 @@ final class AppModel {
             self.wallet = wallet
             walletID = await wallet.id
             walletDescriptor = await wallet.descriptor
-            recomputeSharedSavings()
             // A wallet whose backup was never confirmed re-enters onboarding:
             // the backup sheet resumes from the Keychain (#5).
             stage = hasPendingBackup ? .onboarding : .ready

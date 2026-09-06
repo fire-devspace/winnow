@@ -32,39 +32,50 @@ The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. H
 
 ## Layout
 
-The Bitcoin implementation lives in its own repository,
-[btc-swift](https://github.com/winnowwallet/btc-swift) — keys to broadcast
-with one dependency, plus the differential battery against
-Bitcoin Core, the soak driver, and a scriptable CLI. This repository is the
-wallet that wears it: the app pins the exact
-[btc-swift 0.1.0 release](https://github.com/winnowwallet/btc-swift/releases/tag/v0.1.0)
-and bumps library versions deliberately. Library and app releases are versioned independently.
+The app, Bitcoin implementation, CLI, fuzz harness, story tooling and website
+live in this repository. The app and all development tools use one root
+Swift package and dependency lockfile. There is one release version and one source revision.
 
-Architecture invariant: **all logic lives in the library, where it is
-tested; the app target is a thin shell.** No wallet, protocol, or crypto
-logic may move into `WinnowApp` — if the UI needs something, expose it from
-btc-swift.
+Wallet, protocol and cryptographic logic stays in the library modules; the
+SwiftUI app remains a thin shell. The root `Winnow` package groups `BitcoinCore`, `BitcoinP2P`, `WalletCore`
+and `BlockchainBackend` for local use, plus the `btc-swift` development CLI
+and `WinnowSoak`. The explorer backend is never instantiated by the wallet.
 
-- `Sources/WinnowApp` — the iOS app (SwiftUI, iOS 17+)
-- `AppTests/` — app state, privacy, journal redaction, and integration suites
-- `UITests/` — the simulator e2e against the signet fixture node
-- `docs/` — public design papers, the security register, and the site
-- `scripts/` — App Store Connect tooling and the TestFlight pipeline
+| Path | Purpose |
+| --- | --- |
+| `Sources/WinnowApp` | iOS app (SwiftUI, iOS 17+) |
+| Other `Sources/` targets | Bitcoin libraries, offline CLI and soak driver |
+| `Tests/` | BIP vectors, unit, loopback and Core differential tests |
+| `Tests/NodeSupport` | Miner and RPC helpers shared by differential and UI tests |
+| `AppTests/` | App state, privacy, journal redaction and iOS Keychain attributes |
+| `UITests/` | Simulator journeys and storefront capture |
+| `Tools/Fuzz/`, `Tools/Story/` | Local development tools, outside the shipping app |
+| `docs/` | Website, design papers and security evidence |
+| `scripts/`, `infra/` | Build, release, reporting and dedicated test fixtures |
 
 ## Build & test
 
 ```sh
-scripts/install-xcodegen
+swift test
+swift run btc-swift decode-tx <hex>
 xcodegen
-open WinnowApp.xcodeproj
+scripts/ci-app-tests /tmp/winnow-app-tests
+scripts/ci-story
 ```
 
-Build the `WinnowApp` scheme and run `WinnowAppTests` on an available iPhone simulator. Library builds and unit/protocol/vector tests belong in [winnowwallet/btc-swift](https://github.com/winnowwallet/btc-swift); this app repository has no root Swift package. The app's exact library release version is in [`project.yml`](project.yml).
+Use XcodeGen 2.46.0. `scripts/install-xcodegen` downloads and verifies that
+version; locally it prints the executable path to use. The generated Xcode
+project is ignored. Run app tests with a fresh results directory.
+`scripts/check-dependencies --xcode /path/to/DerivedData` verifies that Xcode uses the root
+package and its committed third-party dependency revision.
 
-The library also owns the three Keychain attribute tests, hosted in its own
-minimal iOS test app, and publishes categorized LOC reports. App CI tests the
-consumer integration; the manual node workflow runs only `WinnowAppUITests`.
-App Store releases run the app unit suite once before signing and delivery.
+[CI and release operations](.github/internal/ci-release.md) describes the shared
+validation gates, node fixture, TestFlight recovery and website deployment.
+The [LOC workflow](https://github.com/winnowwallet/winnow/actions/workflows/loc.yml) publishes JSON, CSV and
+Markdown reports for every PR, main push and manual run, retained for 90 days
+subject to organization limits. Its summary separates app/library/CLI source,
+tests, webpages, tooling and other text; generated peers, binaries and LFS
+pointers are excluded. See [the counting policy](scripts/report-loc.py).
 
 Mainnet is the default network, and the app starts in beginner mode: Wallet,
 Send, People, Settings. Turn on Advanced mode in Settings for the test
@@ -78,7 +89,7 @@ filter-serving node (Settings → Manual peers); the node needs
 
 The resumable public-signet acceptance runner lives in [Tools/Story](Tools/Story/README.md).
 Use `scripts/winnow-story` from this checkout. Its offline tests run in app CI
-against the same published library version as the app; the complete manual
+against the same local library as the app; the complete manual
 journey is documented in the [story runbook](.github/internal/story-run.md).
 
 Screenshot PNGs in `docs/screenshots/` are stored in Git LFS. After cloning,
@@ -89,8 +100,8 @@ git lfs install --local
 git lfs pull
 ```
 
-The site and node-test workflows fetch LFS objects during checkout. Self-hosted
-node-test runners need Git LFS installed. Capture tools continue writing PNGs
+The website workflow fetches LFS objects before publishing. The node workflow
+writes new screenshots into its run artifacts. Capture tools continue writing PNGs
 to the same paths; Git stores pointers when the files are added.
 
 ## License
