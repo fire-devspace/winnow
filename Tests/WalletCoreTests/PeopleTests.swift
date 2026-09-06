@@ -149,7 +149,7 @@ struct PeopleTests {
             _ = try PersonPaste.parse("[\(fingerprint)/86'/1'/0']\(account.serialized(network: .testnet))/<0;1>/*",
                                       network: .signet)
         }
-        #expect(throws: AddressError.self) {
+        #expect(throws: PersonPasteError.unrecognised) {
             _ = try PersonPaste.parse("sp1qqexample", network: .signet)
         }
     }

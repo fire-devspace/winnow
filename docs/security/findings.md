@@ -1,5 +1,9 @@
 # Security findings register
 
+This is an August 2026 audit record. References to Silent Payments and its tweak
+index describe the implementation reviewed then; those features have since been
+removed. Historical findings and their evidence are retained below.
+
 This public register contains fixed findings and sanitized open risks. Details
 that would enable exploitation before a fix belong in a private GitHub security
 advisory, not here.

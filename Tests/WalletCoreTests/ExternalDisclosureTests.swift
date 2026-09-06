@@ -12,11 +12,6 @@ import Testing
 /// The property worth pinning is that its API is address-based — which is
 /// exactly why it stays unused. A client the wallet called automatically would
 /// be a hidden wallet-read path wearing a convenience name.
-///
-/// The tweak-index tests that used to live here left with silent payments
-/// (they moved to the `alpha` branch). They asserted the index was told a
-/// block height and never an address; if silent payments return to `main`,
-/// that property returns with them.
 // Serialized: the capture below is process-wide static state, so parallel
 // tests would interleave each other's requests.
 @Suite("External disclosure", .serialized)

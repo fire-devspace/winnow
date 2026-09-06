@@ -167,13 +167,6 @@ public actor FilterSync {
         progress.filterHeaders[String(height)].flatMap { Data(hex: $0) }
     }
 
-    /// `extraScripts` supplies per-height additions to the watch list, for
-    /// payment types whose output scripts are not fixed by the descriptor and
-    /// so cannot be enumerated up front. It is
-    /// deliberately fail-closed: a throw aborts the sync before the frontier
-    /// advances. Continuing a batch without its extra scripts would let a
-    /// forward-only scan skip those payments permanently and invisibly — an
-    /// index outage must surface as a sync error instead.
     /// `onReorg` is called with the fork height when the header sync replaced a
     /// branch, and is awaited **before** any filter work resumes.
     ///
@@ -183,7 +176,6 @@ public actor FilterSync {
     /// aborts the sync rather than proceeding with state that is known stale
     /// (#127).
     public func sync(watchScripts: [Data],
-                     extraScripts: (@Sendable (ClosedRange<UInt32>) async throws -> [UInt32: [Data]])? = nil,
                      onReorg: (@Sendable (UInt32) async throws -> Void)? = nil,
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         var peers = await pool.connectedPeers()
@@ -244,10 +236,9 @@ public actor FilterSync {
                 batchStart: batchStart, batchStop: batchStop,
                 stopHash: stopHash, peers: peers,
                 startingFrom: progress.filterHeaders)
-            let extras = try await extraScripts?(batchStart ... batchStop) ?? [:]
             try await scanFilters(batchStart: batchStart, batchStop: batchStop,
                                   peer: peers[0], watchScripts: watchScripts,
-                                  extraScripts: extras, filterHeaders: proposedHeaders,
+                                  filterHeaders: proposedHeaders,
                                   onMatch: onMatch)
             var candidate = progress
             candidate.filterHeaders = proposedHeaders
@@ -514,7 +505,7 @@ public actor FilterSync {
 
     /// Fetches, verifies and matches all filters in [batchStart, batchStop].
     private func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
-                             watchScripts: [Data], extraScripts: [UInt32: [Data]] = [:],
+                             watchScripts: [Data],
                              filterHeaders: [String: String],
                              onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         guard let stopHash = await chain.blockHash(at: batchStop) else {
@@ -534,13 +525,12 @@ public actor FilterSync {
         for response in responses {
             let (height, message) = try verifiedFilter(from: response, heightByHash: heightByHash,
                                                        seen: &seen, filterHeaders: filterHeaders)
-            let scripts = watchScripts + (extraScripts[height] ?? [])
-            guard !scripts.isEmpty else { continue }
+            guard !watchScripts.isEmpty else { continue }
             let parsed = try message.parsedFilter()
             let filter = try GCSFilter(p: GCSFilter.defaultP, m: GCSFilter.defaultM,
                                        key: Data(message.blockHash.prefix(16)),
                                        n: parsed.n, encoded: parsed.encoded)
-            guard filter.containsAny(scripts) else { continue }
+            guard filter.containsAny(watchScripts) else { continue }
             try await deliverMatchedBlock(from: peer, height: height,
                                           blockHash: message.blockHash, onMatch: onMatch)
         }

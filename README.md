@@ -8,7 +8,6 @@ A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one depend
 - **Taproot today.** Current receiving uses P2TR (BIP86), with no ECDSA signing path. The planned 0.7 P2WSH Safe is a separate, opt-in addition.
 - **People and shared savings.** An address book of people, each with a public account key so every payment to them gets a fresh address, and savings held together as a Taproot k-of-n that no single key can spend: pick co-owners, choose how many must approve, ask for and give approvals as text. Cards carry public keys only.
 - **Two modern multisig flavors.** MuSig2 (BIP327) n-of-n vaults and script-path k-of-n (`multi_a`, BIP387/388), coordinated over PSBTv2 (BIP370/371/373). Shared savings are the k-of-n form in plain words; Advanced mode shows the descriptors and PSBTs.
-- **Silent Payments are planned.** Full BIP352 receiving is not in this release. The selected approach uses public tweak data served by compatible Bitcoin peers and matched locally, with no dedicated server, indexer fallback or full-chain download on the phone. Implementing and deploying that peer capability is part of the future work.
 - **One runtime dependency:** [`swift-secp256k1`](https://github.com/21-DOT-DEV/swift-secp256k1) (Bitcoin Core's libsecp256k1), pinned.
 - **Warned explorer links** — choose mempool.space or a custom Esplora website; Winnow opens it only after a tap and privacy warning, never as a wallet backend.
 
@@ -22,13 +21,11 @@ These are planned milestones, not shipped features or promised dates. Release re
 | **0.8** | **Stabilization** | Exercise interrupted sync, stale backups, withdrawals, fee bumps and reorgs; fix regressions and measure bandwidth, memory and battery use on supported iPhones. |
 | **0.9** | **Official beta** | Open a defined beta with documented recovery steps and known limitations, then validate everyday use through broader testing and feedback. |
 | **1.0** | **Release after security review** | Address release-blocking findings, recheck fixes, and publish the review scope, results and remaining limitations. Security review determines readiness. |
-| **2.0** | **Work on the next BIP options** | Begin research and prototypes for P2MR migration and the peer capabilities needed for full Silent Payments. Production use depends on the relevant activation, implementation and deployment work. |
+| **2.0** | **Work on the next BIP options** | Begin research and prototypes for P2MR migration. Production use depends on the relevant activation, implementation and deployment work. |
 
-The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. Hiding a fresh public key protects parked coins against slow quantum key recovery while that key stays private. Withdrawal reveals the key and still needs to confirm before an attacker can recover it; this is not full post-quantum signing. Discovery reuses ordinary BIP157/158 filters and does not depend on Silent Payments.
+The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. Hiding a fresh public key protects parked coins against slow quantum key recovery while that key stays private. Withdrawal reveals the key and still needs to confirm before an attacker can recover it; this is not full post-quantum signing. Discovery reuses ordinary BIP157/158 filters.
 
 **P2MR ([BIP360](https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki))** is a draft consensus proposal. Mainnet use requires activation and wallet readiness; existing P2WSH Safes would migrate through an explicit, opt-in transaction. Merging a proposal does not activate it or upgrade existing outputs.
-
-**Full Silent Payments ([BIP352](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki))** is a payment-privacy workstream, separate from PQ authorization. Basic compact filters cannot supply the input-derived tweak points needed to generate candidate scripts. Peers must provide those records; the phone processes bounded windows and downloads matching blocks, including false positives. Missing peers or historical ranges leave incoming-payment checks incomplete and resumable, with no server or full-chain fallback. Ordinary wallet/Safe sync continues independently.
 
 ## Layout
 

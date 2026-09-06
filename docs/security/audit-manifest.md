@@ -1,5 +1,9 @@
 # Winnow security audit manifest
 
+This is an August 2026 audit record. References to Silent Payments and its tweak
+index describe the implementation reviewed then; those features have since been
+removed. Historical findings and their evidence are retained below.
+
 Status: **Phase 0 baseline; not a mainnet approval**
 
 This file freezes the source and evidence boundary for the

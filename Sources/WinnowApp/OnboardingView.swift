@@ -309,7 +309,7 @@ private struct ImportBundleView: View {
                 } header: {
                     Text("Import bundle (JSON)")
                 } footer: {
-                    Text("Exported by Winnow (Settings → Export wallet bundle) or by previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.\n\nSilent-payment receipts will not appear. Their output scripts cannot be derived from a recovery phrase alone, so this build cannot find them and will show a balance without them. Those coins are still on the chain and still yours — open the wallet in an alpha build to see them.")
+                    Text("Exported by Winnow (Settings → Export wallet bundle) or by previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.\n\nOnly coins derived from the wallet descriptor can be restored here. Keep your original wallet and backup for any unsupported coin types.")
                 }
                 if busy {
                     Section { ProgressView("Importing and verifying…") }

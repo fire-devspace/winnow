@@ -1,5 +1,9 @@
 # Security invariant and evidence matrix
 
+This is an August 2026 audit record. References to Silent Payments and its tweak
+index describe the implementation reviewed then; those features have since been
+removed. Historical findings and their evidence are retained below.
+
 Baseline: `98d90563a2c20b7137c708cb121e72b9b34552a3`
 
 

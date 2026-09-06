@@ -371,20 +371,13 @@ Public automation excludes mnemonics, entropy, private keys, secret nonces, and
 unredacted recovery screens. Any export must be protected according to the
 authority it carries.
 
-## 9. Silent Payments: on the alpha branch, not in this build
+## 9. Recovery compatibility
 
-BIP352 Silent Payments give a recipient a reusable code without publishing
-that code or an obvious address-reuse pattern on chain. Sending is
-self-contained. Receiving is not: finding payments to a silent code requires
-per-block tweak data, and no public infrastructure serves it — a compact-filter
-peer does not. That dependency, not the cryptography, is why the feature is not
-in this build.
-
-The implementation lives on the `alpha` branch. A wallet that has received a
-silent payment can only be opened by a build from there, because the coin
-carries a per-output tweak that is required to derive its signing key; a build
-of this branch refuses such a wallet rather than showing a balance it cannot
-spend.
+Winnow restores descriptor-derived coins. Wallet files and import bundles
+requiring unsupported legacy signing data are refused instead of silently
+discarding that data. A recovery phrase alone cannot restore unsupported coin
+types here; keep the original wallet and backup and use compatible wallet
+software for those coins.
 
 ## 10. Reproducible evidence
 
@@ -425,9 +418,6 @@ that recovery words never appear in a video frame.
   heirs, resolve disputes, enforce loan repayment, or replace legal advice.
 - **Not private-miner submission today.** P2P is the shipping broadcast path;
   selected-miner and export-only routes are planned.
-- **No Silent Payment support in this build.** Both send and receive live on
-  the `alpha` branch; receiving additionally depends on tweak-data
-  infrastructure that does not exist publicly.
 - **Not mainnet release evidence.** Signet integration does not prove readiness
   to hold valuable mainnet funds.
 
@@ -462,7 +452,6 @@ flows actually performed.
 - [BIP327 — MuSig2](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
 - [BIP341 — Taproot](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki)
 - [BIP342 — Validation of Taproot Scripts](https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki)
-- [BIP352 — Silent Payments](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki)
 - [BIP370 — PSBT Version 2](https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki)
 - [Winnow source and test suite](https://github.com/winnowwallet/winnow)
 

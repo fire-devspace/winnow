@@ -81,9 +81,7 @@ struct VaultDetailView: View {
 }
 
 /// Creator role: destination + amount + feerate → the spend PSBT (Base64),
-/// shared with the cosigners. Silent-payment destinations are not offered
-/// from vaults — BIP352 output derivation needs the input keys aggregated,
-/// which a k-of-n/n-of-n spend does not have at build time.
+/// shared with the cosigners.
 struct VaultSpendView: View {
     let recordID: String
     @Environment(AppModel.self) private var model

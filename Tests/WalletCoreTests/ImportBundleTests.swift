@@ -260,9 +260,6 @@ struct ImportBundleTests {
                     == (try await original.address(chain: .receive, index: 0)))
     }
 
-    /// A source wallet with one BIP352 UTXO whose script is exactly
-    /// (b_spend + tweak)·G. The state-file hop uses the same persisted shape
-    /// the live silent-payment scanner writes.
     @Test("export with the mnemonic refuses an xprv-only wallet")
     func exportXprvRefusesSeed() async throws {
         let keyStore = InMemoryKeyStore()

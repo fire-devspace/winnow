@@ -121,7 +121,7 @@ extension PersonPayTo {
     }
 
     /// Validates a plain address on `network`. `AddressError` carries its own
-    /// wording (wrong network, silent-payment codes).
+    /// wording (for example, a wrong-network address).
     public static func address(_ text: String, network: BitcoinNetwork) throws -> PersonPayTo {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         _ = try AddressDecoder.scriptPubKey(for: trimmed, network: network)
@@ -404,17 +404,16 @@ public enum PersonPaste {
         if let payTo = try? PersonPayTo.address(trimmed, network: network) {
             return PersonImport(name: nil, payTo: payTo, signerKey: nil, source: .address)
         }
-        if let silentPayment = addressError(for: trimmed, network: network) {
-            throw silentPayment
+        if let error = addressError(for: trimmed, network: network) {
+            throw error
         }
         return try parseKeyExpression(trimmed, network: network)
     }
 
-    /// A silent-payment code or a wrong-network address deserves its own
-    /// message rather than "unrecognised".
+    /// Preserve address-specific errors such as a wrong network.
     private static func addressError(for text: String, network: BitcoinNetwork) -> AddressError? {
         let lowered = text.lowercased()
-        let looksLikeAddress = ["bc1", "tb1", "sp1", "tsp1", "1", "3", "m", "n", "2"]
+        let looksLikeAddress = ["bc1", "tb1", "1", "3", "m", "n", "2"]
             .contains { lowered.hasPrefix($0) } && !lowered.contains("pub")
         guard looksLikeAddress else { return nil }
         do {

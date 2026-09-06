@@ -37,8 +37,7 @@ private final class EffectCollector: @unchecked Sendable {
 ///       "nextReceiveIndex": 4,                // optional; next unused BIP86 receive index
 ///       "nextChangeIndex": 2,                 // optional; next unused BIP86 change index
 ///       "utxos": [{ "txid": "<display hex>", "vout": 0, "amount": 50000,
-///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000,
-///                   "silentPaymentTweak": "<refused: see below>" }],
+///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000 }],
 ///       "transactions": [{ "txid": "<display hex>", "height": 149000,
 ///                          "received": 50000, "spent": 0, "fee": 250,
 ///                          "replacedBy": "<replacement display hex>" }]
@@ -51,12 +50,9 @@ private final class EffectCollector: @unchecked Sendable {
 /// and are not in this schema — a restored wallet falls back to presets
 /// until it observes new sends.
 ///
-/// `silentPaymentTweak` is never written by this build and a bundle carrying
-/// one is **refused**, not imported: silent payments live on the `alpha`
-/// branch, and the tweak is required to sign for that coin. Importing without
-/// it would restore a coin that cannot be spent and does not say so. The field
-/// is still read for the sole purpose of noticing it. Version 1 remains
-/// readable for ordinary descriptor UTXOs; writers always emit version 2.
+/// Legacy `silentPaymentTweak` signing data is read only to refuse unsupported
+/// coins safely. Version 1 remains readable for ordinary descriptor UTXOs;
+/// writers always emit version 2.
 /// `isCoinbase` is emitted only when true so maturity survives export/import;
 /// older bundles omit it and decode it as false.
 ///
@@ -75,22 +71,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         public var chain: Int
         public var index: UInt32
         public var height: UInt32
-        /// Present only in a bundle written by an `alpha` build. Decoded so
-        /// the import can refuse it — never set by this build, which is why
-        /// it is not an initializer parameter.
-        ///
-        /// The synthesized `Codable` here is load-bearing: any future explicit
-        /// `CodingKeys` or `init(from:)` must keep this key decodable under
-        /// exactly this name, or the refusal silently stops firing. The test
-        /// "an import bundle claiming a silent-payment UTXO is refused" is what
-        /// proves it still does — it writes the literal JSON key, so omitting,
-        /// skipping or renaming the property all fail it loudly. Deleting the
-        /// property instead breaks the build, which is the better outcome.
-        ///
-        /// Note that a decoded bundle can still *hold* the dangerous value in
-        /// memory. Every consumer today reaches UTXOs through `claimedUTXOs()`,
-        /// which is where the refusal lives; a future consumer reading `utxos`
-        /// directly would see the raw claim unguarded.
+        /// Legacy data, decoded only so `claimedUTXOs()` can refuse it. Keep
+        /// this exact JSON key: silently dropping it would lose signing data.
         public private(set) var silentPaymentTweak: String?
         /// True only for an output created by a coinbase transaction. Optional
         /// so older bundles remain readable; absence means false.
@@ -310,11 +292,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         return claimed
     }
 
-    /// One claimed coin, parsed and shape-checked. A silent-payment tweak is
-    /// refused rather than ignored, for the same reason the wallet state
-    /// decoder refuses one: the tweak is required to sign for that coin, and
-    /// this build has no BIP352 code — importing it without the tweak would
-    /// restore a coin that cannot be spent and does not say so.
+    /// Parse and shape-check a claimed coin, refusing unsupported signing data.
     private static func parsedClaimedUTXO(_ utxo: UTXO) throws -> WalletUTXO {
         guard let txid = Data(hex: utxo.txid), txid.count == 32 else {
             throw WalletError.invalidBundle("bad txid \(utxo.txid)")
@@ -326,7 +304,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             throw WalletError.invalidBundle("bad chain \(utxo.chain)")
         }
         if utxo.silentPaymentTweak != nil {
-            throw WalletError.silentPaymentWalletNeedsAlphaBuild
+            throw WalletError.unsupportedWalletData
         }
         return WalletUTXO(txid: Data(txid.reversed()), vout: utxo.vout, amount: utxo.amount,
                           scriptPubKey: scriptPubKey, chain: chain, index: utxo.index,

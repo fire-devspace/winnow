@@ -24,21 +24,9 @@ public enum WalletError: Error, Equatable, LocalizedError {
     /// A matched transaction carried impossible output values or a total
     /// beyond Bitcoin's consensus monetary range. Nothing is applied.
     case invalidTransactionAmounts
-    /// The wallet holds a coin received by BIP352 silent payment, and this
-    /// build cannot spend it.
-    ///
-    /// Such an output carries a per-output tweak that is *required* to derive
-    /// its signing key. Silent payments live on the `alpha` branch; a build
-    /// from `main` has the field on disk but not the code that uses it.
-    ///
-    /// Refusing to open is deliberate and is the whole reason the field is
-    /// still decoded here. `JSONDecoder` ignores keys it does not know, so
-    /// simply deleting this would let the wallet open with the tweak silently
-    /// dropped — leaving a coin that looks ordinary, is signed down the BIP86
-    /// path, and produces a valid-looking signature that can never be spent.
-    /// A wallet that cannot spend a coin must say so, not show a balance it
-    /// will fail to move.
-    case silentPaymentWalletNeedsAlphaBuild
+    /// Legacy signing metadata must not be silently discarded by JSONDecoder:
+    /// the resulting coin would look ordinary but could not be spent here.
+    case unsupportedWalletData
 
     public var errorDescription: String? {
         switch self {
@@ -65,11 +53,10 @@ public enum WalletError: Error, Equatable, LocalizedError {
             "Wait for pending transactions to confirm before exporting. A mid-send backup would drop the coins being spent."
         case .invalidTransactionAmounts:
             "A matched Bitcoin transaction contains invalid amounts. Wallet state was not changed."
-        case .silentPaymentWalletNeedsAlphaBuild:
+        case .unsupportedWalletData:
             """
-            This wallet has received a silent payment, and this build cannot spend it. \
-            Silent payments moved to the alpha build; open this wallet there. \
-            Nothing has been changed or lost — the coin is still on the chain and still yours.
+            This wallet contains unsupported signing data and cannot be opened here. \
+            Keep the original wallet file and use compatible wallet software to recover these coins.
             """
         }
     }
@@ -200,14 +187,10 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
             throw DecodingError.dataCorruptedError(forKey: .scriptPubKey, in: container,
                                                    debugDescription: "bad scriptPubKey hex")
         }
-        // Detected, not used. This build has no BIP352 code, so a coin carrying
-        // a tweak cannot be spent here — and the tweak is what derives its
-        // signing key, so there is no fallback. Refuse the whole wallet rather
-        // than open it with the field dropped, which would present an
-        // unspendable coin as an ordinary one (#89 sibling: silent payments
-        // live on `alpha`).
+        // Reject legacy signing metadata even when null or malformed. Dropping
+        // this key would silently turn an unsupported coin into an ordinary one.
         if container.contains(.silentPaymentTweak) {
-            throw WalletError.silentPaymentWalletNeedsAlphaBuild
+            throw WalletError.unsupportedWalletData
         }
         self.init(txid: Data(txid.reversed()),
                   vout: try container.decode(UInt32.self, forKey: .vout),

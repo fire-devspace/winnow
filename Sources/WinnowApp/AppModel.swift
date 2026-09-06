@@ -1808,14 +1808,11 @@ final class AppModel {
 
     enum VaultSpendError: LocalizedError {
         case unknownVault
-        case silentPaymentDestination
         case notAvailableCoins
 
         var errorDescription: String? {
             switch self {
             case .unknownVault: "This vault is no longer on this phone."
-            case .silentPaymentDestination:
-                "Silent payments from vaults are not supported — the vault has no single input key to derive the output from."
             case .notAvailableCoins: "An input of this PSBT is not a known UTXO of the vault."
             }
         }
@@ -1856,13 +1853,9 @@ final class AppModel {
         return (psbt, syncPhase.headerTipMayLagNetwork)
     }
 
-    /// Resolves a destination for a vault spend: silent-payment codes are
-    /// refused with their own message.
+    /// Resolves a standard Bitcoin address for a vault spend.
     func vaultPayment(amount: Int64, address: String) throws -> Payment {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.lowercased().hasPrefix("sp1"), !trimmed.lowercased().hasPrefix("tsp1") else {
-            throw VaultSpendError.silentPaymentDestination
-        }
         return try Payment(amount: amount, address: trimmed, network: network)
     }
 

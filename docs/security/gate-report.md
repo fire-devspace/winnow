@@ -1,5 +1,9 @@
 # Limited-mainnet gate report
 
+This is an August 2026 audit record. References to Silent Payments and its tweak
+index describe the implementation reviewed then; those features have since been
+removed. Historical findings and their evidence are retained below.
+
 **Decision: NO-GO.** This report does not authorize a mainnet release, and it
 is not an approval. It records what is now evidenced, what is not, and what a
 person still has to decide.

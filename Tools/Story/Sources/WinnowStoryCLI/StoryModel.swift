@@ -242,9 +242,8 @@ public struct StoryTransactionEvidence: Codable, Sendable, Equatable, Identifiab
     }
 }
 
-/// A protected, resumable companion-wallet send. The raw transaction and
-/// BIP352 tweak point are public chain data, but they stay in private run
-/// state until the transaction is explicitly promoted into story evidence.
+/// A protected, resumable companion-wallet send. The raw transaction stays
+/// in private run state until explicitly promoted into story evidence.
 /// Saving the prepared transaction before relay makes retries idempotent: a
 /// resumed command re-announces these exact bytes instead of selecting coins
 /// or randomizing change placement again.
