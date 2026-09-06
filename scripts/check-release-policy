@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Validate a stable version and the actual bundled peer generation date."""
+import datetime as dt
+import os
+import pathlib
+import re
+
+tag = os.environ.get('RELEASE_TAG', '')
+if tag and not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
+    raise SystemExit('expected a stable vMAJOR.MINOR.PATCH tag')
+text = pathlib.Path('Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift').read_text()
+match = re.search(r'^// Generation: ([^,]+),', text, re.M)
+if not match:
+    raise SystemExit('fallback peers have no recorded generation date')
+generated = dt.datetime.fromisoformat(match[1].replace('Z', '+00:00'))
+age = (dt.datetime.now(dt.timezone.utc) - generated).total_seconds() / 86400
+print(f'fallback peers generated {match[1]} ({age:.1f} days ago)')
+if not 0 <= age <= 30:
+    raise SystemExit('run scripts/generate-fallback-peers and commit the refreshed list before tagging')

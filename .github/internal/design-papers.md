@@ -3,7 +3,7 @@
 The canonical paper is [Winnow: One Wallet, Two Signers, Three Roles](../../docs/paper.md).
 It connects the mobile constraints and private read path to a custody ladder:
 one hot wallet, two independent wallet implementations, and three professional
-roles. It also covers recovery, transaction submission, Silent Payment limits,
+roles. It also covers recovery, transaction submission, recovery compatibility,
 and reproducible signet evidence through Sofía Cruz's fictional Brisa Café story.
 
 The earlier focused papers remain as archived technical notes:

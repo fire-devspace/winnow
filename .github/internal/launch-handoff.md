@@ -20,10 +20,13 @@ Winnow is a direct-P2P compact-filter client; neither the app nor normal develop
 3. Recapture the six 6.9-inch composition candidates after #9. Confirm dimensions, visually recheck every candidate for mnemonic/development data, then upload them for #6. The current signet captures must not be uploaded unchanged.
 4. Provision and verify the dedicated Node E2E environment for #11 if it remains a v1 gate; do not restore the owner-workstation dependency. Keep #28 open until a deliberately contended mining sample sizes the retry bound.
 5. **Refresh the shipped header checkpoint** (owner decision on #89,
-   2026-08-24: manual, at release time). Regenerate from a genesis-validated
-   `headers.bin` via `swift test --filter CheckpointGenerator` with
-   `WINNOW_HEADERS_BIN` set, bump the `NetworkParams.mainnet.checkpoint`
-   constant, and update its provenance note. The constant currently sits at
-   block 900,000; every release it ages costs each fresh install the headers
-   since.
+   2026-08-24: manual, at release time). Run
+   `scripts/refresh-checkpoint <headers.bin> <height>` against a
+   genesis-validated `headers.bin`; it derives the constant through
+   `HeaderChain`, proves a chain started from it agrees with the
+   genesis-rooted chain 2,000 blocks on, and writes those headers as the
+   vector `CheckpointStartTests` replays. Paste the printed literal into
+   `NetworkParams.mainnet.checkpoint`, update its provenance note, and point
+   the test at the new vector. The constant currently sits at block 900,000;
+   every release it ages costs each fresh install the headers since.
 6. Only after the owner confirms every gate: tag v1.0.0, archive, upload, and submit for #7.

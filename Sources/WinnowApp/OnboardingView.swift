@@ -1,4 +1,5 @@
 import LocalAuthentication
+import BitcoinP2P
 import SwiftUI
 import UIKit
 import WalletCore
@@ -58,7 +59,28 @@ struct OnboardingView: View {
                         .accessibilityIdentifier("importWalletButton")
                     }
                 } footer: {
-                    Text("Network: \(model.network.rawValue) (change in Settings). Your backup appears immediately; peer and header synchronization continues while you secure it.")
+                    Text("Your backup appears immediately; peer and header synchronization continues while you secure it.")
+                }
+                // Settings is not reachable from here, so the network has to
+                // be. Without this, switching to a network with no wallet
+                // lands on this screen with no way back to the one that has
+                // one — the footer used to say "change in Settings".
+                if model.showsNetworkPicker {
+                    Section {
+                        Picker("Network", selection: Binding(
+                            get: { model.network },
+                            set: { newValue in Task { await model.switchNetwork(to: newValue) } }
+                        )) {
+                            Text("Mainnet").tag(BitcoinNetwork.mainnet)
+                            Text("Signet").tag(BitcoinNetwork.signet)
+                        }
+                        .disabled(model.e2e?.forcedNetwork != nil || busy != nil)
+                        .accessibilityIdentifier("onboardingNetworkPicker")
+                    } footer: {
+                        Text(model.e2e?.forcedNetwork != nil
+                             ? "This reproducible story run is locked to public signet."
+                             : "Each network has its own wallet on this device. Switching opens that network's wallet, or this screen when it has none.")
+                    }
                 }
                 if let busy {
                     Section { ProgressView(model.syncStatusText ?? busy) }
@@ -287,7 +309,7 @@ private struct ImportBundleView: View {
                 } header: {
                     Text("Import bundle (JSON)")
                 } footer: {
-                    Text("Exported by Winnow (Settings → Export wallet bundle) or by previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.\n\nSilent-payment receipts will not appear. Their output scripts cannot be derived from a recovery phrase alone, so this build cannot find them and will show a balance without them. Those coins are still on the chain and still yours — open the wallet in an alpha build to see them.")
+                    Text("Exported by Winnow (Settings → Export wallet bundle) or by previous wallet software: descriptor and/or mnemonic, known UTXOs and transactions, and the last scanned height. There is no back-scan — the bundle is the history; filters verify it from its height forward.\n\nOnly coins derived from the wallet descriptor can be restored here. Keep your original wallet and backup for any unsupported coin types.")
                 }
                 if busy {
                     Section { ProgressView("Importing and verifying…") }

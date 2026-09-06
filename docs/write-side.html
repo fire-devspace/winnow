@@ -49,7 +49,7 @@
   <hr />
   <h2 id="one-spend-shape">2. One spend shape</h2>
   <p>Everyday spends are BIP86 P2TR key-path. The signed witness is one 64-byte Schnorr signature (<code>SIGHASH_DEFAULT</code>); fee math uses 66 witness bytes per input (compact-size count + length + 64). Script-path and MuSig2 shapes belong to <a href="/vaults">vaults</a> and plug into the same builder via <code>witnessBytesPerInput</code>.</p>
-  <p>The phone <em>receives</em> only P2TR. It <em>pays</em> any standard address (bech32 / bech32m, base58 P2PKH / P2SH). BIP352 silent-payment codes are not destinations in this build; see §6. Destination diversity is a payment-layer concern; the wallet’s own outputs stay one type so coin selection, change, and watch-list code have a single script shape.</p>
+  <p>The phone <em>receives</em> only P2TR. It <em>pays</em> standard P2PKH, P2SH, P2WPKH, P2WSH and P2TR addresses. Destination diversity is a payment-layer concern; the wallet’s own outputs stay one type so coin selection, change, and watch-list code have a single script shape.</p>
   <p>Transactions are version 2, empty <code>scriptSig</code>s, and sequence <code>0xFFFFFFFD</code> (locktime-disabled, BIP125 opt-in RBF). A pending send with change can be fee-bumped in the transaction history; signaling replacement from the first broadcast avoids a policy surprise when it is needed.</p>
   <hr />
   <h2 id="coin-selection-and-change">3. Coin selection and change</h2>
@@ -81,13 +81,12 @@
   <li>Accessibility is <code>WhenUnlockedThisDeviceOnly</code>; <code>kSecAttrSynchronizable</code> is false. The JSON wallet file on disk holds the descriptor, UTXOs, and history — public material.</li>
   <li><code>Wallet.tweakedPrivateKey</code> loads the secret, derives <code>m/86'/coin'/account'/chain/index</code>, applies the BIP86 tweak (no merkle root), signs, and drops the key. The actor never holds the seed in <code>WalletState</code>.</li>
   </ul>
-  <p>All secret-key operations go through libsecp256k1 (P256K). The sighash is BIP341 <code>SIGHASH_DEFAULT</code> — also the BIP352-safe choice for taproot inputs. Auxiliary nonce randomness is 32 fresh bytes per signature.</p>
+  <p>All secret-key operations go through libsecp256k1 (P256K). The sighash is BIP341 <code>SIGHASH_DEFAULT</code>. Auxiliary nonce randomness is 32 fresh bytes per signature.</p>
   <p>Wallet amounts and UTXOs come from locally verified blocks, not Esplora. BIP341 signatures commit to input amounts; explorer pages are external manual checks and never feed the signer.</p>
   <hr />
-  <h2 id="silent-payments-alpha">6. Silent payments: on the alpha branch</h2>
-  <p>BIP352 <code>sp1…</code> / <code>tsp1…</code> codes are not destinations in this build. Sending was self-contained and worked. Receiving never was: finding payments to a silent code needs per-transaction tweak data that ordinary compact-filter peers do not serve, so mobile receive depended on a user-chosen tweak-data service, scanned forward only, and could be hidden by an omitted tweak. Both halves now live on the <code>alpha</code> branch rather than shipping here behind a warning.</p>
-  <p>What remains in this build is a refusal, and it is deliberate. A silent-payment coin carries a per-output tweak that is <em>required</em> to derive its signing key; that key exists nowhere else. A build with no BIP352 code that opened such a wallet would show a balance it cannot move, so it refuses to open the wallet at all and names the branch that can. Pasting an <code>sp1…</code> code into Send says the same thing rather than calling a well-formed address invalid.</p>
-  <p>One limit has no guard and is disclosed instead. Restoring from a recovery phrase cannot show silent-payment receipts: their output scripts are not derivable from the descriptor, so nothing puts them in the watch list and no refusal has anything to fire on. The restored wallet shows a balance without them. The import screen says so; the coins are unaffected on chain.</p>
+  <h2 id="unsupported-wallet-data">6. Unsupported wallet data</h2>
+  <p>Winnow restores descriptor-derived coins. It refuses wallet files or import bundles containing legacy signing data that it cannot use, rather than dropping that data and showing coins it cannot spend.</p>
+  <p>A recovery phrase alone does not recover unsupported coin types. Keep the original wallet and backup and use compatible wallet software for those coins. See <a href="/import">import and recovery</a>.</p>
   <hr />
   <h2 id="getting-it-out">7. Getting it out</h2>
   <p><code>TxBroadcaster</code> is P2P relay, not an API client:</p>

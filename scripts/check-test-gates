@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# No test may be a silent no-op. Every environment gate a test reads must be
+# set by some workflow or script that CI runs, every conditional suite must
+# be the node lane's `diffEnabled`, and the generator-style gates that used
+# to hide never-run suites must not come back. Runs in CI's complexity job.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+TEST_DIRS=(Tests UITests AppTests)
+for d in Tools/*/Tests; do [ -d "$d" ] && TEST_DIRS+=("$d"); done
+SETTERS=(.github/workflows scripts)
+# Optional overrides a developer may set by hand; never a gate.
+ALLOW_UNSET="WINNOW_BITCOIN_CLI"
+# Conditional skips that are deliberate and documented.
+ALLOW_XCTSKIP="UITests/StorefrontCaptureTests.swift AppTests/JournalRedactionTests.swift"
+# Gates that hid suites nobody ran; folded into the node lane or a tool.
+DENY='WINNOW_SIGNET|WINNOW_HEADERS_BIN|WINNOW_GENERATE_FALLBACK_PEERS'
+
+status=0
+
+# 1. Every WINNOW_* name a test reads is set somewhere CI runs.
+names=$(grep -rhoE 'environment\["WINNOW_[A-Z0-9_]+"\]|environmentValue\("WINNOW_[A-Z0-9_]+"\)' "${TEST_DIRS[@]}" \
+  | grep -oE 'WINNOW_[A-Z0-9_]+' | sort -u)
+for name in $names; do
+  case " $ALLOW_UNSET " in *" $name "*) continue ;; esac
+  # Substring match: xcodebuild forwards TEST_RUNNER_-prefixed names.
+  if ! grep -rqF "$name" "${SETTERS[@]}"; then
+    echo "::error::$name is read by a test but set by no workflow or script"
+    status=1
+  fi
+done
+
+# 2. The only conditional suite is the node lane's.
+if grep -rn 'enabled(if:' "${TEST_DIRS[@]}" | grep -v 'diffEnabled'; then
+  echo "::error::a suite is conditionally enabled on something other than diffEnabled"
+  status=1
+fi
+
+# 3. XCTSkip only where documented.
+while IFS= read -r file; do
+  case " $ALLOW_XCTSKIP " in *" $file "*) ;; *)
+    echo "::error::$file uses XCTSkip; add it to ALLOW_XCTSKIP with a reason, or remove the skip"
+    status=1 ;;
+  esac
+done < <(grep -rlE 'XCTSkip' "${TEST_DIRS[@]}" || true)
+
+# 4. The retired gates stay retired (code patterns, not prose).
+if grep -rnE "environment\[\"($DENY)\"\]|environmentValue\(\"($DENY)\"\)" "${TEST_DIRS[@]}" scripts .github; then
+  echo "::error::a retired test gate is back"
+  status=1
+fi
+
+if [ "$status" -eq 0 ]; then echo "test gates: every gate is set, every skip is documented"; fi
+exit "$status"

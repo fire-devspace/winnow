@@ -273,7 +273,6 @@
   </tr>
   </tbody>
   </table></div>
-  <p>Silent-payment receive (BIP352) is <strong>not a read path in this build</strong>. It needed a per-block tweak index that ordinary compact-filter peers do not serve, and it lives on the <code>alpha</code> branch; see <a href="/write-side">the write side</a> §6. The generic mechanism it used — per-height additions to the watch list — remains in <code>FilterSync</code> and is still fail-closed.</p>
   <p>One use case is deliberately <strong>absent</strong> from the default path:</p>
   <ul>
   <li><strong>Always-on mempool awareness</strong> (instant notification of <em>unexpected</em> payments, background 0-conf, live fee markets) — all require either a persistent relay subscription (bandwidth/battery cost the product rejects) or a server (privacy cost the product rejects). Bounded windows (§2.8) cover the cases where the user is present and expecting something; everything else waits for confirmation.</li>
@@ -323,7 +322,7 @@
   <li><a href="https://bips.dev/158/">BIP158: Compact Block Filters for Light Clients</a></li>
   <li><a href="https://www.rfc-editor.org/rfc/rfc9458">RFC 9458: Oblivious HTTP</a></li>
   <li>Neutrino (lightninglabs/neutrino) — reference BIP157/158 light-client implementation</li>
-  <li><a href="https://bips.dev/341/">BIP341: Taproot</a> · <a href="https://bips.dev/340/">BIP340: Schnorr</a> · <a href="https://bips.dev/86/">BIP86</a> · <a href="https://bips.dev/352/">BIP352: Silent Payments</a> · <a href="https://bips.dev/327/">BIP327: MuSig2</a> · <a href="https://bips.dev/388/">BIP388</a> · <a href="https://bips.dev/370/">BIP370: PSBTv2</a></li>
+  <li><a href="https://bips.dev/341/">BIP341: Taproot</a> · <a href="https://bips.dev/340/">BIP340: Schnorr</a> · <a href="https://bips.dev/86/">BIP86</a> · <a href="https://bips.dev/327/">BIP327: MuSig2</a> · <a href="https://bips.dev/388/">BIP388</a> · <a href="https://bips.dev/370/">BIP370: PSBTv2</a></li>
   </ul>
 </main>
 <footer>

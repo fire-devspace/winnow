@@ -25,16 +25,13 @@ struct WinnowApp: App {
             .accessibilityHidden(shouldObscureWallet(for: scenePhase))
             .environment(model)
             .task { await model.boot() }
-            .onAppear {
-                PrivacyShield.shared.setObscured(shouldObscureWallet(for: scenePhase))
-            }
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
                 // A separate high-level UIWindow sits above SwiftUI sheets and
                 // full-screen covers. A cover inside this root hierarchy would
                 // remain behind presented recovery/signing sheets when iOS
                 // records its app-switcher snapshot.
                 PrivacyShield.shared.setObscured(shouldObscureWallet(for: phase))
-                model.scenePhaseChanged(phase)
+                Task { await model.scenePhaseChanged(phase) }
             }
         }
     }
@@ -160,13 +157,19 @@ final class PrivacyShield {
 /// The four sections of the wallet shell.
 struct MainTabView: View {
     private enum Tab: String, Hashable {
-        case wallet, send, vaults, settings
+        case wallet, send, people, settings
+
+        /// `vaults` is what older test launches asked for; the People tab is
+        /// where vaults live now.
+        init?(requested: String) {
+            self.init(rawValue: requested == "vaults" ? "people" : requested)
+        }
     }
 
     @State private var selection: Tab
 
     init() {
-        let requested = E2EMode.current?.initialTab.flatMap(Tab.init(rawValue:))
+        let requested = E2EMode.current?.initialTab.flatMap(Tab.init(requested:))
         _selection = State(initialValue: requested ?? .wallet)
     }
 
@@ -178,9 +181,9 @@ struct MainTabView: View {
             SendView()
                 .tabItem { Label("Send", systemImage: "arrow.up.circle") }
                 .tag(Tab.send)
-            VaultsView()
-                .tabItem { Label("Vaults", systemImage: "lock.shield") }
-                .tag(Tab.vaults)
+            PeopleView()
+                .tabItem { Label("People", systemImage: "person.2") }
+                .tag(Tab.people)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
                 .tag(Tab.settings)

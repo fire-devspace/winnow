@@ -1,21 +1,12 @@
-@testable import WinnowApp
 import Security
 import WalletCore
 import XCTest
 
 /// What the Keychain actually recorded, read back (invariant S1).
 ///
-/// `KeychainStore` says of itself: "Not covered by unit tests: SPM test
-/// runners have no keychain entitlements. The app exercises this; the
-/// implementation is deliberately straightforward and reviewed by reading."
-/// The invariant matrix inherited that as "by construction" — the weakest
-/// evidence class in the register, because it means a person read the source
-/// and agreed with it.
-///
-/// This suite is hosted in the app, so it has the entitlements the package
-/// tests lack and can ask the Keychain what it stored rather than asking the
-/// source what it intended. A protection attribute that is set but never read
-/// back is indistinguishable from one that is silently ignored.
+/// The app test host supplies the iOS entitlements a command-line SwiftPM
+/// runner lacks. This suite stores through the local KeychainStore and reads
+/// back the recorded attributes.
 ///
 /// **What this cannot show.** That iOS *honours* the attribute. The simulator's
 /// Keychain is file-backed with no data protection and no Secure Enclave, so

@@ -1,7 +1,9 @@
-Block explorer picker (Settings)
+People and shared savings
 
-The warned external explorer is now a picker: blockstream.info (the new default), mempool.space, or Custom with an Esplora-compatible URL field. Your selection persists per network, and if you had typed a custom URL before, it stays selected as Custom. One deliberate wrinkle: blockstream.info has no signet explorer, so while on signet that preset opens mempool.space — the "Selected:" line shows exactly where a tap will go. Try each preset, tap a transaction from history, and confirm the warning names the right site.
+Open People and tap Share my card: give it a name and send the card to someone (or to your other device). On the other side, Add person and paste it: it should read "Fresh address each payment" and "Can co-own savings". Pay that person from their screen twice; the review names them, shows the address underneath, and the second payment goes to a different address.
 
-Under the hood
+Create shared savings with one or two people: the threshold defaults to 2, and creating ends on the savings card. Share that card and add it on the other phone before sending any money in. Then send a small amount to the savings' address, wait for a block, and use Ask for approval on one phone and Approve a request on the other; when enough have approved, Finish sends it.
 
-The Bitcoin implementation now lives in its own repository (btc-swift) and the app pins an exact revision of it; every function in both is at seven decision paths or under, enforced by CI. None of that should feel like anything — receive, send, vault flows, and backup should behave exactly as before, and anything that doesn't is worth a report.
+Beginner mode
+
+The wallet starts with four tabs and a one-line sync status. Settings shows Backup, the Advanced mode switch, About and Delete wallet only. Turn Advanced mode on: the test network, peers, chain verification, the block explorer, build details and a Vaults section on the People tab appear. Turn it off again: they go, and anything you set stays.

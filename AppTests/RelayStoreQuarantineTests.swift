@@ -34,19 +34,6 @@ final class RelayStoreQuarantineTests: XCTestCase {
         return url
     }
 
-    /// A signed transaction the broadcaster will accept, so a real store can
-    /// be written and then damaged in one field.
-    private static var signedTransactionBytes: Data {
-        var input = Transaction.Input(
-            previousOutput: Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32), vout: 0),
-            scriptSig: Data(), sequence: 0xFFFF_FFFD)
-        input.witness = [Data([0x30, 0x44, 0x02, 0x20]), Data(repeating: 0x02, count: 33)]
-        let output = Transaction.Output(
-            value: 50_000, scriptPubKey: Data([0x51, 0x20] + repeatElement(0x77, count: 32)))
-        return Transaction(version: 2, inputs: [input], outputs: [output], locktime: 0)
-            .serialized(includeWitness: true)
-    }
-
     private func pool() -> PeerPool {
         PeerPool(params: .signet, peerCount: 0, manualPeers: [])
     }
@@ -163,7 +150,7 @@ final class RelayStoreQuarantineTests: XCTestCase {
         // record stays valid and only the per-record validation objects.
         let seed = makeModel()
         let broadcaster = try seed.makeBroadcaster(pool: pool(), storageURL: url)
-        _ = try await broadcaster.broadcast(Self.signedTransactionBytes)
+        _ = try await broadcaster.broadcast(signedTransactionBytes)
         await broadcaster.shutdown()
 
         var json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]

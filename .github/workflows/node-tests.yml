@@ -1,218 +1,242 @@
-name: Node e2e (manual)
+name: Node integration
 
-# Optional node-backed suites (differential + UI e2e). These are deliberately
-# excluded from push and pull-request CI: Winnow itself is a direct-P2P client,
-# and ordinary development must not depend on a bitcoind running on an owner's
-# workstation. Enable this workflow only after provisioning a dedicated runner
-# with the `node-e2e` label and its own disposable custom-signet fixture.
-#
-# Node location is configurable via repository VARIABLES (not secrets) —
-# unset variables fall back to the local-dev defaults:
-#   WINNOW_NODE_HOST (default 127.0.0.1)
-#   WINNOW_P2P_PORT  (default 38401)
-#   WINNOW_RPC_PORT  (default 38400)
-#   WINNOW_DATADIR points at the fixture datadir for cookie auth. The runner's
-#   BTC_SWIFT_DATADIR variable is probed only to document the fixture location.
-# The "Node reachability probe" step reports which of these the runners can
-# actually reach. Note: `xcodebuild test` does not forward its environment
-# into the iOS-simulator test runner, so the UI suite gets these values via
-# ~/.winnow-node.env (written by the "simulator test config" step).
-
+# One disposable custom signet per run on the self-hosted seat. The Core
+# differential leg gates pull requests from branches in this repository and
+# runs on every push to main; the simulator UI leg runs nightly, on release,
+# and on confirmed manual dispatch. Forks never reach the seat. Mining suites
+# stay serial: one listener per VM, one job at a time.
 on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
     inputs:
       confirm_dedicated_fixture:
-        description: Run against the dedicated, disposable node-e2e fixture
+        description: Run differential and UI suites on the disposable node fixture
         required: true
+        type: boolean
+        default: false
+      capture_storefront:
+        description: Also capture the App Store screenshot set after the UI suite (adds ~20 min)
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      confirm_dedicated_fixture:
+        required: true
+        type: boolean
+      capture_storefront:
+        required: false
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+# Per ref, like CI: a pull request never queues behind another ref's nightly.
+# The single listener on the VM is what serializes jobs on the seat.
 concurrency:
-  group: node-tests
-  cancel-in-progress: false
+  group: node-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  WINNOW_NODE_HOST: '127.0.0.1'
+  WINNOW_P2P_PORT: '38601'
+  WINNOW_RPC_PORT: '38600'
 
 jobs:
-  node-tests:
-    if: inputs.confirm_dedicated_fixture
-    # The extra label prevents this workload from falling back to a developer
-    # workstation or either of the general-purpose btc-swift runners.
+  # A job skipped by `if:` reports success, so a docs-only change passes
+  # without touching the seat; a workflow-level paths filter would instead
+  # leave a required check at "Expected" forever.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      node: ${{ steps.filter.outputs.node }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request|push) ;;
+            *) echo "node=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          if [[ -z "$BASE" ]] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "node=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^(Sources/|Tests/|UITests/|AppTests/|Package\.(swift|resolved)$|project\.yml$|scripts/(signet-fixture|ios-simulator|install-xcodegen)$|\.github/workflows/node-tests\.yml$)'; then
+            echo "node=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "node=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  differential:
+    needs: changes
+    if: >-
+      needs.changes.outputs.node == 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (contains('pull_request push schedule', github.event_name) || inputs.confirm_dedicated_fixture)
     runs-on: [self-hosted, macOS, btc-swift, node-e2e]
-    timeout-minutes: 90
-    env:
-      WINNOW_NODE_HOST: '127.0.0.1'
-      WINNOW_P2P_PORT: ${{ vars.BTC_SWIFT_P2P_PORT || '38401' }}
-      WINNOW_RPC_PORT: ${{ vars.BTC_SWIFT_RPC_PORT || '38400' }}
-      WINNOW_FIXTURE_DATADIR: ${{ vars.BTC_SWIFT_DATADIR || '' }}
+    # First measured run under this lane: 5 m 20 s (run 34056640602).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Runner environment probe
+      - name: Sweep a fixture left by an interrupted run
         run: |
-          echo "== uname =="; uname -a
-          sw_vers
-          echo "== Xcode =="
-          ls -d /Applications/Xcode*.app 2>/dev/null || echo "no /Applications/Xcode*.app"
-          echo "xcode-select: $(xcode-select -p 2>&1)"
-          echo "== swift =="
-          (which swift && swift --version) 2>&1 || echo "no swift"
-          echo "== brew =="
-          (which brew && brew --version | head -1) 2>&1 || echo "no brew"
-          echo "== bitcoin-cli =="
-          (which bitcoin-cli && bitcoin-cli --version | head -1) 2>&1 \
-            || ls /usr/local/bin/bitcoin-cli /opt/homebrew/bin/bitcoin-cli 2>/dev/null \
-            || echo "no bitcoin-cli"
-          echo "== datadir =="
-          ls -d "${WINNOW_FIXTURE_DATADIR:-$HOME/.bitcoin-mysignet}" 2>/dev/null || echo "no fixture datadir visible on this runner"
-          echo "== home =="; echo "$HOME"
+          pkill -f 'bitcoind -datadir=.*/winnow-signet-' || true
+          echo "WINNOW_DATADIR=$RUNNER_TEMP/winnow-signet-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
-      - name: Node reachability probe
+      - name: Start this run's isolated fixture
         run: |
-          echo "P2P $WINNOW_NODE_HOST:$WINNOW_P2P_PORT"
-          nc -z -G 5 "$WINNOW_NODE_HOST" "$WINNOW_P2P_PORT" && echo "P2P REACHABLE" || echo "P2P UNREACHABLE"
-          echo "RPC $WINNOW_NODE_HOST:$WINNOW_RPC_PORT"
-          nc -z -G 5 "$WINNOW_NODE_HOST" "$WINNOW_RPC_PORT" && echo "RPC REACHABLE" || echo "RPC UNREACHABLE"
+          command -v bitcoind
+          command -v bitcoin-cli
+          command -v bitcoin-util
+          test ! -e "$WINNOW_DATADIR"
+          for port in "$WINNOW_RPC_PORT" "$WINNOW_P2P_PORT"; do
+            if nc -z -G 1 "$WINNOW_NODE_HOST" "$port"; then
+              echo "::error::fixture port $port is already occupied"
+              exit 1
+            fi
+          done
+          scripts/signet-fixture up
+          bitcoin-cli -datadir="$WINNOW_DATADIR" -rpcport="$WINNOW_RPC_PORT" getblockchaininfo \
+            | python3 -c 'import json,sys; info=json.load(sys.stdin); assert info["chain"] == "signet" and info["blocks"] == 0, "expected a fresh signet fixture"'
+
+      # The build lives in the checkout's .build, which the runner keeps
+      # between jobs; a scratch path under RUNNER_TEMP is wiped every run.
+      - name: Differential tests
+        env:
+          WINNOW_DIFF: '1'
+        run: |
+          set -o pipefail
+          swift test --filter DifferentialTests --no-parallel \
+            2>&1 | tee "$RUNNER_TEMP/differential.log"
+
+      - name: Stop this run's fixture
+        if: always()
+        run: |
+          if [[ -n "${WINNOW_DATADIR:-}" && -f "$WINNOW_DATADIR/bitcoin.conf" ]]; then
+            scripts/signet-fixture down
+          fi
+
+      - name: Upload differential evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: node-differential-${{ github.run_id }}
+          path: ${{ runner.temp }}/differential.log
+          if-no-files-found: error
+          retention-days: 14
+
+  ui:
+    needs: changes
+    if: >-
+      github.event_name == 'schedule'
+      || (inputs.confirm_dedicated_fixture && github.event_name != 'pull_request' && github.event_name != 'pull_request_target')
+    runs-on: [self-hosted, macOS, btc-swift, node-e2e]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Stop simulator miners and fixtures left by an interrupted run
+        run: |
+          xcrun simctl shutdown all || true
+          pkill -f WinnowAppUITests-Runner || true
+          pkill -f 'bitcoind -datadir=.*/winnow-signet-' || true
+          echo "WINNOW_DATADIR=$RUNNER_TEMP/winnow-signet-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Start this run's isolated fixture
+        run: |
+          test -d /Applications/Xcode.app/Contents/Developer
+          command -v bitcoind
+          command -v bitcoin-cli
+          command -v bitcoin-util
+          test ! -e "$WINNOW_DATADIR"
+          for port in "$WINNOW_RPC_PORT" "$WINNOW_P2P_PORT"; do
+            if nc -z -G 1 "$WINNOW_NODE_HOST" "$port"; then
+              echo "::error::fixture port $port is already occupied"
+              exit 1
+            fi
+          done
+          scripts/signet-fixture up
+          bitcoin-cli -datadir="$WINNOW_DATADIR" -rpcport="$WINNOW_RPC_PORT" getblockchaininfo \
+            | python3 -c 'import json,sys; info=json.load(sys.stdin); assert info["chain"] == "signet" and info["blocks"] == 0, "expected a fresh signet fixture"'
 
       - name: Install pinned XcodeGen
         run: scripts/install-xcodegen
 
-      - name: Require pre-provisioned bitcoin-cli
+      - name: Generate project and simulator configuration
         run: |
-          which bitcoin-cli >/dev/null || {
-            echo "::error::the dedicated node-e2e runner must pre-provision bitcoin-cli"
-            exit 1
-          }
-
-      - name: Verify the fixture node answers
-        # The dedicated runner provisions its own disposable custom signet via
-        # scripts/signet-fixture (winnowwallet/macos-ci-runners documents it).
-        # Cookie auth against the local datadir — no credential secret, and
-        # nothing here rewrites the fixture's bitcoin.conf: an earlier version
-        # of this step clobbered the signet challenge with a bare public-signet
-        # conf, which silently turned the fixture into a public-signet node.
-        run: |
-          DD="${WINNOW_FIXTURE_DATADIR:-$HOME/.bitcoin-mysignet}"
-          bitcoin-cli -datadir="$DD" -rpcport="${WINNOW_RPC_PORT}" getblockchaininfo >/dev/null
-          echo "fixture height: $(bitcoin-cli -datadir="$DD" -rpcport="${WINNOW_RPC_PORT}" getblockcount)"
-
-      - name: Locate developer tools
-        id: devtools
-        run: |
-          test -d /Applications/Xcode.app/Contents/Developer || {
-            echo "::error::the dedicated node-e2e runner is missing /Applications/Xcode.app"
-            exit 1
-          }
-          echo "devdir=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_OUTPUT"
-
-      # The package and differential suites moved with the library to
-      # winnowwallet/btc-swift and run there against the same fixture. This
-      # workflow keeps what needs the app: the simulator UI e2e.
-      - name: Generate Xcode project
-        run: xcodegen
-
-      - name: Ensure an iPhone simulator exists
-        id: sim
-        run: |
-          NAME=""
-          for TYPE in "iPhone 17" "iPhone 16" "iPhone 15"; do
-            if xcrun simctl list devices available | grep -q "$TYPE ("; then NAME="$TYPE"; break; fi
-          done
-          if [ -z "$NAME" ]; then
-            # Create one (simctl picks the newest iOS runtime by default).
-            for TYPE in "iPhone 17" "iPhone 16" "iPhone 15"; do
-              if xcrun simctl create "$TYPE" "$TYPE" >/dev/null 2>&1; then NAME="$TYPE"; break; fi
-            done
-          fi
-          if [ -z "$NAME" ]; then
-            echo "::error::the dedicated node-e2e runner has no usable iPhone simulator/runtime"
-            exit 1
-          fi
-          echo "simulator: $NAME"
-          echo "sim-name=$NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Simulator test config (env file + screenshots symlink)
-        run: |
-          # xcodebuild does not forward its environment into the iOS-simulator
-          # test runner; UITests/BitcoinCLI.swift reads this file instead.
+          xcodegen
+          echo "SIMULATOR_ID=$(scripts/ios-simulator)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/node-screenshots"
           {
             echo "WINNOW_NODE_HOST=$WINNOW_NODE_HOST"
             echo "WINNOW_P2P_PORT=$WINNOW_P2P_PORT"
             echo "WINNOW_RPC_PORT=$WINNOW_RPC_PORT"
-            [ -n "$WINNOW_DATADIR" ] && echo "WINNOW_DATADIR=$WINNOW_DATADIR"
+            echo "WINNOW_DATADIR=$WINNOW_DATADIR"
+            echo "WINNOW_SCREENSHOT_DIR=$RUNNER_TEMP/node-screenshots"
           } > "$HOME/.winnow-node.env"
-          # The suite's default screenshot dir is $HOME/src/btc-swift/docs/
-          # screenshots — symlink it into the checkout so the artifact
-          # upload below finds the PNGs (WINNOW_SCREENSHOT_DIR does not
-          # reach the sim runner either).
-          mkdir -p "$HOME/src/btc-swift/docs"
-          ln -sfn "$GITHUB_WORKSPACE/docs/screenshots" "$HOME/src/btc-swift/docs/screenshots"
 
-      - name: Shut down stale simulators before the UI leg
-        # Belt to the cleanup step's braces, for the one path that step cannot
-        # cover: if the runner process dies hard its `always()` steps never
-        # run, and the orphan outlives the job with nothing left to kill it.
-        # Scope honestly: this clears orphans on THIS runner only. The one that
-        # cost run 31995843360 its 37 lost races was on the other VM and
-        # competed over the chain, not locally — this step would not have
-        # helped there.
+      # The storefront capture class is excluded here so it is never a
+      # silent skip; the step below runs it on request.
+      - name: App UI tests
         run: |
-          xcrun simctl shutdown all || true
-          pkill -f WinnowAppUITests-Runner || true
+          set -o pipefail
+          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/winnow-node-app" \
+            -resultBundlePath "$RUNNER_TEMP/NodeUI.xcresult" \
+            -only-testing:WinnowAppUITests \
+            -skip-testing:WinnowAppUITests/StorefrontCaptureTests \
+            -skipPackagePluginValidation -skipMacroValidation \
+            2>&1 | tee "$RUNNER_TEMP/node-ui.log"
 
-      - name: UI tests (e2e on the signet node, screenshot capture)
-        env:
-          DEVELOPER_DIR: ${{ steps.devtools.outputs.devdir }}
-        run: >-
-          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp
-          -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.sim-name }}'
-          -skipPackagePluginValidation -skipMacroValidation
+      - name: App Store screenshot capture
+        if: inputs.capture_storefront
+        run: |
+          set -o pipefail
+          WINNOW_DERIVED_DATA="$RUNNER_TEMP/winnow-node-app" scripts/storefront-capture \
+            2>&1 | tee "$RUNNER_TEMP/storefront.log"
 
-      - name: Kill the simulator test runner (issue #35)
-        # Killing `xcodebuild` does NOT stop the tests. The XCUITest runner and
-        # the app under test live under `launchd_sim` inside the launchd-owned
-        # CoreSimulator services, not under `xcodebuild`, so the runner's kill
-        # misses them — and UITests/ mines from the test-runner process.
-        #
-        # Run 31995801162 (main, cancelled at 06:20:24Z on 2026-08-17) is the
-        # evidence: its UI leg kept mining for 54 more minutes, to 07:14:21Z,
-        # completing test02's full 101-block funding loop. The gap in the chain
-        # spanning the kill is 15s (h8346 06:20:18 -> h8347 06:20:33) against a
-        # ~50s mean, which is why this is continuation and not a restart. Those
-        # blocks then contended with the NEXT run's differential leg: 54 blocks
-        # inside 31995843360's step 10, 37 lost races out of 138 draws.
-        #
-        # `always()` is load-bearing — the whole point is the paths where the
-        # step above did not finish. It is also observed to work in exactly
-        # this failure mode: on 31995801162 the (also-`always()`) upload step
-        # ran to success at 06:20:08-09, seconds after the UI step was
-        # cancelled. A step-level `timeout-minutes` would NOT fix this: same
-        # kill path, same orphan.
+      - name: Stop simulator miners and remove test configuration
         if: always()
         run: |
           xcrun simctl shutdown all || true
           pkill -f WinnowAppUITests-Runner || true
+          rm -f "$HOME/.winnow-node.env"
 
-      - name: Upload e2e screenshots
+      - name: Stop this run's fixture
+        if: always()
+        run: |
+          if [[ -n "${WINNOW_DATADIR:-}" && -f "$WINNOW_DATADIR/bitcoin.conf" ]]; then
+            scripts/signet-fixture down
+          fi
+
+      - name: Upload UI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: e2e-screenshots
-          # The sim-runner config step symlinked the suite's default
-          # screenshot dir into the checkout.
+          name: node-ui-${{ github.run_id }}
           path: |
-            docs/screenshots/*.png
-            docs/screenshots/timings.json
-          if-no-files-found: warn
+            ${{ runner.temp }}/node-ui.log
+            ${{ runner.temp }}/storefront.log
+            ${{ runner.temp }}/NodeUI.xcresult
+            ${{ runner.temp }}/node-screenshots/
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Remove runner credentials and test configuration
-        if: always()
-        run: |
-          DD="$RUNNER_TEMP/winnow-node-client"
-          rm -f "$DD/.cookie" "$DD/signet/.cookie" "$DD/bitcoin.conf"
-          rmdir "$DD/signet" "$DD" 2>/dev/null || true
-          rm -f "$HOME/.winnow-node.env" "$HOME/src/btc-swift/docs/screenshots"

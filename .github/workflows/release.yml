@@ -1,11 +1,11 @@
 name: Release
 
-# Releases are cut deliberately by pushing a version tag — never by merging
-# to main. `git tag v0.2.0 && git push origin v0.2.0` runs the full pipeline:
-# test → sign → archive → TestFlight upload → GitHub Release.
+# One Winnow version covers the app, library products and tools.
+# Manual dispatch runs the complete gates without signing or publishing.
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,7 +15,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate version and bundled fallback-peer generation date
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: scripts/check-release-policy
+
+  ci:
+    needs: policy
+    uses: ./.github/workflows/ci.yml
+
+  node:
+    needs: policy
+    uses: ./.github/workflows/node-tests.yml
+    with:
+      confirm_dedicated_fixture: true
+
   testflight:
+    if: github.event_name == 'push'
+    needs: [ci, node]
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -32,55 +55,11 @@ jobs:
           printf 'TESTFLIGHT_MARKETING_VERSION=%s\n' "$VERSION" >> "$GITHUB_ENV"
           printf 'TESTFLIGHT_BUILD_NUMBER=%s\n' "$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
-      - name: Fallback peers freshness gate
-        # 161: freshness tracks releases rather than someone remembering.
-        # The peer list lives in btc-swift now, so the app release cannot
-        # regenerate it — instead it refuses to ship a stale one: if the
-        # pinned revision's FallbackPeersGenerated.swift was last touched
-        # more than 30 days ago, regenerate there, bump the pin, re-tag.
-        run: |
-          PIN=$(grep -A2 'btc-swift:' project.yml | grep 'revision:' | awk '{print $2}')
-          echo "pinned btc-swift: $PIN"
-          LAST=$(curl -sf "https://api.github.com/repos/winnowwallet/btc-swift/commits?path=Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift&sha=$PIN&per_page=1"             | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"]["committer"]["date"])')
-          echo "peer list last regenerated: $LAST"
-          python3 - "$LAST" <<'PYCHECK'
-          import datetime, sys
-          last = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
-          age = (datetime.datetime.now(datetime.timezone.utc) - last).days
-          print(f"peer list age: {age} days")
-          if age > 30:
-              raise SystemExit("fallback peers are stale: regenerate in btc-swift and bump the pin")
-          PYCHECK
-
       - name: Install pinned XcodeGen
         run: scripts/install-xcodegen
 
       - name: Generate Xcode project
         run: xcodegen
-
-      - name: App test suite (gate)
-        run: |
-          DEVICE=$(xcrun simctl list devices available | grep -m1 -o 'iPhone [^(]*' | sed 's/ $//')
-          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
-            -destination "platform=iOS Simulator,name=$DEVICE" \
-            -skipPackagePluginValidation -skipMacroValidation \
-            -only-testing:WinnowAppTests
-
-      - name: App unit tests (gate)
-        run: |
-          SIMULATOR_ID="$(xcrun simctl list devices available -j | ruby -rjson -e '
-            json = JSON.parse(STDIN.read)
-            runtimes = json.fetch("devices").keys.grep(/\.iOS-/).sort.reverse
-            device = runtimes.lazy.flat_map { |runtime| json["devices"][runtime] }
-              .find { |entry| entry["isAvailable"] && entry["name"].start_with?("iPhone") }
-            abort "no available iPhone simulator" unless device
-            puts device.fetch("udid")
-          ')"
-          test -n "$SIMULATOR_ID"
-          xcodebuild test -project WinnowApp.xcodeproj -scheme WinnowApp \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-            -only-testing:WinnowAppTests \
-            -skipPackagePluginValidation -skipMacroValidation
 
       - name: Prepare signing credentials
         env:
@@ -119,6 +98,7 @@ jobs:
           xcodebuild -project WinnowApp.xcodeproj -scheme WinnowApp
           -configuration Release -destination 'generic/platform=iOS'
           -archivePath build/WinnowApp.xcarchive
+          -derivedDataPath build/DerivedData
           -allowProvisioningUpdates
           -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8"
           -authenticationKeyID "$ASC_KEY_ID"
@@ -129,6 +109,9 @@ jobs:
         run: >-
           scripts/verify-release-e2e-exclusion
           build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
+
+      - name: Verify archive dependency resolution
+        run: scripts/check-dependencies --xcode build/DerivedData
 
       - name: Upload to App Store Connect
         env:
@@ -155,6 +138,7 @@ jobs:
           </plist>
           EOF
           xcodebuild -exportArchive -archivePath build/WinnowApp.xcarchive \
+            -derivedDataPath build/DerivedData \
             -exportOptionsPlist build/ExportOptions.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8" \
@@ -193,6 +177,8 @@ jobs:
       - name: Remove App Store Connect key
         if: always()
         run: |
+          security delete-keychain "$RUNNER_TEMP/winnow-ci.keychain-db" || true
+          rm -f "$RUNNER_TEMP/dev.p12"
           rm -f "${RUNNER_TEMP}/winnow-signing/AuthKey.p8"
           rmdir "${RUNNER_TEMP}/winnow-signing" 2>/dev/null || true
 

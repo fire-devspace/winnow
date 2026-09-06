@@ -2,17 +2,17 @@ import Foundation
 import XCTest
 
 /// Screenshot capture: XCTAttachment on the test result AND a PNG copy on the
-/// host. Destination: $WINNOW_SCREENSHOT_DIR, else ~/src/btc-swift/docs/screenshots
+/// host. Destination: $WINNOW_SCREENSHOT_DIR, else ~/src/winnow/docs/screenshots
 /// (on the host — the runner's own home inside the simulator is a container).
 enum Screenshots {
     static let hostHome = ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
 
     static let directory: URL = {
-        if let path = ProcessInfo.processInfo.environment["WINNOW_SCREENSHOT_DIR"], !path.isEmpty {
+        if let path = BitcoinCLI.environmentValue("WINNOW_SCREENSHOT_DIR"), !path.isEmpty {
             return URL(fileURLWithPath: path)
         }
         return URL(fileURLWithPath: hostHome)
-            .appending(path: "src/btc-swift/docs/screenshots", directoryHint: .isDirectory)
+            .appending(path: "src/winnow/docs/screenshots", directoryHint: .isDirectory)
     }()
 
     @MainActor
@@ -46,6 +46,37 @@ enum Screenshots {
 }
 
 extension XCTestCase {
+    /// Text of the balance label ("12,345 sats").
+    @MainActor
+    func balanceText(_ app: XCUIApplication) -> String {
+        (app.staticTexts["balanceText"].value as? String) ?? ""
+    }
+
+    /// Taps "Sync now" when idle to nudge a scan pass.
+    @MainActor
+    func nudgeSync(_ app: XCUIApplication) {
+        let button = app.buttons["syncNowButton"]
+        if button.exists, button.isEnabled { button.tap() }
+    }
+
+    /// Scrolls the topmost scroll view until `element` exists (SwiftUI
+    /// Forms materialize rows lazily — `exists` is false below the fold).
+    /// Uses screen-coordinate drags: a TabView keeps every tab's list in the
+    /// accessibility tree, so element-based swipes can hit a hidden tab's
+    /// list instead of the visible form.
+    @MainActor
+    @discardableResult
+    func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement,
+                           maxSwipes: Int = 10, up: Bool = false) -> Bool {
+        for _ in 0 ... maxSwipes {
+            if element.waitForExistence(timeout: 2) { return true }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: up ? 0.30 : 0.62))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: up ? 0.62 : 0.30))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        return element.exists
+    }
+
     /// Polls `condition` until it holds or the deadline passes (explicit
     /// waits, no fixed sleeps — the one allowed exception is the polling
     /// interval itself).

@@ -1,0 +1,69 @@
+name: LOC
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+
+      - name: Download and verify cloc 2.10
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/AlDanial/cloc/releases/download/v2.10/cloc-2.10.pl \
+            --output "$RUNNER_TEMP/cloc-2.10.pl"
+          printf '%s  %s\n' \
+            bf59272455172108072a0a106379f7509fd4349bdcfd85203bac038ccd286d83 \
+            "$RUNNER_TEMP/cloc-2.10.pl" | sha256sum --check --strict
+
+      - name: Test the counting policy and comparisons
+        env:
+          CLOC: ${{ runner.temp }}/cloc-2.10.pl
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s scripts/tests -p 'test_report_loc.py' -v
+
+      - name: Count the commit and PR merge base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          comparison=()
+          if [[ -n "$BASE_SHA" ]]; then
+            git cat-file -e "$BASE_SHA^{commit}"
+            comparison=(--base-ref "$BASE_SHA")
+          fi
+          python3 scripts/report-loc.py \
+            --ref "$HEAD_SHA" "${comparison[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --cloc "$RUNNER_TEMP/cloc-2.10.pl" \
+            --output-dir "$RUNNER_TEMP/loc"
+          cat "$RUNNER_TEMP/loc/loc.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload LOC reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: loc-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/loc/loc.json
+            ${{ runner.temp }}/loc/loc.csv
+            ${{ runner.temp }}/loc/loc.md
+          if-no-files-found: error
+          retention-days: 90

@@ -70,18 +70,18 @@ def main() -> None:
     parser.add_argument("--subject-name", default="winnow-source-tree")
     parser.add_argument(
         "--builder-id",
-        default="https://github.com/winnowwallet/winnow/.github/workflows/security.yml",
+        default="https://github.com/winnowwallet/winnow/.github/workflows/ci.yml",
     )
     args = parser.parse_args()
 
     root = pathlib.Path(git(pathlib.Path.cwd(), "rev-parse", "--show-toplevel"))
     commit = git(root, "rev-parse", "HEAD")
     tree = git(root, "rev-parse", "HEAD^{tree}")
-    resolved_path = root / "Package.resolved"
     package_path = root / "Package.swift"
     project_path = root / "project.yml"
+    resolved_path = root / "Package.resolved"
     resolved = json.loads(resolved_path.read_text())
-    pins = sorted(resolved.get("pins", []), key=lambda pin: pin["identity"])
+    pins = sorted(resolved["pins"], key=lambda pin: pin["identity"])
 
     root_id = "SPDXRef-Package-winnow"
     packages: list[dict[str, Any]] = [
@@ -163,9 +163,8 @@ def main() -> None:
 
     materials = [
         {"uri": "git+https://github.com/winnowwallet/winnow.git", "digest": {"sha1": commit}},
-        {"uri": "file:Package.swift", "digest": {"sha256": sha256_file(package_path)}},
-        {"uri": "file:Package.resolved", "digest": {"sha256": sha256_file(resolved_path)}},
-        {"uri": "file:project.yml", "digest": {"sha256": sha256_file(project_path)}},
+        *[{"uri": f"file:{path.name}", "digest": {"sha256": sha256_file(path)}}
+          for path in (package_path, resolved_path, project_path) if path.exists()],
         *dependencies,
     ]
     materials.sort(key=lambda material: material["uri"])

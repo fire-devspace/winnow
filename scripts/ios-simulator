@@ -1,0 +1,14 @@
+#!/bin/bash
+# Return one available iPhone on the newest installed iOS runtime.
+set -euo pipefail
+xcrun simctl list devices available -j | python3 -c '
+import json, sys
+runtimes = json.load(sys.stdin)["devices"]
+for runtime in sorted(runtimes, reverse=True):
+    if ".iOS-" not in runtime:
+        continue
+    for device in runtimes[runtime]:
+        if device["isAvailable"] and device["name"].startswith("iPhone"):
+            print(device["udid"])
+            sys.exit(0)
+sys.exit("no available iPhone simulator")'

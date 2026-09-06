@@ -1,5 +1,9 @@
 # Winnow security audit manifest
 
+This is an August 2026 audit record. References to Silent Payments and its tweak
+index describe the implementation reviewed then; those features have since been
+removed. Historical findings and their evidence are retained below.
+
 Status: **Phase 0 baseline; not a mainnet approval**
 
 This file freezes the source and evidence boundary for the
@@ -22,10 +26,15 @@ test proves only the named property. It is not a general wallet-safety claim.
 | Baseline result | 310 tests in 60 suites passed |
 | Hardened branch result | 311 tests in 60 suites passed; targeted PSBT AddressSanitizer run passed; iOS simulator build passed |
 
-The baseline run did **not** execute suites gated by `WINNOW_DIFF`,
-`WINNOW_SIGNET`, or the checkpoint-generation environment. App/UI tests and an
-iOS release configuration were also outside this run. Those are open evidence
-items, not implied passes.
+The baseline run did **not** execute suites gated by `WINNOW_DIFF` or the
+checkpoint-generation environment. (At the frozen commit two further suites
+were gated by `WINNOW_SIGNET`, which no workflow set; their assertions now run
+on the node lane under `WINNOW_DIFF=1` as `FilterSyncDiffTests`. Since this
+baseline, checkpoint generation and the genesis-versus-checkpoint agreement
+check left the test tree for the `winnow-generate` tool, and the 2,000 headers
+past the checkpoint became a vector that `CheckpointStartTests` connects on
+every CI run.) App/UI tests and an iOS release configuration were also outside
+this run. Those are open evidence items, not implied passes.
 
 ## Size and dependency boundary
 
@@ -130,7 +139,9 @@ MuSig2 nonces. Persistence: none directly. Primary test owners:
 Parsed input and trust boundary: arbitrary peer and DNS bytes. Secrets: none;
 addresses and watched transaction data are privacy-sensitive. Persistence:
 header chain, filter frontier, peer cache, and broadcaster state. Primary test
-owners: `BitcoinP2PTests`, `DifferentialTests`, and wallet integration tests.
+owners: `BitcoinP2PTests` and `DifferentialTests`; the signet assertions that
+were gated by `WINNOW_SIGNET` now run on the node lane under `WINNOW_DIFF=1` as
+`FilterSyncDiffTests`.
 
 - `BitcoinP2P.swift`, `Broadcast/TxBroadcaster.swift`, `Filters/FilterSync.swift`
 - `Headers/HeaderChain.swift`, `Headers/UInt256.swift`, `Mempool/MempoolWindow.swift`

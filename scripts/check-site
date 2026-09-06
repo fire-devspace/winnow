@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Check static website links and require real screenshot data before publishing."""
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+root = Path(__file__).resolve().parent.parent / 'docs'
+errors = []
+
+class Page(HTMLParser):
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+    def handle_starttag(self, tag, attributes):
+        for name, value in attributes:
+            if name not in {'href', 'src', 'poster'} or not value:
+                continue
+            url = urlsplit(value)
+            if url.scheme or url.netloc or not url.path:
+                continue
+            path = (root if url.path.startswith('/') else self.path.parent) / unquote(url.path).lstrip('/')
+            if not any(p.is_file() for p in [path, path.with_suffix('.html'), path / 'index.html']):
+                errors.append(f'{self.path.relative_to(root)}: missing {value}')
+
+pages = sorted(root.rglob('*.html'))
+for path in pages:
+    Page(path).feed(path.read_text())
+for path in root.rglob('*'):
+    if path.is_file() and path.suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp'}:
+        if path.read_bytes().startswith(b'version https://git-lfs.github.com/spec/v1'):
+            errors.append(f'{path.relative_to(root)}: unresolved LFS pointer')
+if errors:
+    raise SystemExit('\n'.join(errors))
+print(f'{len(pages)} pages: local links and image objects verified')
