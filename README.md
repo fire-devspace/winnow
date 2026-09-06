@@ -76,6 +76,11 @@ filter-serving node (Settings → Manual peers); the node needs
 
 ## Screenshots
 
+The resumable public-signet acceptance runner lives in [Tools/Story](Tools/Story/README.md).
+Use `scripts/winnow-story` from this checkout. Its offline tests run in app CI
+against the same published library version as the app; the complete manual
+journey is documented in the [story runbook](.github/internal/story-run.md).
+
 Screenshot PNGs in `docs/screenshots/` are stored in Git LFS. After cloning,
 install Git LFS and download the image objects before viewing or publishing them:
 

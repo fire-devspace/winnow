@@ -45,6 +45,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  story-tests:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Story package tests and wrapper checks
+        run: |
+          set -o pipefail
+          scripts/ci-story 2>&1 | tee "$RUNNER_TEMP/story-tests.log"
+      - name: Upload story test log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: story-tests-${{ github.run_id }}
+          path: ${{ runner.temp }}/story-tests.log
+          if-no-files-found: error
+          retention-days: 14
+
   # The complexity budget from .swiftlint.yml, enforced: SwiftLint exits
   # nonzero on error-level violations (over 8 decision paths) and green on
   # warnings — the single 8 slot is the ratchet's remaining headroom. As of
