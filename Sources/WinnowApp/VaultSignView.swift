@@ -339,12 +339,8 @@ struct VaultSignView: View {
     }
 
     private func validateSpend(_ psbt: PSBT) throws -> Vault.SpendReview {
-        let inputs = try authorizationInputs()
-        let vault = inputs.vault
-        let record = inputs.record
-        return try vault.reviewSpend(psbt, knownUTXOs: record.utxos,
-                                     ownedOutputCoordinates: inputs.coordinates,
-                                     chainTip: model.status.tipHeight)
+        guard let record else { throw SignError.unknownInput }
+        return try model.reviewVaultSpend(psbt, record: record)
     }
 
     private func refreshSpendReview() {
@@ -405,21 +401,13 @@ struct VaultSignView: View {
         error = nil
         operationTask = Task { @MainActor in
             do {
-                let psbt = try await model.withMasterKey(
-                    reason: "Sign this shared-vault transaction") { master in
-                    let inputs = try authorizationInputs()
-                    var candidate = initial
-                    try inputs.vault.partialSign(
-                        &candidate, master: master, knownUTXOs: inputs.record.utxos,
-                        ownedOutputCoordinates: inputs.coordinates,
-                        chainTip: model.status.tipHeight)
-                    return candidate
-                }
+                guard let record else { throw SignError.unknownInput }
+                let psbt = try await model.partialSignVaultSpend(
+                    initial, record: record, reason: "Sign this shared-vault transaction")
                 try Task.checkCancellation()
                 guard accepts(token) else { return }
                 working = psbt
                 output = psbt.base64
-                model.journalPSBT(stage: "multi-a-partial-signed", psbt: psbt)
             } catch is CancellationError {
                 // Inactive/background transitions deliberately abandon output.
             } catch {
@@ -433,19 +421,14 @@ struct VaultSignView: View {
 
     private func finalizeAndBroadcast() {
         guard !broadcasting, broadcastTxid == nil,
-              var psbt = working, let vault, let record else { return }
+              let psbt = working, let record else { return }
         operationTask?.cancel()
         let token = operationEpoch.begin()
         broadcasting = true
         operationTask = Task { @MainActor in
             do {
                 try Task.checkCancellation()
-                let inputs = try authorizationInputs()
-                let transaction = try vault.finalizeSpend(
-                    &psbt, knownUTXOs: inputs.record.utxos,
-                    ownedOutputCoordinates: inputs.coordinates,
-                        chainTip: model.status.tipHeight)
-                let txid = try await commitAndBroadcast(transaction, vault: vault, record: record)
+                let txid = try await model.finalizeAndBroadcastVaultSpend(psbt, record: record)
                 guard accepts(token) else { return }
                 broadcastTxid = txid
             } catch is CancellationError {
@@ -485,7 +468,7 @@ struct VaultSignView: View {
                             &psbt, input: index, context: signingContext, master: master,
                             knownUTXOs: inputs.record.utxos,
                             ownedOutputCoordinates: inputs.coordinates,
-                        chainTip: model.status.tipHeight)
+                            chainTip: model.status.tipHeight)
                     }
                     return (psbt, nonces)
                 }
@@ -533,7 +516,7 @@ struct VaultSignView: View {
                             &psbt, input: index, context: signingContext, master: master,
                             secretNonces: &nonces, knownUTXOs: inputs.record.utxos,
                             ownedOutputCoordinates: inputs.coordinates,
-                        chainTip: model.status.tipHeight)
+                            chainTip: model.status.tipHeight)
                         stagedNonces[index] = nonces
                     }
                     return psbt
@@ -579,7 +562,7 @@ struct VaultSignView: View {
                 let transaction = try vault.finalizeSpend(
                     &psbt, knownUTXOs: inputs.record.utxos,
                     ownedOutputCoordinates: inputs.coordinates,
-                        chainTip: model.status.tipHeight)
+                    chainTip: model.status.tipHeight)
                 let txid = try await commitAndBroadcast(transaction, vault: vault, record: record)
                 guard accepts(token) else { return }
                 broadcastTxid = txid

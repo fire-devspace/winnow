@@ -2,11 +2,12 @@
 
 A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one dependency.
 
-**[Early access on TestFlight](https://testflight.apple.com/join/83djpNE7)** — signet by default. The official beta is planned for 0.9; see the [release roadmap](https://winnowwallet.com/#roadmap).
+**[Early access on TestFlight](https://testflight.apple.com/join/83djpNE7)** — mainnet by default; signet is one Advanced-mode toggle away. The official beta is planned for 0.9; see the [release roadmap](https://winnowwallet.com/#roadmap).
 
 - **Pure P2P by default.** The read side is BIP157/158 compact block filters served by full-node peers — no server ever learns your addresses. Bounded **mempool windows** (short full-relay subscriptions while the Receive or Send screen is open) give 0-conf payment detection and propagation tracking without any server. Design papers, framed around the phone: [design-paper index](.github/internal/design-papers.md).
 - **Taproot today.** Current receiving uses P2TR (BIP86), with no ECDSA signing path. The planned 0.7 P2WSH Safe is a separate, opt-in addition.
-- **Two modern multisig flavors.** MuSig2 (BIP327) n-of-n vaults and script-path k-of-n (`multi_a`, BIP387/388), coordinated over PSBTv2 (BIP370/371/373).
+- **People and shared savings.** An address book of people, each with a public account key so every payment to them gets a fresh address, and savings held together as a Taproot k-of-n that no single key can spend: pick co-owners, choose how many must approve, ask for and give approvals as text. Cards carry public keys only.
+- **Two modern multisig flavors.** MuSig2 (BIP327) n-of-n vaults and script-path k-of-n (`multi_a`, BIP387/388), coordinated over PSBTv2 (BIP370/371/373). Shared savings are the k-of-n form in plain words; Advanced mode shows the descriptors and PSBTs.
 - **Silent Payments are planned.** Full BIP352 receiving is not in this release. The selected approach uses public tweak data served by compatible Bitcoin peers and matched locally, with no dedicated server, indexer fallback or full-chain download on the phone. Implementing and deploying that peer capability is part of the future work.
 - **One runtime dependency:** [`swift-secp256k1`](https://github.com/21-DOT-DEV/swift-secp256k1) (Bitcoin Core's libsecp256k1), pinned.
 - **Warned explorer links** — choose mempool.space or a custom Esplora website; Winnow opens it only after a tap and privacy warning, never as a wallet backend.
@@ -60,7 +61,11 @@ open WinnowApp.xcodeproj
 
 Build the `WinnowApp` scheme and run `WinnowAppTests` on an available iPhone simulator. Library builds and unit/protocol/vector tests belong in [winnowwallet/btc-swift](https://github.com/winnowwallet/btc-swift); this app repository has no root Swift package. The app's exact library release version is in [`project.yml`](project.yml).
 
-Default network for development is signet. Point the app at your own
+Mainnet is the default network, and the app starts in beginner mode: Wallet,
+Send, People, Settings. Turn on Advanced mode in Settings for the test
+network, your own peers, chain verification, the block explorer, fee bumping,
+build details and the raw vault tools; a peer or setting you already have
+stays visible until you remove it. Switch to signet there for development. Point the app at your own
 filter-serving node (Settings → Manual peers); the node needs
 `blockfilterindex=1` and `peerblockfilters=1`.
 
