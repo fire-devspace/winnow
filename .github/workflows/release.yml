@@ -138,7 +138,6 @@ jobs:
           </plist>
           EOF
           xcodebuild -exportArchive -archivePath build/WinnowApp.xcarchive \
-            -derivedDataPath build/DerivedData \
             -exportOptionsPlist build/ExportOptions.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8" \
