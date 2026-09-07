@@ -1,12 +1,27 @@
+import BitcoinCore
 import Foundation
 import Testing
 import TestSupport
 @testable import BitcoinP2P
 
-/// TxBroadcaster against loopback nodes: inv announcement, getdata answer,
-/// pending persistence, confirmation.
-@Suite("TxBroadcaster")
+/// TxBroadcaster's relay behaviour, against loopback nodes: inv announcement
+/// and the getdata answer, the BIP133 fee filter, the backoff table, and the
+/// deprioritisation of a peer that never asks.
+///
+/// Combined from `TxBroadcaster` (minus its store-persistence tests, which are
+/// now in `TxBroadcasterStoreTests.swift`), `TxBroadcaster backoff schedule`
+/// and `Fee filter announcements`. Only the last of the three carried a suite
+/// trait, `.timeLimit(.minutes(2))`; it is the stricter of the three and so it
+/// is the trait this suite keeps.
+@Suite("TxBroadcaster", .timeLimit(.minutes(2)))
 struct TxBroadcasterTests {
+
+    // MARK: - TxBroadcaster
+    //
+    // Announcement, the getdata answer, confirmation and cancellation, the
+    // fee floor. The store-persistence cases these used to sit beside are in
+    // `TxBroadcasterStoreTests`.
+
     @Test("announces witness-tx inv to all peers and answers getdata")
     func announceAndServe() async throws {
         let params = NetworkParams.signet
@@ -235,59 +250,6 @@ struct TxBroadcasterTests {
         await pool.stop()
     }
 
-    @Test("pending store round-trips backoff state and still loads the legacy format")
-    func persistenceRoundTrip() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-txs.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-
-        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
-                                        rebroadcastBaseInterval: .milliseconds(100))
-        let tx = makeFakeSegwitTx()
-        let rawTx = tx.serialized(includeWitness: true)
-        let txid = try await broadcaster.broadcast(rawTx, feeRateSatPerVByte: 2.5)
-
-        // Let at least one backoff attempt fire so `attempt` advances past 0.
-        #expect(await pollUntil { await broadcaster.attemptCount(txid) ?? 0 >= 1 })
-
-        // Then stop the loop before sampling anything. While the broadcaster
-        // runs, `attempt` advances every 100ms, so reading the file and the
-        // live counter are two different moments and pinning either to a
-        // literal 1 is a race, not an invariant (#144).
-        await broadcaster.shutdown()
-
-        // The store carries the raw tx, feerate and next-attempt time.
-        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: store)) as? [String: Any]
-        let record = (json?["transactions"] as? [String: Any])?[txid.hex] as? [String: Any]
-        let persistedAttempt = record?["attempt"] as? Int
-        #expect(record?["rawTx"] as? String == rawTx.hex)
-        #expect(record?["feeRateSatPerVByte"] as? Double == 2.5)
-        #expect(persistedAttempt ?? 0 >= 1, "the fired attempt must reach the store")
-        #expect(record?["nextAttemptAt"] as? Double != nil)
-        #expect(json?["version"] as? Int == 1)
-
-        // A fresh broadcaster restores tx, feerate and schedule. The claim is
-        // that what comes back equals what went to disk -- comparing against
-        // the persisted value rather than a literal is what makes this a
-        // round-trip assertion instead of a timing one.
-        let restored = try TxBroadcaster(pool: pool, storageURL: store,
-                                     rebroadcastBaseInterval: .milliseconds(100))
-        #expect(await restored.pendingTxids == [txid])
-        #expect(await restored.attemptCount(txid) == persistedAttempt)
-        #expect(await restored.nextAttemptDate(txid) != nil)
-
-        try await restored.cancel(txid)
-
-        // The pre-backoff format (txid → rawTx) still loads, due immediately.
-        let legacyStore = tempFileURL("pending-legacy.json")
-        defer { try? FileManager.default.removeItem(at: legacyStore.deletingLastPathComponent()) }
-        let legacy = #"{"transactions": {"\#(txid.hex)": "\#(rawTx.hex)"}}"#
-        try Data(legacy.utf8).write(to: legacyStore)
-        let legacyLoaded = try TxBroadcaster(pool: pool, storageURL: legacyStore)
-        #expect(await legacyLoaded.pendingTxids == [txid])
-        try await legacyLoaded.cancel(txid)
-    }
-
     @Test("stops rebroadcasting on confirmation and on explicit cancel")
     func stopOnConfirmationAndCancel() async throws {
         let params = NetworkParams.signet
@@ -339,170 +301,6 @@ struct TxBroadcasterTests {
         #expect(seen.events.contains { $0 == .cancelled(txid: txid2) })
 
         await pool.stop()
-    }
-
-    @Test("missing, disabled, and loaded persistence are distinguished")
-    func persistenceState() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-state.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-
-        let disabled = try TxBroadcaster(pool: pool)
-        #expect(disabled.persistenceState == .disabled)
-        let missing = try TxBroadcaster(pool: pool, storageURL: store)
-        #expect(missing.persistenceState == .missing)
-
-        let tx = makeFakeSegwitTx()
-        _ = try await missing.broadcast(tx.serialized(includeWitness: true))
-        let loaded = try TxBroadcaster(pool: pool, storageURL: store)
-        #expect(loaded.persistenceState == .loaded(transactionCount: 1))
-    }
-
-    @Test("damaged persistence is rejected as a whole and never rewritten")
-    func damagedPersistenceFailsClosed() throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-damaged.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-        let tx = makeFakeSegwitTx()
-        let raw = tx.serialized(includeWitness: true)
-        let otherTxid = Data(repeating: 0x42, count: 32).hex
-        let bytes = Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw.hex)","attempt":0,"nextAttemptAt":1},"\#(otherTxid)":{"rawTx":"00","attempt":0,"nextAttemptAt":1}}}"#.utf8)
-        try bytes.write(to: store)
-
-        #expect(throws: TxBroadcasterStorageError.self) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-        #expect(try Data(contentsOf: store) == bytes)
-    }
-
-    @Test("txid mismatch, unsupported versions, and hostile retry metadata are rejected")
-    func invalidStoredMetadata() throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-hostile.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-        let tx = makeFakeSegwitTx()
-        let raw = tx.serialized(includeWitness: true).hex
-        let wrongTxid = Data(repeating: 0x24, count: 32).hex
-
-        try Data(#"{"version":2,"transactions":{}}"#.utf8).write(to: store)
-        #expect(throws: TxBroadcasterStorageError.unsupportedVersion(2)) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-
-        try Data(#"{"version":1,"transactions":{"\#(wrongTxid)":{"rawTx":"\#(raw)","attempt":0,"nextAttemptAt":1}}}"#.utf8).write(to: store)
-        #expect(throws: TxBroadcasterStorageError.self) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-
-        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","feeRateSatPerVByte":0,"attempt":0,"nextAttemptAt":1}}}"#.utf8).write(to: store)
-        #expect(throws: TxBroadcasterStorageError.self) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-
-        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","attempt":64,"nextAttemptAt":1}}}"#.utf8).write(to: store)
-        #expect(throws: TxBroadcasterStorageError.self) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-
-        try Data(#"{"version":1,"transactions":{"\#(tx.txid.hex)":{"rawTx":"\#(raw)","attempt":0,"nextAttemptAt":999999999999}}}"#.utf8).write(to: store)
-        #expect(throws: TxBroadcasterStorageError.self) {
-            _ = try TxBroadcaster(pool: pool, storageURL: store)
-        }
-    }
-
-    @Test("invalid fee rates and failed initial writes never create pending relay state")
-    func broadcastPersistenceIsTransactional() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("missing-parent/pending.json")
-        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
-        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store)
-        let raw = makeFakeSegwitTx().serialized(includeWitness: true)
-
-        await #expect(throws: TxBroadcasterError.invalidFeeRate) {
-            try await broadcaster.broadcast(raw, feeRateSatPerVByte: .nan)
-        }
-        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
-            try await broadcaster.broadcast(raw, feeRateSatPerVByte: 1)
-        }
-        #expect(await broadcaster.pendingTxids.isEmpty)
-    }
-
-    @Test("failed confirmation and cancellation writes retain pending state and emit no success")
-    func removalPersistenceIsTransactional() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-removal.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
-                                            rebroadcastBaseInterval: .seconds(3_600))
-        let events = await broadcaster.events()
-        let seen = EventCollector<TxBroadcaster.Event>()
-        let consumer = Task { for await event in events { seen.add(event) } }
-        defer { consumer.cancel() }
-        let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
-        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
-
-        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
-            try await broadcaster.markConfirmed(txid, atHeight: 1)
-        }
-        await #expect(throws: TxBroadcasterStorageError.writeFailed) {
-            try await broadcaster.cancel(txid)
-        }
-        #expect(await broadcaster.pendingTxids == [txid])
-        #expect(!seen.events.contains { $0 == .confirmed(txid: txid) })
-        #expect(!seen.events.contains { $0 == .cancelled(txid: txid) })
-    }
-
-    @Test("failed retry persistence halts automatic announcements and reports the error")
-    func retryPersistenceFailureStopsLoop() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-retry.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
-                                            rebroadcastBaseInterval: .milliseconds(100))
-        let events = await broadcaster.events()
-        let seen = EventCollector<TxBroadcaster.Event>()
-        let consumer = Task { for await event in events { seen.add(event) } }
-        defer { consumer.cancel() }
-        let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
-        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
-
-        #expect(await pollUntil {
-            seen.events.contains { if case .persistenceFailed = $0 { return true }; return false }
-        })
-        #expect(await broadcaster.attemptCount(txid) == 0)
-        let announcementCount = seen.events.filter {
-            if case let .announced(id, _) = $0 { return id == txid }
-            return false
-        }.count
-        try await Task.sleep(for: .milliseconds(350))
-        #expect(seen.events.filter {
-            if case let .announced(id, _) = $0 { return id == txid }
-            return false
-        }.count == announcementCount)
-    }
-
-    @Test("shutdown clears only the live session and leaves durable relay state for reconnect")
-    func shutdownPreservesStore() async throws {
-        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
-        let store = tempFileURL("pending-shutdown.json")
-        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
-        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
-                                            rebroadcastBaseInterval: .seconds(3_600))
-        let raw = makeFakeSegwitTx().serialized(includeWitness: true)
-        let txid = try await broadcaster.broadcast(raw)
-
-        await broadcaster.shutdown()
-        #expect(await broadcaster.pendingTxids.isEmpty)
-        await #expect(throws: TxBroadcasterError.stopped) {
-            try await broadcaster.broadcast(raw)
-        }
-        await #expect(throws: TxBroadcasterError.stopped) {
-            try await broadcaster.cancel(txid)
-        }
-
-        let reconnected = try TxBroadcaster(pool: pool, storageURL: store)
-        #expect(await reconnected.pendingTxids == [txid])
-        try await reconnected.cancel(txid)
     }
 
     @Test("emits feeFloorExceeded when every peer's feefilter exceeds the tx feerate")
@@ -569,6 +367,187 @@ struct TxBroadcasterTests {
         #expect(seen.events.contains { $0 == .feeFloorExceeded(txid: txid, floor: 2_000) })
 
         await pool.stop()
+    }
+
+    // MARK: - TxBroadcaster backoff schedule
+    //
+    // The rebroadcast backoff policy, checked without a clock.
+    //
+    // The integration test above proves attempts fire and the schedule
+    // advances; it deliberately does not measure step sizes, because it
+    // samples the schedule by polling and a late poll inflates the
+    // measurement. The step sizes live here instead, where they are a pure
+    // function of the attempt count and the configured intervals (#138).
+
+    /// Every (base, cap, attempt) the schedule is pinned at, with the interval
+    /// it must produce. The cap is inclusive — the guard is `<`, so the moment
+    /// doubling would *reach* the cap the cap is taken — and no attempt past
+    /// that point, however large, ever schedules beyond it.
+    static let steps: [(base: Duration, cap: Duration, attempt: Int, expected: Duration)] = [
+        // Doubles from the base on every attempt until the cap, then holds:
+        // 200 doubled is 400, past the cap, so the cap is taken instead.
+        (.milliseconds(100), .milliseconds(250), 0, .milliseconds(100)),
+        (.milliseconds(100), .milliseconds(250), 1, .milliseconds(200)),
+        (.milliseconds(100), .milliseconds(250), 2, .milliseconds(250)),
+        (.milliseconds(100), .milliseconds(250), 3, .milliseconds(250)),
+        (.milliseconds(100), .milliseconds(250), 50, .milliseconds(250)),
+        // Doubling 100ms lands exactly on the 200ms cap: the cap wins, and the
+        // boundary case does not produce a longer interval than the cap.
+        (.milliseconds(100), .milliseconds(200), 1, .milliseconds(200)),
+        // An uncapped schedule is exactly base × 2^attempt.
+        (.seconds(1), .seconds(3_600), 0, .seconds(1)),
+        (.seconds(1), .seconds(3_600), 1, .seconds(2)),
+        (.seconds(1), .seconds(3_600), 2, .seconds(4)),
+        (.seconds(1), .seconds(3_600), 3, .seconds(8)),
+        (.seconds(1), .seconds(3_600), 4, .seconds(16)),
+        (.seconds(1), .seconds(3_600), 5, .seconds(32)),
+        (.seconds(1), .seconds(3_600), 6, .seconds(64)),
+        (.seconds(1), .seconds(3_600), 7, .seconds(128)),
+        (.seconds(1), .seconds(3_600), 8, .seconds(256)),
+        (.seconds(1), .seconds(3_600), 9, .seconds(512)),
+        (.seconds(1), .seconds(3_600), 10, .seconds(1_024)),
+        // The shipped defaults double six times before capping at an hour:
+        // 1,920 doubled is 3,840 — past the hour cap, so the cap is taken.
+        (.seconds(60), .seconds(3_600), 0, .seconds(60)),
+        (.seconds(60), .seconds(3_600), 1, .seconds(120)),
+        (.seconds(60), .seconds(3_600), 2, .seconds(240)),
+        (.seconds(60), .seconds(3_600), 3, .seconds(480)),
+        (.seconds(60), .seconds(3_600), 4, .seconds(960)),
+        (.seconds(60), .seconds(3_600), 5, .seconds(1_920)),
+        (.seconds(60), .seconds(3_600), 6, .seconds(3_600)),
+        // ...and no later attempt schedules beyond the cap, out to the
+        // counter's saturation point (`retryCounterSaturates` below).
+        (.seconds(60), .seconds(3_600), 7, .seconds(3_600)),
+        (.seconds(60), .seconds(3_600), 32, .seconds(3_600)),
+        (.seconds(60), .seconds(3_600), 63, .seconds(3_600)),
+        (.seconds(60), .seconds(3_600), 64, .seconds(3_600)),
+        // A cap below the base is a degenerate configuration, but it must not
+        // return an interval longer than the cap the caller asked for.
+        (.seconds(60), .seconds(10), 0, .seconds(10)),
+    ]
+
+    @Test("the interval is base × 2^attempt, capped inclusively and held there",
+          arguments: Self.steps)
+    func stepIsPinned(_ row: (base: Duration, cap: Duration, attempt: Int, expected: Duration)) {
+        let interval = TxBroadcaster.backoffInterval(attempt: row.attempt, base: row.base, cap: row.cap)
+        #expect(interval == row.expected,
+                "attempt \(row.attempt) from \(row.base) capped at \(row.cap)")
+        #expect(interval <= row.cap, "attempt \(row.attempt) exceeded the cap")
+    }
+
+    /// The retry counter saturates instead of growing without bound, and the
+    /// reason is not tidiness: `load` refuses any record whose attempt is
+    /// outside `0...maximumAttempt`, and it refuses by throwing for the whole
+    /// file. So an unclamped counter does not cost one transaction -- it makes
+    /// the entire pending store unloadable, and every transaction waiting in it
+    /// is forgotten at the next launch.
+    ///
+    /// That state is reachable in practice. At the shipped defaults the
+    /// interval caps at an hour, so a transaction still unconfirmed after
+    /// roughly two and a half days has fired 64 attempts. Driven here with a
+    /// 1ms interval and no peers, so it is arithmetic rather than a wait.
+    @Test("the retry counter saturates, leaving the store loadable")
+    func retryCounterSaturates() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let store = tempFileURL("pending-saturate.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .milliseconds(1),
+                                            maxRebroadcastInterval: .milliseconds(1))
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+
+        // Run past the ceiling, then let it keep firing: the point is that it
+        // stops climbing, not merely that it arrives.
+        var saturated = false
+        let deadline = ContinuousClock.now + .seconds(60) // hang-guard, not a deadline
+        while ContinuousClock.now < deadline {
+            if await broadcaster.attemptCount(txid) ?? 0 >= 63 { saturated = true; break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(saturated)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await broadcaster.attemptCount(txid) == 63,
+                "the counter must hold at the ceiling rather than climb past it")
+        await broadcaster.shutdown()
+
+        // The consequence that actually matters: the store still loads, so the
+        // transaction is still being rebroadcast after a restart.
+        let reloaded = try TxBroadcaster(pool: pool, storageURL: store,
+                                         rebroadcastBaseInterval: .milliseconds(1),
+                                         maxRebroadcastInterval: .milliseconds(1))
+        #expect(await reloaded.pendingTxids == [txid],
+                "a saturated counter must not make the pending store unloadable")
+        await reloaded.shutdown()
+    }
+
+    /// The signed bytes stay reachable while a transaction is pending.
+    ///
+    /// Winnow relays over its own peers with no fallback submission path, so
+    /// when relay is not working the transaction itself is the only thing that
+    /// can leave the device. Handing the user a txid for something no one has
+    /// seen is not much use; handing them the bytes is an escape hatch.
+    @Test("a pending transaction's raw bytes can be read back")
+    func rawTransactionIsRecoverable() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(60))
+        let raw = makeFakeSegwitTx().serialized(includeWitness: true)
+        let txid = try await broadcaster.broadcast(raw)
+
+        #expect(await broadcaster.rawTransaction(txid) == raw,
+                "the bytes handed back must be the bytes that were signed")
+
+        // Unknown txids are simply absent rather than an error.
+        #expect(await broadcaster.rawTransaction(Data(repeating: 0xFF, count: 32)) == nil)
+
+        // Once it confirms it is on the chain, and the txid is the handle.
+        try await broadcaster.markConfirmed(txid, atHeight: 1)
+        #expect(await broadcaster.rawTransaction(txid) == nil)
+        await broadcaster.shutdown()
+    }
+
+    // MARK: - Fee filter announcements
+    //
+    // BIP133: a peer whose fee filter is above a transaction's rate has said
+    // it will drop the bytes unread. Announcing to it is noise, and the
+    // deprioritization it would earn hides the real reason.
+
+    @Test("a peer whose fee filter refuses the transaction is not announced to until the filter drops")
+    func feeFilterSkipsPeer() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        _ = await node.nextMessage(command: "verack", timeout: .seconds(10))
+
+        // 100 sat/vB: nothing this test sends clears it.
+        try await node.send(.feefilter(100_000))
+        let peer = try #require(await pool.connectedPeers().first)
+        for _ in 0 ..< 100 where await peer.feeFilter != 100_000 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(await peer.feeFilter == 100_000)
+
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .milliseconds(300),
+                                            maxRebroadcastInterval: .milliseconds(600),
+                                            announcementTimeout: .seconds(30))
+        defer { Task { await broadcaster.shutdown() } }
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true), feeRateSatPerVByte: 2)
+        #expect(await node.nextMessage(command: "inv", timeout: .seconds(1)) == nil,
+                "the peer said it would drop it; no announcement")
+        #expect(await broadcaster.relayStatus(txid).isEmpty,
+                "skipped, not marked: no relay state was recorded against the peer")
+
+        // The filter drops to 1 sat/vB; the next scheduled attempt announces.
+        try await node.send(.feefilter(1_000))
+        #expect(await node.nextMessage(command: "inv", timeout: .seconds(10)) != nil,
+                "a filter that later allows the transaction lets the peer back in")
     }
 }
 

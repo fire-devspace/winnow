@@ -3,10 +3,21 @@ import Testing
 import TestSupport
 @testable import BitcoinP2P
 
-/// HeaderChain: PoW-checked connect, fork choice, locator, persistence —
-/// over a synthetic mined chain (bits 0x207fffff, so PoW is real but trivial).
+/// HeaderChain by subject: consensus and fork choice, the shipped mainnet
+/// checkpoint, starting somewhere other than block 0 and the policy that
+/// chooses where, replayed headers, and reorg visibility.
+///
+/// Combined from `HeaderChainTests` (which already held four suites in one
+/// file), `HeaderReplayTests` and `ReorgVisibilityTests`. None of those suites
+/// carried a trait, so they are sections of this one suite rather than nested
+/// suites; every test keeps its display name and its source order.
 @Suite("HeaderChain")
 struct HeaderChainTests {
+    // MARK: - HeaderChain
+    //
+    // PoW-checked connect, fork choice, locator, persistence — over a
+    // synthetic mined chain (bits 0x207fffff, so PoW is real but trivial).
+
     @Test("connects valid headers and tracks work")
     func connect() async throws {
         let chain = makeSyntheticChain(length: 5, watchHeight: 6)
@@ -298,13 +309,13 @@ struct HeaderChainTests {
             nonce &+= 1
         }
     }
-}
 
-/// A shipped checkpoint is a constant someone has to trust, so it should be
-/// impossible to get wrong quietly. These are the checks that can run without
-/// the 900,000 headers it was derived from (#89).
-@Suite("Mainnet checkpoint")
-struct MainnetCheckpointTests {
+    // MARK: - Mainnet checkpoint
+    //
+    // A shipped checkpoint is a constant someone has to trust, so it should be
+    // impossible to get wrong quietly. These are the checks that can run
+    // without the 900,000 headers it was derived from (#89).
+
     private var checkpoint: NetworkParams.Checkpoint {
         get throws {
             guard let cp = NetworkParams.params(for: .mainnet).checkpoint else {
@@ -360,22 +371,22 @@ struct MainnetCheckpointTests {
         #expect(work > single)
         #expect(cp.height == 900_000)
     }
-}
 
+    // MARK: - Checkpoint start
+    //
+    // Starting the chain somewhere other than block 0, end to end (#89 phase
+    // 3).
+    //
+    // These run everywhere. The fixtures are block 900,001's header and the
+    // 2,000 real mainnet headers after the checkpoint, 160 KB of hex, which is
+    // enough to make a checkpoint-rooted chain do real proof-of-work checks at
+    // mainnet difficulty — across the retarget at 901,152 — and write and
+    // reread a real file. What they cannot prove is the checkpoint's
+    // chainwork: that number summarises the 900,000 headers below it, and only
+    // `winnow-generate checkpoint`, run against a genesis-validated header file
+    // at release time, recomputes it and proves the genesis-rooted and
+    // checkpoint-rooted chains agree (Tools/Generate/README.md).
 
-/// Starting the chain somewhere other than block 0, end to end (#89 phase 3).
-///
-/// These run everywhere. The fixtures are block 900,001's header and the
-/// 2,000 real mainnet headers after the checkpoint, 160 KB of hex, which is
-/// enough to make a checkpoint-rooted chain do real proof-of-work checks at
-/// mainnet difficulty — across the retarget at 901,152 — and write and reread
-/// a real file. What they cannot prove is the checkpoint's chainwork: that
-/// number summarises the 900,000 headers below it, and only
-/// `winnow-generate checkpoint`, run against a genesis-validated header file
-/// at release time, recomputes it and proves the genesis-rooted and
-/// checkpoint-rooted chains agree (Tools/Generate/README.md).
-@Suite("Checkpoint start")
-struct CheckpointStartTests {
     /// The block right after the shipped mainnet checkpoint.
     /// 00000000000000000001a8ff030609a6248e0f6e77f9f141aeb21e4eac4f83fc
     static let block900_001 = Data(hex:
@@ -508,15 +519,14 @@ struct CheckpointStartTests {
         let reopened = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
         #expect(await reopened.startHeight == 0)
     }
-}
 
+    // MARK: - Checkpoint start policy
+    //
+    // Choosing where to start for a given wallet (#89 phase 3).
+    //
+    // This is the rule that keeps a speed optimisation from becoming a wrong
+    // balance, so it is worth stating case by case.
 
-/// Choosing where to start for a given wallet (#89 phase 3).
-///
-/// This is the rule that keeps a speed optimisation from becoming a wrong
-/// balance, so it is worth stating case by case.
-@Suite("Checkpoint start policy")
-struct CheckpointStartPolicyTests {
     private let mainnet = NetworkParams.params(for: .mainnet).checkpoint
     private var cpHeight: UInt32 { mainnet?.height ?? 0 }
 
@@ -559,5 +569,251 @@ struct CheckpointStartPolicyTests {
         #expect(NetworkParams.params(for: .signet).checkpoint == nil)
         #expect(HeaderChain.Start.forWallet(birthday: 900_000, checkpoint: nil,
                                             verifyFromGenesis: false) == .genesis)
+    }
+
+    // MARK: - Header replay
+    //
+    // A `headers` message the peer sent on its own — the BIP130 announcement
+    // of a new block — or a reply that was still waiting when its request had
+    // already been answered from the backlog, used to be handed back as the
+    // answer to the next getheaders. The chain then read one already-known
+    // header as a competing branch with no more work, and the pool condemned
+    // the peer for the session. Found by the storefront capture on the signet
+    // fixture, where the only peer was the user's own node.
+
+    @Test("a headers message that arrived before the request is not its reply")
+    func staleBacklogIsNotTheReply() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 8)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let peer = PeerConnection(endpoint: await node.endpoint, params: synthetic.params)
+        try await peer.connect()
+        defer { Task { await peer.disconnect() } }
+
+        // The node announces its tip, unasked, and the announcement lands in
+        // the connection's backlog before anyone asks for headers.
+        try await node.send(.headers([synthetic.blocks[6].header]))
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Asked from genesis, the node's real answer is the whole chain.
+        let locator = GetHeadersMessage(version: PeerConnection.protocolVersion,
+                                        locatorHashes: [synthetic.blocks[0].hash])
+        let reply = try await peer.request(.getheaders(locator), expecting: ["headers"])
+        guard case let .headers(batch) = reply else {
+            Issue.record("expected headers, got \(reply.command)")
+            return
+        }
+        #expect(batch.count == 6, "the announcement was returned in place of the reply")
+        #expect(batch.first?.hash == synthetic.blocks[1].hash)
+    }
+
+    @Test("announcements and stale replies do not stall or condemn a header sync")
+    func syncSurvivesReplayedHeaders() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 8)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let peer = PeerConnection(endpoint: await node.endpoint, params: synthetic.params)
+        try await peer.connect()
+        defer { Task { await peer.disconnect() } }
+        let chain = try HeaderChain(params: synthetic.params)
+
+        // First sync from genesis, with the tip announced twice beforehand.
+        try await node.send(.headers([synthetic.blocks[6].header]))
+        try await node.send(.headers([synthetic.blocks[6].header]))
+        try await Task.sleep(for: .milliseconds(200))
+        let first = try await chain.sync(using: peer)
+        #expect(first.connected == 6)
+        #expect(await chain.height == 6)
+
+        // Already at the tip: a stale copy of a lower header and another
+        // announcement of the tip sit in the backlog. Neither is news, and
+        // neither is a branch.
+        try await node.send(.headers([synthetic.blocks[5].header]))
+        try await node.send(.headers([synthetic.blocks[6].header]))
+        try await Task.sleep(for: .milliseconds(200))
+        let second = try await chain.sync(using: peer)
+        #expect(second.connected == 0)
+        #expect(second.minForkHeight == nil)
+        #expect(await chain.height == 6)
+        #expect(await chain.tipHash == synthetic.blocks[6].hash)
+    }
+
+    @Test("a peer on the losing block of a race is not condemned")
+    func staleSiblingIsAStateNotALie() async throws {
+        // Our chain has the winning block 6; the peer's ends in a sibling of
+        // it, mined on the same parent with the same work. Its every reply
+        // to getheaders is that sibling, which no backlog purge can hide.
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 8)
+        let parent = synthetic.blocks[5]
+        let sibling = minedHeader(previousHash: parent.hash,
+                                  merkleRoot: Data(repeating: 0xEE, count: 32),
+                                  time: synthetic.blocks[6].header.time + 1)
+        let losingChain = Array(synthetic.blocks[0 ... 5])
+            + [Block(header: sibling, transactions: synthetic.blocks[6].transactions)]
+        let node = LoopbackNode(params: synthetic.params, chain: losingChain)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let peer = PeerConnection(endpoint: await node.endpoint, params: synthetic.params)
+        try await peer.connect()
+        defer { Task { await peer.disconnect() } }
+
+        let chain = try HeaderChain(params: synthetic.params)
+        try await chain.connect(synthetic.blocks.dropFirst().map(\.header))
+        #expect(await chain.height == 6)
+
+        let outcome = try await chain.sync(using: peer)
+        #expect(outcome.connected == 0)
+        #expect(outcome.minForkHeight == nil)
+        #expect(outcome.staleSiblings == HeaderChain.maxReplayedBatches + 1)
+        #expect(await chain.height == 6)
+        #expect(await chain.tipHash == synthetic.blocks[6].hash, "the winning block stays the tip")
+    }
+
+    @Test("a lighter branch longer than one block is still a fault")
+    func lighterLongerBranchIsStillAFault() async throws {
+        // Two blocks forking two below the tip, equal work: not the shape
+        // of a race, and the chain keeps refusing it as before.
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 8)
+        let headerChain = try HeaderChain(params: synthetic.params)
+        try await headerChain.connect(synthetic.blocks.dropFirst().map(\.header))
+        let first = minedHeader(previousHash: synthetic.blocks[4].hash,
+                                merkleRoot: Data(repeating: 0xEE, count: 32), time: 1_600_090_000)
+        let second = minedHeader(previousHash: first.hash,
+                                 merkleRoot: Data(repeating: 0xEF, count: 32), time: 1_600_090_600)
+        await #expect(throws: HeaderChainError.reorgWithoutMoreWork) {
+            try await headerChain.connect([first, second])
+        }
+        #expect(await headerChain.tipHash == synthetic.blocks[6].hash)
+    }
+
+    // MARK: - Reorg visibility
+    //
+    // A reorg must not be silent (epic #100, invariant S5).
+    //
+    // `connect` returns how many headers it appended and nothing else, so an
+    // ordinary extension and a branch swap that disconnected blocks look
+    // identical to the caller. That matters because the wallet scans forward
+    // only: once its frontier has passed a height it never revisits it. If a
+    // reorg removes a block the wallet already credited, and nothing says so,
+    // the wallet keeps describing a branch that no longer exists — a payment
+    // stays "confirmed" and a coin stays spendable when neither is true on
+    // chain.
+    //
+    // The reporting used to be a sticky `lastReorg` property, which was the
+    // wrong shape twice over: a consumer could read the same value again after
+    // later ordinary syncs and roll back a second time, and two swaps inside
+    // one sync collapsed into whichever happened last, losing the deeper one. A
+    // batch now reports its own fork height, and a sync reports the lowest it
+    // saw.
+
+    /// Builds a branch of `count` headers descending from `parent`. The tag
+    /// makes each branch's hashes distinct.
+    static func branch(from parent: Data, count: Int, tag: UInt8, fromTime time: UInt32) -> [BlockHeader] {
+        var headers: [BlockHeader] = []
+        var previous = parent
+        for index in 0 ..< count {
+            let header = minedHeader(previousHash: previous,
+                                     merkleRoot: Data(repeating: tag, count: 32),
+                                     time: time + UInt32(index) * 600)
+            headers.append(header)
+            previous = header.hash
+        }
+        return headers
+    }
+
+    /// An ordinary sync is not a reorg and must not look like one.
+    @Test("extending the tip records no reorg")
+    func plainExtensionRecordsNothing() async throws {
+        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
+        let headerChain = try HeaderChain(params: chain.params)
+        let extension_ = Self.branch(from: chain.blocks[0].hash, count: 4,
+                                     tag: 0xAA, fromTime: 1_600_010_000)
+        let outcome = try await headerChain.connect(extension_)
+        #expect(await headerChain.height == 4)
+        #expect(outcome.forkHeight == nil)
+        #expect(outcome.appended == 4)
+    }
+
+    /// A branch swap reports where the branches diverged and how much was
+    /// thrown away — the two facts a consumer needs in order to rewind.
+    @Test("a branch swap reports its fork height and how much it disconnected")
+    func branchSwapIsReported() async throws {
+        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
+        let headerChain = try HeaderChain(params: chain.params)
+        let original = Self.branch(from: chain.blocks[0].hash, count: 3,
+                                   tag: 0xAA, fromTime: 1_600_010_000)
+        let extended = try await headerChain.connect(original)
+        #expect(await headerChain.height == 3)
+        #expect(extended.forkHeight == nil)
+
+        // A competing branch from genesis that ends up longer.
+        let longer = Self.branch(from: chain.blocks[0].hash, count: 5,
+                                 tag: 0xCC, fromTime: 1_600_030_000)
+        let swap = try await headerChain.connect(longer)
+
+        #expect(swap.forkHeight == 0, "both branches descend from genesis")
+        #expect(swap.disconnectedHeaders == 3, "all three original headers were disconnected")
+        #expect(await headerChain.height == 5)
+        #expect(await headerChain.tipHash == longer[4].hash)
+    }
+
+    /// A refused reorg changes nothing, so it must not be reported either —
+    /// otherwise a consumer would rewind for a branch that was rejected.
+    @Test("a refused reorg is not reported")
+    func refusedReorgIsNotReported() async throws {
+        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
+        let headerChain = try HeaderChain(params: chain.params)
+        _ = try await headerChain.connect(Self.branch(from: chain.blocks[0].hash, count: 3,
+                                                      tag: 0xAA, fromTime: 1_600_010_000))
+
+        let shorter = Self.branch(from: chain.blocks[0].hash, count: 2,
+                                  tag: 0xBB, fromTime: 1_600_020_000)
+        await #expect(throws: HeaderChainError.reorgWithoutMoreWork) {
+            _ = try await headerChain.connect(shorter)
+        }
+        #expect(await headerChain.height == 3, "the refused branch changed nothing")
+
+        // Nothing was reported because nothing was returned: a throw carries no
+        // outcome, so there is no value a consumer could rewind on. The next
+        // ordinary batch confirms the refusal left no residue behind it.
+        let afterwards = try await headerChain.connect(
+            Self.branch(from: (await headerChain.tipHash), count: 1,
+                        tag: 0xEE, fromTime: 1_600_040_000))
+        #expect(afterwards.forkHeight == nil,
+                "a branch that was refused must not look like one that was applied")
+        #expect(await headerChain.height == 4)
+    }
+
+    /// Two swaps in one sync must not collapse into the shallower one.
+    ///
+    /// This is the case the sticky property got wrong: it kept whichever
+    /// happened last, so a sync that first forked at height 0 and then at
+    /// height 1 reported 1, and a rollback to 1 would leave everything above
+    /// height 0 from the discarded branch in place. Taking the minimum is what
+    /// makes collapsing harmless.
+    @Test("a sync reports the lowest fork of several")
+    func syncReportsTheLowestFork() async throws {
+        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
+        let headerChain = try HeaderChain(params: chain.params)
+        _ = try await headerChain.connect(Self.branch(from: chain.blocks[0].hash, count: 2,
+                                                      tag: 0xAA, fromTime: 1_600_010_000))
+
+        var outcome = HeaderChain.SyncOutcome()
+
+        // Deeper swap first: forks at the genesis block, height 0.
+        let second = Self.branch(from: chain.blocks[0].hash, count: 4,
+                                 tag: 0xCC, fromTime: 1_600_030_000)
+        outcome.absorb(try await headerChain.connect(second))
+        #expect(outcome.minForkHeight == 0)
+
+        // Then a shallower one, forking at height 1.
+        let third = Self.branch(from: second[0].hash, count: 6,
+                                tag: 0xDD, fromTime: 1_600_050_000)
+        outcome.absorb(try await headerChain.connect(third))
+        #expect(outcome.minForkHeight == 0,
+                "the shallower swap must not hide the deeper one")
+        #expect(outcome.disconnectedHeaders == 5)
     }
 }
