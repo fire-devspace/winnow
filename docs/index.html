@@ -44,7 +44,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Create the wallet before network sync finishes.</li>
 <li>Complete the backup; reopen and reveal it only through the protected flow.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L117">test01OnboardingCreateWallet</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1170">test09BackupResumeAndReveal</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L117">test01OnboardingCreateWallet</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1213">test09BackupResumeAndReveal</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="receive">
 <h2>Receive and recognize a payment</h2><p>Show a fresh address and QR code. While Receive is open, peer-relayed payments appear as unconfirmed; confirmed payments enter the wallet’s history.</p>
@@ -53,14 +53,15 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Mine a payment and find it through compact filters.</li>
 <li>Receive a normal transaction before mining it, then observe its confirmation in the app.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L167">test02ReceiveAndFunding</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1375">test14IncomingPaymentBeforeConfirmation</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L167">test02ReceiveAndFunding</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1418">test14IncomingPaymentBeforeConfirmation</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="send">
-<h2>Review, send, and follow confirmation</h2><p>Enter a destination and amount, review the fee and change, then authorize the payment. Follow it from relay to confirmation.</p>
+<h2>Review, send, and follow confirmation</h2><p>Choose a recipient and enter an amount. Review the full address, network fee, and total on the next screen, then send and follow confirmation.</p>
 <img class="app-shot" src="screenshots/06-send-review.png" width="1320" height="2868" loading="lazy" alt="Review, send, and follow confirmation in the signet test app.">
 <details><summary>How this journey is checked</summary><ol>
-<li>Fill the actual send form and review the transaction.</li>
-<li>Check that the node received the payment and the app later shows it confirmed.</li>
+<li>Enter a recipient and amount without fee controls crowding the form.</li>
+<li>Edit a reviewed payment, then verify the new amount, full address, fee, and total before sending.</li>
+<li>Check that Bitcoin Core received the payment, open its diagnostics, and follow confirmation in the app.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L227">test03Send</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
@@ -71,7 +72,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Import a card and choose the person from the app.</li>
 <li>Review and send the payment; verify the destination and next-address behavior.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L680">test10PeopleAddAndPay</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L718">test10PeopleAddAndPay</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="savings">
 <h2>Share control with other people</h2><p>Choose a threshold such as 2 of 3: any two keys can approve a payment while one is unavailable. Start from Savings on the Wallet screen.</p>
@@ -82,7 +83,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Create shared savings from the Wallet screen and choose the co-owners and threshold.</li>
 <li>Fund the savings, review a request, and complete two approvals while the third signer stays absent.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L837">test12SharedSavingsCreateAndAsk</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L522">test07ApproveRequest</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L880">test12SharedSavingsCreateAndAsk</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L560">test07ApproveRequest</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="recovery">
 <h2>Export and restore a wallet</h2><p>Export a history-carrying bundle and verify it when importing. Secret-bearing exports require an explicit protected action.</p>
@@ -91,16 +92,16 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Export watch-only and secret-bearing bundles through their distinct controls.</li>
 <li>Import a funded bundle and check its verification report and wallet state.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L433">test06ImportBundleVerification</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1296">test08ExportBundle</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L471">test06ImportBundleVerification</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1339">test08ExportBundle</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="controls">
 <h2>Keep everyday controls simple</h2><p>Use Wallet, Send, People, and Settings without protocol controls crowding the normal flow. Turn on Advanced mode when those controls are useful.</p>
 <img class="app-shot" src="screenshots/23-settings-beginner.png" width="1320" height="2868" loading="lazy" alt="Keep everyday controls simple in the signet test app.">
 <details><summary>How this journey is checked</summary><ol>
 <li>Check the beginner navigation and hidden advanced controls.</li>
-<li>Turn Advanced mode on and verify the controls become available.</li>
+<li>Turn Advanced mode on to reveal fee and peer controls, then hide them again.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L775">test11BeginnerShellHidesAdvancedControls</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L810">test11BeginnerShellHidesAdvancedControls</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section id="evidence"><h2>What the evidence means</h2>
 <p>Each journey above links to tests that drive the actual app against a disposable signet node. Images show test wallets. A screenshot or a test’s presence in the source is not a passing result: inspect the linked run for its revision, failures, and result bundle.</p>

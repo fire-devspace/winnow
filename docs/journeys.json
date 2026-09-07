@@ -34,10 +34,11 @@
     "id": "send",
     "section": "everyday",
     "title": "Review, send, and follow confirmation",
-    "description": "Enter a destination and amount, review the fee and change, then authorize the payment. Follow it from relay to confirmation.",
+    "description": "Choose a recipient and enter an amount. Review the full address, network fee, and total on the next screen, then send and follow confirmation.",
     "journey": [
-      "Fill the actual send form and review the transaction.",
-      "Check that the node received the payment and the app later shows it confirmed."
+      "Enter a recipient and amount without fee controls crowding the form.",
+      "Edit a reviewed payment, then verify the new amount, full address, fee, and total before sending.",
+      "Check that Bitcoin Core received the payment, open its diagnostics, and follow confirmation in the app."
     ],
     "tests": [
       "test03Send"
@@ -114,7 +115,7 @@
     "description": "Use Wallet, Send, People, and Settings without protocol controls crowding the normal flow. Turn on Advanced mode when those controls are useful.",
     "journey": [
       "Check the beginner navigation and hidden advanced controls.",
-      "Turn Advanced mode on and verify the controls become available."
+      "Turn Advanced mode on to reveal fee and peer controls, then hide them again."
     ],
     "tests": [
       "test11BeginnerShellHidesAdvancedControls"

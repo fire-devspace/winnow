@@ -236,28 +236,54 @@ final class WinnowAppUITests: XCTestCase {
         })
 
         app.tabBars.buttons["Send"].tap()
+        XCTAssertFalse(app.buttons["reviewButton"].isEnabled)
+        XCTAssertFalse(app.textFields["feeOverrideField"].exists)
+        XCTAssertFalse(app.staticTexts["Network floor"].exists)
         app.typeInto("destinationField", destination)
-        app.typeInto("amountField", "1000000")
-        Screenshots.capture(app, "05-send-form", testCase: self)
-
+        app.typeInto("amountField", "100000")
         app.buttons["reviewButton"].tap()
-        // The Review section is appended below the fold; SwiftUI Forms
-        // materialize rows lazily, so scroll it into existence.
         let sendButton = app.buttons["sendButton"]
-        if !scrollUntilExists(app, sendButton, maxSwipes: 5) {
-            Screenshots.capture(app, "debug-03-scrolled", testCase: self)
-            print("E2E debug buttons after scroll: \(app.buttons.allElementsBoundByIndex.map(\.identifier))")
-            app.buttons["reviewButton"].tap() // in case the tap was eaten by the keyboard
-            _ = scrollUntilExists(app, sendButton, maxSwipes: 5)
-        }
-        if !sendButton.exists {
-            _ = scrollUntilExists(app, app.staticTexts["sendError"], up: true)
-            if app.staticTexts["sendError"].exists {
-                print("E2E send error: \(app.staticTexts["sendError"].label)")
-            }
-            Screenshots.capture(app, "debug-03-send", testCase: self)
-        }
-        XCTAssertTrue(sendButton.exists, "no review section")
+        XCTAssertTrue(sendButton.waitForExistence(timeout: 30), "review did not replace the form")
+        XCTAssertTrue(sendButton.isHittable, "sending should not require scrolling past the form")
+        XCTAssertEqual(app.staticTexts["reviewDestination"].label, destination, "show the full address")
+        XCTAssertFalse(app.textFields["amountField"].exists)
+
+        // Editing preserves the fields and withdraws authorization. Only a
+        // fresh review of the changed amount can expose Send again.
+        app.buttons["editPaymentButton"].tap()
+        XCTAssertEqual(app.textFields["destinationField"].value as? String, destination)
+        XCTAssertEqual(app.textFields["amountField"].value as? String, "100000")
+        XCTAssertFalse(sendButton.exists)
+        app.typeInto("amountField", String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "1000000")
+        Screenshots.capture(app, "05-send-form", testCase: self)
+        app.buttons["reviewButton"].tap()
+        XCTAssertTrue(sendButton.waitForExistence(timeout: 30))
+        XCTAssertTrue(sendButton.isHittable)
+        let amount = try XCTUnwrap(app.staticTexts["reviewAmount"].value as? String)
+        let fee = try XCTUnwrap(app.staticTexts["reviewFee"].value as? String)
+        let total = try XCTUnwrap(app.staticTexts["reviewTotal"].value as? String)
+        XCTAssertEqual(Int64(amount.filter(\.isNumber)), 1_000_000)
+        XCTAssertEqual(Int64(total.filter(\.isNumber)), 1_000_000 + (try XCTUnwrap(Int64(fee.filter(\.isNumber)))))
+        XCTAssertFalse(app.staticTexts["Inputs"].exists)
+
+        // A custom fee from Advanced mode must not silently survive in a
+        // beginner payment after its controls have been hidden.
+        app.buttons["editPaymentButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
+        let advancedToggle = app.switches["advancedModeToggle"]
+        XCTAssertTrue(scrollUntilExists(app, advancedToggle))
+        app.flipSwitch(advancedToggle)
+        app.tabBars.buttons["Send"].tap()
+        app.typeInto("feeOverrideField", "99")
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(scrollUntilExists(app, advancedToggle, up: true))
+        app.flipSwitch(advancedToggle)
+        app.tabBars.buttons["Send"].tap()
+        XCTAssertFalse(app.textFields["feeOverrideField"].exists)
+        app.buttons["reviewButton"].tap()
+        XCTAssertTrue(sendButton.waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["reviewFee"].value as? String, fee)
+        XCTAssertEqual(app.staticTexts["reviewTotal"].value as? String, total)
         Screenshots.capture(app, "06-send-review", testCase: self)
 
         let mempoolBefore = Set(try BitcoinCLI.mempoolTxids())
@@ -267,7 +293,16 @@ final class WinnowAppUITests: XCTestCase {
             app.staticTexts["broadcastPending"].exists || app.staticTexts["broadcastConfirmed"].exists
         })
         Timings.record("send", step: "form→broadcast", from: broadcastStart)
+        XCTAssertFalse(sendButton.exists, "a sent payment must not offer Send again")
+        XCTAssertFalse(app.textFields["destinationField"].exists)
+        XCTAssertFalse(app.buttons["copyRawTransactionButton"].exists)
         Screenshots.capture(app, "07-send-broadcast", testCase: self)
+        // Recovery diagnostics remain reachable without crowding the status.
+        let details = app.buttons["transactionDetailsDisclosure"]
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        details.tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["copyRawTransactionButton"], maxSwipes: 2))
+        details.tap()
 
         // Wait until the node actually has the tx (inv → getdata relay takes
         // a moment after the UI reports the broadcast), THEN mine.
@@ -280,8 +315,7 @@ final class WinnowAppUITests: XCTestCase {
         let confirmStart = Date()
         try await SignetMiner.mineOntoTip(payingTo: payout)
 
-        // The "Seen in block N" label is a lazily-materialized row below the
-        // fold — nudge syncs from the Wallet tab, then scroll to it.
+        // The same status screen changes to confirmed after the wallet syncs.
         poll(timeout: 240, interval: 5, "send confirmation") {
             app.tabBars.buttons["Wallet"].tap()
             self.nudgeSync(app)
@@ -290,6 +324,10 @@ final class WinnowAppUITests: XCTestCase {
         }
         Timings.record("send", step: "mine→confirmed", from: confirmStart)
         Screenshots.capture(app, "08-send-confirmed", testCase: self)
+        app.buttons["newPaymentButton"].tap()
+        XCTAssertTrue(app.textFields["destinationField"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["reviewButton"].isEnabled)
+        XCTAssertFalse(sendButton.exists)
 
         app.tabBars.buttons["Wallet"].tap()
         self.nudgeSync(app)
@@ -718,12 +756,9 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["addressReuseWarning"].exists, "a card-holder is never warned about reuse")
         Screenshots.capture(app, "25-pay-person-review", testCase: self)
 
-        // The review section sits below the fold, and off-screen Form rows
-        // are not in the accessibility tree until scrolled to.
+        // Larger text and warnings may still require scrolling in a sheet.
         XCTAssertTrue(scrollUntilExists(app, app.buttons["sendButton"], maxSwipes: 5), "no send button")
         app.buttons["sendButton"].tap()
-        // The Broadcast section lands below the fold of the sheet on a
-        // 6.3-inch class, and an off-screen row is not in the tree.
         XCTAssertTrue(poll(timeout: 60, "broadcast to Alice") {
             self.scrollUntilExists(app, app.staticTexts["broadcastPending"], maxSwipes: 2)
                 || app.staticTexts["broadcastConfirmed"].exists
@@ -802,6 +837,9 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Filter scan"].exists, "filter scan detail shown to a beginner")
         XCTAssertTrue(scrollUntilExists(app, app.buttons["syncNowButton"]))
 
+        app.tabBars.buttons["Send"].tap()
+        XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textFields["feeOverrideField"].exists)
         app.tabBars.buttons["Settings"].tap()
         let toggle = app.switches["advancedModeToggle"]
         XCTAssertTrue(scrollUntilExists(app, toggle), "no Advanced mode switch")
@@ -817,6 +855,8 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, toggle, up: true))
         app.flipSwitch(toggle)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["refreshPeersButton"]), "Advanced mode did not reveal the peers")
+        app.tabBars.buttons["Send"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.textFields["feeOverrideField"]), "Advanced mode did not reveal fee controls")
         app.tabBars.buttons["Wallet"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["walletExtraDeviceButton"], up: true))
         app.tabBars.buttons["People"].tap()
@@ -826,6 +866,9 @@ final class WinnowAppUITests: XCTestCase {
         app.flipSwitch(toggle)
         XCTAssertFalse(scrollUntilExists(app, app.buttons["refreshPeersButton"], maxSwipes: 4),
                        "turning Advanced off left the peers visible")
+        app.tabBars.buttons["Send"].tap()
+        XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textFields["feeOverrideField"].exists)
     }
 
     // MARK: - 12 Shared savings from Wallet (mines)

@@ -70,7 +70,7 @@ def card(journey, cases):
 def page(section, journeys, cases):
     advanced = section == "advanced"
     title = "Advanced wallet journeys" if advanced else "Pay with your phone. Choose how to protect your savings."
-    intro = ("Turn on Advanced mode for explicit vault policies, signing exchanges, fee replacement, and peer controls."
+    intro = ("Turn on Advanced mode for explicit vault policies, signing exchanges, fee controls and replacement, and peer controls."
              if advanced else "Create a wallet on your phone, pay people, and choose when a payment needs more than one approval.")
     selected = [j for j in journeys if j["section"] == section]
     content = "\n".join(card(j, cases) for j in selected)
