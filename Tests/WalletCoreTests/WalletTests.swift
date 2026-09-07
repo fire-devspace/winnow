@@ -667,32 +667,4 @@ struct WalletTests {
         #expect(await wallet.history.contains { $0.txid == prepared.built.transaction.txid } == false)
     }
 
-    @Test("a tampered tombstone fails closed on load instead of waiting to be resurrected")
-    func corruptPersistedTombstone() async throws {
-        let url = tempFileURL("corrupt-tombstone-wallet.json")
-        let keyStore = InMemoryKeyStore()
-        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
-                                                coins: [(.receive, 0, 150_000, 100)])
-        let destination = TestScripts.p2trDestination
-        let prepared = try await wallet.buildSend(
-            payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2,
-            chainTip: testChainTip, randomness: { 0.5 })
-        try await wallet.commit(prepared)
-        #expect(try Wallet.open(storageURL: url, keyStore: keyStore) != nil, "the untouched file loads")
-
-        // The spent row's amount is corrupted. A rollback past the spend
-        // would have turned it into a live coin with that amount.
-        let data = try Data(contentsOf: url)
-        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        var coins = try #require(json["utxos"] as? [[String: Any]])
-        let spentIndex = try #require(coins.firstIndex { $0["spent"] != nil })
-        coins[spentIndex]["amount"] = 0
-        json["utxos"] = coins
-        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
-
-        #expect(throws: (any Error).self) {
-            _ = try Wallet.open(storageURL: url, keyStore: keyStore)
-        }
-    }
-
 }

@@ -1,8 +1,15 @@
+import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
+/// Choosing coins and pricing the transaction that spends them.
+///
+/// Three suites merged here: the scenario tests below, the seeded property
+/// tests that assert the same arithmetic holds for every input the function
+/// accepts, and the fee policy that decides the rate those two are handed.
 @Suite("Coin selection")
 struct CoinSelectionTests {
     let p2tr = Data([0x51, 0x20] + repeatElement(0x42, count: 32))
@@ -187,5 +194,197 @@ struct CoinSelectionTests {
                 changeScriptPubKey: p2tr, feeRateSatPerVByte: 1,
                 witnessBytesPerInput: 0)
         }
+    }
+
+    // MARK: - Properties
+    //
+    // Integer-boundary properties of coin selection (invariant S9).
+    //
+    // The scenario tests above check specific cases. The risk this section
+    // addresses is different: an arithmetic path that is correct for the
+    // amounts someone thought to write down and wrong near a boundary — a fee
+    // that underflows into change, a change output that quietly absorbs a
+    // satoshi, a sum that wraps. Money is conserved or it is not, and that has
+    // to hold for every input the function accepts rather than for a handful
+    // of examples.
+    //
+    // Generation is seeded, so any failure reproduces exactly from the seed
+    // printed in the assertion.
+
+    static func script(_ byte: UInt8) -> Data { Data([0x51, 0x20] + repeatElement(byte, count: 32)) }
+    static let changeScript = script(0xCC)
+
+    static func generatedUTXO(_ index: Int, amount: Int64) -> WalletUTXO {
+        WalletUTXO(txid: Data([UInt8(truncatingIfNeeded: index)] + repeatElement(0x11, count: 31)),
+                   vout: UInt32(index), amount: amount, scriptPubKey: script(0xAA),
+                   chain: .receive, index: UInt32(index), height: 1)
+    }
+
+    /// Everything a successful selection must satisfy, whatever the inputs.
+    static func check(_ selection: Selection, payments: [Payment],
+                      offered: [WalletUTXO], seed: UInt64, iteration: Int) {
+        let context = "seed 0x\(String(seed, radix: 16)) iteration \(iteration)"
+        let inputTotal = selection.selected.reduce(Int64(0)) { $0 + $1.amount }
+        let paid = payments.reduce(Int64(0)) { $0 + $1.amount }
+        let change = selection.changeAmount ?? 0
+
+        // Money is conserved: nothing is created, nothing vanishes.
+        #expect(inputTotal == paid + selection.fee + change,
+                "value not conserved — \(context)")
+        #expect(selection.fee > 0, "non-positive fee — \(context)")
+        #expect(change >= 0, "negative change — \(context)")
+        #expect(inputTotal <= BitcoinAmount.maximum, "input total above MAX_MONEY — \(context)")
+
+        // A change output that exists must be spendable, not dust.
+        if let amount = selection.changeAmount {
+            #expect(amount >= CoinSelection.dustThreshold(scriptPubKey: changeScript),
+                    "change below the dust threshold — \(context)")
+        }
+
+        // Selected coins are a duplicate-free subset of what was offered.
+        let offeredOutpoints = Set(offered.map(\.outpoint))
+        var seen: Set<Transaction.Outpoint> = []
+        for coin in selection.selected {
+            #expect(offeredOutpoints.contains(coin.outpoint), "invented a coin — \(context)")
+            #expect(seen.insert(coin.outpoint).inserted, "spent a coin twice — \(context)")
+        }
+    }
+
+    // MARK: Randomized properties
+
+    /// Ordinary magnitudes: the amounts a wallet actually sees.
+    @Test("value is conserved across ordinary amounts")
+    func conservationOrdinary() throws {
+        let seed: UInt64 = 0x5309_1A7E_0000_0001
+        var rng = SeededRandom(state: seed)
+        var accepted = 0
+        for iteration in 0 ..< 4_000 {
+            let utxos = (0 ... rng.count(6)).map { Self.generatedUTXO($0, amount: rng.int(1 ... 5_000_000)) }
+            let payments = (0 ... rng.count(3)).map {
+                _ in Payment(amount: rng.int(1 ... 2_000_000), scriptPubKey: Self.script(0xBB))
+            }
+            let rate = Double(rng.int(1 ... 500))
+            do {
+                let selection = try CoinSelection.select(
+                    utxos: utxos, payments: payments,
+                    changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
+                Self.check(selection, payments: payments, offered: utxos, seed: seed, iteration: iteration)
+                accepted += 1
+            } catch is CoinSelectionError {
+                continue // a refusal is always an acceptable answer
+            }
+        }
+        #expect(accepted > 500, "the generator produced too few accepted selections to be meaningful")
+    }
+
+    /// Amounts pressed against MAX_MONEY, where an unchecked add would wrap.
+    /// Every one of these must either succeed with money conserved or throw —
+    /// never return a wrong number.
+    @Test("extreme amounts either conserve value or are refused")
+    func conservationAtExtremes() throws {
+        let seed: UInt64 = 0x5309_1A7E_0000_0002
+        var rng = SeededRandom(state: seed)
+        let extremes: [Int64] = [
+            1, 2, 329, 330, 331,
+            BitcoinAmount.maximum - 1, BitcoinAmount.maximum,
+            Int64.max / 2, Int64.max - 1, Int64.max,
+        ]
+        for iteration in 0 ..< 3_000 {
+            let utxos = (0 ... rng.count(4)).map {
+                Self.generatedUTXO($0, amount: extremes[rng.count(extremes.count)])
+            }
+            let payments = (0 ... rng.count(2)).map {
+                _ in Payment(amount: extremes[rng.count(extremes.count)], scriptPubKey: Self.script(0xBB))
+            }
+            let rate = [0.25, 1, 1_000, 9_999, 10_000][rng.count(5)]
+            do {
+                let selection = try CoinSelection.select(
+                    utxos: utxos, payments: payments,
+                    changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
+                Self.check(selection, payments: payments, offered: utxos, seed: seed, iteration: iteration)
+            } catch is CoinSelectionError {
+                continue
+            }
+        }
+    }
+
+    // MARK: Named boundaries
+
+    /// A fee rate is bounded on both sides. Zero, negative, NaN and infinity
+    /// would each underflow the fee and inflate change past the inputs;
+    /// anything above Core's relay ceiling silently burns the balance.
+    @Test("fee rates outside (0, 10000] are refused",
+          arguments: [0.0, -1.0, -5.0, -0.0001, 10_000.001, 10_001.0, 100_000.0,
+                      Double.nan, Double.infinity, -Double.infinity])
+    func feeRateBounds(_ rate: Double) {
+        // Asserting the specific case matters: with the ceiling removed the
+        // call still throws, but as insufficientFunds, because an absurd rate
+        // simply exhausts the inputs. A test that accepted any
+        // CoinSelectionError would pass against a missing bound.
+        do {
+            _ = try CoinSelection.select(
+                utxos: [Self.generatedUTXO(0, amount: 1_000_000)],
+                payments: [Payment(amount: 100_000, scriptPubKey: Self.script(0xBB))],
+                changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
+            Issue.record("fee rate \(rate) was accepted")
+        } catch let error as CoinSelectionError {
+            guard case .invalidFeeRate = error else {
+                Issue.record("fee rate \(rate) was rejected as \(error) rather than invalidFeeRate")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
+
+    /// Both ends of the accepted fee-rate range still produce a conserved
+    /// selection, so the bounds above are refusals rather than the only
+    /// values that work.
+    @Test("the extreme accepted fee rates still conserve value", arguments: [0.0001, 10_000.0])
+    func acceptedFeeRateExtremes(_ rate: Double) throws {
+        let utxos = [Self.generatedUTXO(0, amount: BitcoinAmount.maximum / 4)]
+        let payments = [Payment(amount: 1_000_000, scriptPubKey: Self.script(0xBB))]
+        let selection = try CoinSelection.select(
+            utxos: utxos, payments: payments,
+            changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
+        Self.check(selection, payments: payments, offered: utxos, seed: 0, iteration: 0)
+    }
+
+    // MARK: - Fee policy
+    //
+    // Which rate the selection above is handed, and the floor the peer pool
+    // puts under it.
+
+    @Test("resolution order: override > observed median > static preset")
+    func order() {
+        // Static presets when nothing else is known.
+        #expect(FeePolicy.resolve(priority: .low) == FeePolicy.Priority.low.satPerVByte)
+        #expect(FeePolicy.resolve(priority: .medium) == 5)
+        #expect(FeePolicy.resolve(priority: .high) == 12)
+        // Observed median beats the preset.
+        #expect(FeePolicy.resolve(priority: .high, observed: [3, 7, 4]) == 4)
+        // The user override beats everything.
+        #expect(FeePolicy.resolve(priority: .high, override: 42, observed: [3, 7, 4]) == 42)
+    }
+
+    @Test("the feefilter floor clamps every source from below")
+    func floor() {
+        #expect(FeePolicy.resolve(priority: .low, floorSatPerVByte: 3.5) == 3.5)
+        #expect(FeePolicy.resolve(priority: .low, override: 1, floorSatPerVByte: 2) == 2)
+        #expect(FeePolicy.resolve(observed: [10], floorSatPerVByte: 1) == 10) // above floor: untouched
+    }
+
+    @Test("median of observed samples")
+    func median() {
+        #expect(FeePolicy.median([]) == nil)
+        #expect(FeePolicy.median([5]) == 5)
+        #expect(FeePolicy.median([1, 9, 3]) == 3)
+        #expect(FeePolicy.median([1, 3, 9, 5]) == 4)
+    }
+
+    @Test("a peer pool with no connected peers has no floor")
+    func poolFloor() async {
+        let pool = PeerPool(params: .signet)
+        #expect(await pool.feeFilterFloorSatPerVByte() == nil)
     }
 }

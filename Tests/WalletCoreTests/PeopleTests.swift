@@ -157,12 +157,12 @@ struct PeopleTests {
 
     @Test("the same signer under a relabelled origin is one identity")
     func signerIdentityIgnoresLabels() throws {
-        let apostrophe = VaultCosignerIdentityTests.scriptPath(
-            "6738736c/48'/0'/0'/100'", VaultCosignerIdentityTests.keyA)
-        let letterH = VaultCosignerIdentityTests.scriptPath(
-            "6738736C/48h/0h/0h/100h", VaultCosignerIdentityTests.keyA)
-        let other = VaultCosignerIdentityTests.scriptPath(
-            "b2b1f0cf/44'/0'/0'/100'", VaultCosignerIdentityTests.keyB)
+        let apostrophe = VaultAdmissionTests.scriptPath(
+            "6738736c/48'/0'/0'/100'", VaultAdmissionTests.keyA)
+        let letterH = VaultAdmissionTests.scriptPath(
+            "6738736C/48h/0h/0h/100h", VaultAdmissionTests.keyA)
+        let other = VaultAdmissionTests.scriptPath(
+            "b2b1f0cf/44'/0'/0'/100'", VaultAdmissionTests.keyB)
         #expect(try PersonKeys.signerIdentity(apostrophe, network: .mainnet)
             == PersonKeys.signerIdentity(letterH, network: .mainnet))
         #expect(try PersonKeys.signerIdentity(apostrophe, network: .mainnet)
