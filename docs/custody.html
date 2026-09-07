@@ -25,14 +25,14 @@
       <a href="/custody">How you hold it</a>
       <a href="/present">Talk</a>
       <a href="/architecture">Architecture</a>
-      <a href="/paper.md">Paper</a>
+      <a href="/testing">Testing</a>
       <a href="https://github.com/winnowwallet/winnow">Source</a>
     </nav>
   </div>
 </header>
 <main>
   <h1 id="how-you-hold-it">How you hold it</h1>
-  <p>One key, two keys, three. Each step buys something specific, and costs something specific. This page is the long version of the choice; the <a href="/">front page</a> is the short one.</p>
+  <p>One key, two keys, three. Each step buys something specific, and costs something specific. For current app flows and their tests, see <a href="/advanced">Advanced wallet journeys</a>.</p>
   <p>The rule underneath all of it: <strong>use the smallest policy that fits the money.</strong> A wallet you find annoying is a wallet you will empty into a worse one.</p>
   <hr />
   <h2 id="one-key">One key</h2>
@@ -51,8 +51,8 @@
   <li><strong>Hardware.</strong> Devices have shipped with keys an attacker could guess, because the random number generator was not as random as believed. Every coin behind those devices was exposed at once, without anyone touching them.</li>
   <li><strong>Software.</strong> A signing bug, a bad update, a compromised build. The device is fine; the code that drives it is not.</li>
   </ul>
-  <p>You cannot audit your way out of this. What you can do is refuse to bet everything on one maker being right. Two keys held on devices from two different makers means a flaw in either one is survivable — the attacker who breaks one still needs a signature the broken device cannot produce. Both would have to fail, independently, at the same time.</p>
-  <p>This is why “two devices” is not the same as “two of my phones”. Two devices running the same software share the same mistakes. The independence is the product.</p>
+  <p>A second, independently generated key can contain the compromise of one key. That depends on both signers reviewing the transaction correctly. Shared seed material, software, or signing libraries can give different devices the same failure mode.</p>
+  <p>Two-of-two also means losing either unbacked-up key locks the funds. Generic signing tests do not establish setup, backup, review, or recovery compatibility with every external wallet or hardware device.</p>
   <figure>
   <img src="screenshots/15-vault-cosign.png" alt="The second device approving a payment. It sees the amount, the destination and the fee before it signs anything." />
   <figcaption aria-hidden="true">The second device approving a payment. It sees the amount, the destination and the fee before it signs anything.</figcaption>
@@ -73,12 +73,11 @@
   </figure>
   <p>This is the shape for every problem that is not about the maker:</p>
   <p><strong>Losing one.</strong> A phone in a river is an inconvenience rather than a catastrophe. Two of your remaining keys still move the money.</p>
-  <p><strong>Being made to move it.</strong> If somebody is standing in your house, you cannot send the money — not because you refuse, but because you genuinely cannot. The other key is elsewhere, held by someone who is not in the room. Coercion only works on people who are able to comply.</p>
+  <p><strong>Separating control.</strong> Holding fewer keys than the threshold prevents one holder from spending alone. It does not guarantee protection from coercion or collusion among other holders.</p>
   <p><strong>Dying.</strong> If you can no longer sign, the keys you placed with others still can, after whatever real-world checks you set when you built the wallet. An estate settles without you handing anyone your keys while you are alive, and without a lawyer holding your coins.</p>
-  <p><strong>Working with an institution.</strong> A company whose business is holding one key can hold one — for a loan against your coins, or a custody arrangement — without ever being able to spend alone. You keep enough keys that they need you. They keep enough that losing your phone is not the end.</p>
+  <p><strong>Working with an institution.</strong> In an owner–exchange–trust 2-of-3, any two keys can spend, including the exchange and trust without the owner. Bitcoin checks signatures; it cannot establish loan repayment, inheritance rights, or legal authority. Winnow implements generic vault signing, not institutional accounts, provider integrations, or legal services.</p>
   <p>Spending this way publishes the policy: anyone reading the chain sees it took two signatures out of three.</p>
-  <p>That is a real privacy cost, and for the coercion case it is also the point. Deterrence only works on people who know. Somebody who studies you before knocking on your door learns from the chain that you cannot move the money by yourself, and that whoever holds the other key is not in the room. The threat stops being worth making. A wallet that hides its policy perfectly cannot deter anyone, because nobody knows there is anything to be deterred by.</p>
-  <p>So the two shapes protect against opposite things, and it is worth being deliberate about which you want. Combined keys hide that you have a second signer at all. A published k-of-n advertises that coming for you personally will not work. Note that the advertisement only exists once you have spent from the wallet — an output nobody has spent from looks like any other.</p>
+  <p>This reveals a signature policy, not who holds the keys or whether those holders are independent. Before a script-path spend, the output looks like an ordinary Taproot output. Choose a threshold for the failures it can tolerate, with its privacy and coordination costs in view.</p>
   <hr />
   <h2 id="what-actually-travels">What actually travels</h2>
   <p>Nothing secret. A payment starts as a partly signed transaction — a file of text — and gathers signatures as it goes.</p>
@@ -87,12 +86,12 @@
   <img src="screenshots/06-send-review.png" alt="A payment under review before any signature is added." />
   <figcaption aria-hidden="true">A payment under review before any signature is added.</figcaption>
   </figure>
-  <p>The technical write-up of both policies, including the exact descriptors and witness shapes, is in the <a href="/paper.md">design paper</a>.</p>
+  <p>The technical write-up of both policies, including the exact descriptors and witness shapes, is in the <a href="/vaults">vault guide</a>.</p>
 </main>
 <footer>
   <div class="bar">
     Winnow &mdash; <a href="/">the wallet</a> &middot; <a href="/custody">how you hold it</a>
-    &middot; <a href="/present">the talk</a> &middot; <a href="/paper.md">the paper</a>
+    &middot; <a href="/present">the talk</a> &middot; <a href="/roadmap">the roadmap</a>
     &middot; <a href="/evidence">the evidence</a> &middot; <a href="/privacy">privacy</a>
     &middot; <a href="https://github.com/winnowwallet/winnow">source</a>
   </div>

@@ -247,6 +247,7 @@
     .f4-stage{border-color:var(--mark)}
   }
   footer{border-top:1px solid var(--rule);padding:2rem 0 3rem;font-size:.86rem;color:var(--ink-3);margin-top:3rem}
+#technical-guides a{text-decoration:underline;text-underline-offset:.15em}
 </style>
 </head>
 <body>
@@ -256,6 +257,10 @@
     <p class="eyebrow">Architecture</p>
     <h1>How Winnow actually works.</h1>
     <p class="sub" style="margin-top:1.1rem;max-width:40rem">Five choices that make a private wallet practical on a phone. Each one is a real trade, drawn rather than asserted.</p>
+    <nav aria-label="Technical guides" id="technical-guides">
+      <p class="sub" style="margin-top:1.1rem">Read in detail: <a href="/mobile">phone constraints</a> · <a href="/read-side">discovery and trust</a> · <a href="/write-side">payments and relay</a> · <a href="/vaults">vault policies</a> · <a href="/import">backup and import</a>.</p>
+      <p class="sub"><a href="/testing">Tests and evidence</a> · <a href="/roadmap">Planned work</a></p>
+    </nav>
   </div>
 </header>
 
@@ -408,14 +413,14 @@
       </div>
       <p class="f5-note">Among checkpoint answers a strict majority wins, and the odd peer out is dropped and replaced. When two disagree with no majority the lie is unattributable, so Winnow drops <em>all</em> the queried peers and re-dials rather than guess. This majority rule is the checkpoint comparison specifically — it does not govern every filter-header batch.</p>
     </div>
-    <p class="takeaway">Detection, not proof — and not operator independence. Peers are dialled by whichever candidates answer fastest, so nothing yet stops one operator supplying more than one slot; pinning slots by source is planned, not shipped. What ships is the comparison and the refusal to proceed on a tie — and a fully eclipsed phone can still be told one coordinated lie.</p>
+    <p class="takeaway">Automatic peer selection limits concentration by public network block and discovery source. Manual peers are exempt from the source limit. These rules and checkpoint comparisons do not prove that different peers have different operators: a fully eclipsed phone can still receive one coordinated lie. The <a href="/read-side">read-side guide</a> explains what the phone verifies and what it must trust.</p>
   </figure>
 
 </div>
 
 <footer>
   <div class="wrap">
-    Winnow — <a href="/">the story</a> · <a href="/present">the walkthrough</a> · <a href="/paper.md">the paper</a> · <a href="/evidence">the evidence</a>
+    Winnow — <a href="/">the story</a> · <a href="/present">the walkthrough</a> · <a href="/roadmap">the roadmap</a> · <a href="/evidence">the evidence</a>
   </div>
 </footer>
 

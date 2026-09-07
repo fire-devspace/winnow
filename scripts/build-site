@@ -117,7 +117,7 @@ main{{max-width:64rem}} .journey{{display:flow-root;padding-bottom:1.2rem}}
 </section>
 {"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Explore advanced wallet journeys</a> · <a href='/roadmap'>See planned work</a></p>"}
 </main>
-<footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/papers">Technical notes</a></div></footer>
+<footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/architecture">How it works</a></div></footer>
 </body>
 </html>
 """

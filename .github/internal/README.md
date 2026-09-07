@@ -2,13 +2,12 @@
 
 # Contributor and release runbooks
 
-These documents explain app validation, release operations, design papers, and
+These documents explain app validation, release operations and
 screenshot selection. Contributors need the operational context that a source
 file or a public feature page cannot provide on its own.
 
 [CI and release operations](ci-release.md) describes the
-current workflows. [Design papers](design-papers.md) links
-the technical explanations; [screenshot guidance](app-store-screenshots.md)
+current workflows. [Screenshot guidance](app-store-screenshots.md)
 explains how to select captures from asserted app journeys.
 
 Despite the directory name, these are public repository files. Runner provisioning

@@ -4,16 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Import: The Bundle Is the History &mdash; Winnow</title>
-<meta name="description" content="Design paper for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
+<meta name="description" content="Technical guide for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
 <link rel="canonical" href="https://winnowwallet.com/import">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://winnowwallet.com/import">
 <meta property="og:title" content="Import: The Bundle Is the History &mdash; Winnow">
-<meta property="og:description" content="Design paper for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
+<meta property="og:description" content="Technical guide for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
 <meta property="og:image" content="https://winnowwallet.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Import: The Bundle Is the History &mdash; Winnow">
-<meta name="twitter:description" content="Design paper for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
+<meta name="twitter:description" content="Technical guide for Winnow. The no-back-scan rule is stated in the read side §2.7.5 and the phone paper §4.1.">
 <meta name="twitter:image" content="https://winnowwallet.com/og.png">
 <link rel="stylesheet" href="site.css">
 </head>
@@ -25,17 +25,14 @@
       <a href="/custody">How you hold it</a>
       <a href="/present">Talk</a>
       <a href="/architecture">Architecture</a>
-      <a href="/paper.md">Paper</a>
+      <a href="/testing">Testing</a>
       <a href="https://github.com/winnowwallet/winnow">Source</a>
     </nav>
   </div>
 </header>
 <main>
   <h1 id="import-the-bundle-is-the-history">Import: The Bundle Is the History</h1>
-  <blockquote>
-  <p><strong>Archived technical note.</strong> Winnow’s current architecture, evidence, and limitations now live in the <a href="/paper.md">canonical design paper</a>.</p>
-  </blockquote>
-  <p><em>Design paper for Winnow. The no-back-scan rule is stated in <a href="/read-side">the read side</a> §2.7.5 and <a href="/mobile">the phone paper</a> §4.1. This is the format, the verification algorithm, and what a lying bundle can still do.</em></p>
+  <p><em>Technical guide for Winnow. The no-back-scan rule is stated in <a href="/read-side">the read side</a> §2.7.5 and <a href="/mobile">the phone paper</a> §4.1. This is the format, the verification algorithm, and what a lying bundle can still do.</em></p>
   <hr />
   <h2 id="the-problem">1. The problem</h2>
   <p>A private light client that starts at the tip is cheap. A private light client that starts in 2018 is not: years of compact filters are multiple gigabytes (approx.), and the phone would have to download them to learn a balance it <em>already knew</em> in the previous wallet.</p>
@@ -168,7 +165,7 @@
 <footer>
   <div class="bar">
     Winnow &mdash; <a href="/">the wallet</a> &middot; <a href="/custody">how you hold it</a>
-    &middot; <a href="/present">the talk</a> &middot; <a href="/paper.md">the paper</a>
+    &middot; <a href="/present">the talk</a> &middot; <a href="/roadmap">the roadmap</a>
     &middot; <a href="/evidence">the evidence</a> &middot; <a href="/privacy">privacy</a>
     &middot; <a href="https://github.com/winnowwallet/winnow">source</a>
   </div>
