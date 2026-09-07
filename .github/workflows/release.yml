@@ -1,14 +1,13 @@
 name: Release
 
-# One Winnow version covers the app, library products and tools.
-# Manual dispatch runs the complete gates without signing or publishing.
+# One-time recovery of the validated v0.6.0 tag. The original export failed
+# during argument parsing, before an upload. Never move the released tag.
 on:
-  push:
-    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,40 +19,54 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: v0.6.0
           persist-credentials: false
+      - name: Require the exact tag and its successful release validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = a4b3eaba8436ff5c872ab6875eb4db442eab3764
+          gh api repos/winnowwallet/winnow/actions/runs/34071885154 > validation-run.json
+          gh api 'repos/winnowwallet/winnow/actions/runs/34071885154/jobs?per_page=100' > validation-jobs.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path('validation-run.json').read_text())
+          assert run['head_sha'] == 'a4b3eaba8436ff5c872ab6875eb4db442eab3764'
+          assert run['status'] == 'completed' and run['conclusion'] == 'failure'
+          jobs = {job['name']: job for job in json.loads(Path('validation-jobs.json').read_text())['jobs']}
+          required = {'policy', 'ci / complexity', 'ci / package-tests-intel', 'ci / package',
+                      'ci / app-build', 'node / changes', 'node / differential', 'node / ui'}
+          assert all(jobs[name]['conclusion'] == 'success' for name in required)
+          failed = [step['name'] for step in jobs['testflight']['steps'] if step['conclusion'] == 'failure']
+          assert failed == ['Upload to App Store Connect']
+          print('The unchanged tag passed every release validation gate; only export failed.')
+          PY
       - name: Validate version and bundled fallback-peer generation date
         env:
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          RELEASE_TAG: v0.6.0
         run: scripts/check-release-policy
 
-  ci:
-    needs: policy
-    uses: ./.github/workflows/ci.yml
-
-  node:
-    needs: policy
-    uses: ./.github/workflows/node-tests.yml
-    with:
-      confirm_dedicated_fixture: true
-
   testflight:
-    if: github.event_name == 'push'
-    needs: [ci, node]
+    if: github.event_name == 'workflow_dispatch'
+    needs: policy
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: v0.6.0
           persist-credentials: false
 
       - name: Set version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="0.6.0"
+          BUILD_NUMBER="18"
           sed -i '' "s/MARKETING_VERSION: \"0.1.0\"/MARKETING_VERSION: \"$VERSION\"/" project.yml
-          sed -i '' "s/CURRENT_PROJECT_VERSION: \"1\"/CURRENT_PROJECT_VERSION: \"$GITHUB_RUN_NUMBER\"/" project.yml
+          sed -i '' "s/CURRENT_PROJECT_VERSION: \"1\"/CURRENT_PROJECT_VERSION: \"$BUILD_NUMBER\"/" project.yml
           grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" project.yml
           printf 'TESTFLIGHT_MARKETING_VERSION=%s\n' "$VERSION" >> "$GITHUB_ENV"
-          printf 'TESTFLIGHT_BUILD_NUMBER=%s\n' "$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          printf 'TESTFLIGHT_BUILD_NUMBER=%s\n' "$BUILD_NUMBER" >> "$GITHUB_ENV"
 
       - name: Install pinned XcodeGen
         run: scripts/install-xcodegen
@@ -138,7 +151,6 @@ jobs:
           </plist>
           EOF
           xcodebuild -exportArchive -archivePath build/WinnowApp.xcarchive \
-            -derivedDataPath build/DerivedData \
             -exportOptionsPlist build/ExportOptions.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${RUNNER_TEMP}/winnow-signing/AuthKey.p8" \
@@ -198,6 +210,7 @@ jobs:
       - name: GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: v0.6.0
           generate_release_notes: true
           files: |
             supply-chain/winnow.spdx.json
