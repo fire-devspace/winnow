@@ -255,7 +255,6 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertEqual(app.textFields["amountField"].value as? String, "100000")
         XCTAssertFalse(sendButton.exists)
         app.typeInto("amountField", String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "1000000")
-        Screenshots.capture(app, "05-send-form", testCase: self)
         app.buttons["reviewButton"].tap()
         XCTAssertTrue(sendButton.waitForExistence(timeout: 30))
         XCTAssertTrue(sendButton.isHittable)
@@ -281,6 +280,7 @@ final class WinnowAppUITests: XCTestCase {
         app.flipSwitch(advancedToggle)
         app.tabBars.buttons["Send"].tap()
         XCTAssertFalse(app.textFields["feeOverrideField"].exists)
+        Screenshots.capture(app, "05-send-form", testCase: self)
         app.buttons["reviewButton"].tap()
         XCTAssertTrue(sendButton.waitForExistence(timeout: 30))
         XCTAssertEqual(app.staticTexts["reviewFee"].value as? String, fee)
@@ -299,11 +299,11 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["copyRawTransactionButton"].exists)
         Screenshots.capture(app, "07-send-broadcast", testCase: self)
         // Recovery diagnostics remain reachable without crowding the status.
-        let details = app.buttons["transactionDetailsDisclosure"]
+        let details = app.buttons["transactionDetailsButton"]
         XCTAssertTrue(details.waitForExistence(timeout: 10))
         details.tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["copyRawTransactionButton"], maxSwipes: 2))
-        details.tap()
+        app.navigationBars["Transaction details"].buttons["Payment"].tap()
 
         // Wait until the node actually has the tx (inv → getdata relay takes
         // a moment after the UI reports the broadcast), THEN mine.

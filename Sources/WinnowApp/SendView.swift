@@ -245,10 +245,7 @@ struct SendView: View {
                     Text(recipient.name)
                         .accessibilityIdentifier("reviewRecipient")
                 }
-                Text(preview.destination)
-                    .font(.system(.footnote, design: .monospaced))
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("reviewDestination")
+                ReviewAddress(address: preview.destination)
             }
             paymentAmounts(preview)
             reviewWarnings(preview)
@@ -327,32 +324,37 @@ struct SendView: View {
                     .accessibilityIdentifier("newPaymentButton")
             }
             Section {
-                DisclosureGroup("Transaction details") {
-                    CopyableIdentifier(value: txid.displayHex,
-                                       accessibilityID: "copyBroadcastTransactionIDButton")
-                    // Keep signed bytes available if peer relay fails.
-                    if let rawTransaction, confirmedHeight == nil {
-                        CopyableIdentifier(value: rawTransaction, abbreviated: true,
-                                           label: "Copy raw transaction",
-                                           accessibilityID: "copyRawTransactionButton")
+                NavigationLink {
+                    Form {
+                        CopyableIdentifier(value: txid.displayHex,
+                                           accessibilityID: "copyBroadcastTransactionIDButton")
+                        // Keep signed bytes available if peer relay fails.
+                        if let rawTransaction, confirmedHeight == nil {
+                            CopyableIdentifier(value: rawTransaction, abbreviated: true,
+                                               label: "Copy raw transaction",
+                                               accessibilityID: "copyRawTransactionButton")
+                        }
+                        WarnedExplorerLink(
+                            title: "View transaction",
+                            url: model.esploraTransactionURL(txid),
+                            exposedItem: "transaction ID",
+                            accessibilityID: "explorerBroadcastButton")
+                        if !relayedPeers.isEmpty {
+                            Text("Relayed to \(relayedPeers.count) peer(s)")
+                                .accessibilityIdentifier("relayedCount")
+                        }
+                        ForEach(Array(relayLog.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.footnote)
+                        }
+                        if let confirmedHeight {
+                            LabeledContent("Block", value: "\(confirmedHeight)")
+                        }
                     }
-                    WarnedExplorerLink(
-                        title: "View transaction",
-                        url: model.esploraTransactionURL(txid),
-                        exposedItem: "transaction ID",
-                        accessibilityID: "explorerBroadcastButton")
-                    if !relayedPeers.isEmpty {
-                        Text("Relayed to \(relayedPeers.count) peer(s)")
-                            .accessibilityIdentifier("relayedCount")
-                    }
-                    ForEach(Array(relayLog.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.footnote)
-                    }
-                    if let confirmedHeight {
-                        LabeledContent("Block", value: "\(confirmedHeight)")
-                    }
+                    .navigationTitle("Transaction details")
+                } label: {
+                    Text("Transaction details")
                 }
-                .accessibilityIdentifier("transactionDetailsDisclosure")
+                .accessibilityIdentifier("transactionDetailsButton")
             }
         }
     }
@@ -489,5 +491,33 @@ struct SendView: View {
                 break
             }
         return false
+    }
+}
+
+/// Addresses must wrap literally: prose layout can insert a visible hyphen
+/// that is not part of the address. UIKit exposes character wrapping directly.
+private struct ReviewAddress: UIViewRepresentable {
+    let address: String
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.accessibilityIdentifier = "reviewDestination"
+        label.numberOfLines = 0
+        label.lineBreakMode = .byCharWrapping
+        label.adjustsFontForContentSizeCategory = true
+        label.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(
+            for: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        label.textAlignment = .left
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+        label.text = address
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 }
