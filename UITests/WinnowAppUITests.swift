@@ -69,6 +69,7 @@ final class WinnowAppUITests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        continueAfterFailure = false
         executionTimeAllowance = 600
     }
 
@@ -353,13 +354,13 @@ final class WinnowAppUITests: XCTestCase {
         }
         let threshold = app.steppers["vaultThresholdStepper"]
         XCTAssertTrue(scrollUntilExists(app, threshold, up: true))
-        threshold.buttons["Decrement"].tap()
+        threshold.buttons["vaultThresholdStepper-Decrement"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["buildDescriptorButton"]))
         app.buttons["buildDescriptorButton"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
         XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key can spend these funds.")
         XCTAssertTrue(scrollUntilExists(app, threshold, up: true))
-        threshold.buttons["Increment"].tap()
+        threshold.buttons["vaultThresholdStepper-Increment"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["buildDescriptorButton"]))
         app.buttons["buildDescriptorButton"].tap()
         // The descriptor preview is a CopyableTextBlock whose Text starts
@@ -827,9 +828,9 @@ final class WinnowAppUITests: XCTestCase {
                        "turning Advanced off left the peers visible")
     }
 
-    // MARK: - 12 Shared savings from People (mines)
+    // MARK: - 12 Shared savings from Wallet (mines)
 
-    /// Create "Savings with Alice, Bob" from the address book (2 of 3 with
+    /// Create "Savings with Alice, Bob" from Wallet (2 of 3 with
     /// this phone), share the card, fund it from the wallet, and ask Alice
     /// for approval of a payment to her. The approve-and-finish half is
     /// test07; this is the creation half a beginner does.
@@ -886,11 +887,13 @@ final class WinnowAppUITests: XCTestCase {
             Timings.record("vault", step: "shared-savings-create", from: createStart)
             Screenshots.capture(app, "26-savings-share", testCase: self)
             app.buttons["savingsShareDoneButton"].tap()
-            XCTAssertTrue(app.staticTexts[savingsName].waitForExistence(timeout: 30), "the savings were not listed")
         }
 
         // Fund it from the wallet, then ask Alice for approval of 20,000 to her.
-        app.staticTexts[savingsName].firstMatch.tap()
+        app.tabBars.buttons["Wallet"].tap()
+        let savingsRow = app.buttons["walletSavings-\(savingsName)"]
+        XCTAssertTrue(scrollUntilExists(app, savingsRow, up: true), "the savings were not listed")
+        savingsRow.tap()
         let addressBlock = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'tb1p'")).firstMatch
         XCTAssertTrue(addressBlock.waitForExistence(timeout: 20), "no receive address on the savings")
         let savingsAddress = addressBlock.label
@@ -914,19 +917,20 @@ final class WinnowAppUITests: XCTestCase {
             })
             let payout = try AddressDecoder.scriptPubKey(for: Self.fixtureAddress(0xD4), network: .signet)
             try await SignetMiner.mineOntoTip(payingTo: payout)
-            app.tabBars.buttons["People"].tap()
-            app.staticTexts[savingsName].firstMatch.tap()
+            app.tabBars.buttons["Wallet"].tap()
         }
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultRequiredKeys"]))
+        XCTAssertEqual(app.staticTexts["vaultRequiredKeys"].label, "2 of 3 signing keys required")
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
+        XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key cannot spend these funds.")
         let ask = app.buttons["askApprovalButton"]
         XCTAssertTrue(poll(timeout: 240, interval: 5, "the savings see their coin") {
             if self.scrollUntilExists(app, ask, maxSwipes: 2), ask.isEnabled { return true }
-            app.tabBars.buttons["Wallet"].tap()
+            app.navigationBars.buttons["Winnow"].tap()
+            XCTAssertTrue(self.scrollUntilExists(app, app.buttons["syncNowButton"]))
             self.nudgeSync(app)
-            app.tabBars.buttons["People"].tap()
-            if !app.staticTexts[savingsName].exists, app.navigationBars.buttons["People"].exists {
-                app.navigationBars.buttons["People"].tap()
-            }
-            app.staticTexts[savingsName].firstMatch.tap()
+            XCTAssertTrue(self.scrollUntilExists(app, savingsRow, up: true))
+            savingsRow.tap()
             return false
         })
         ask.tap()
