@@ -13,6 +13,8 @@ import Testing
 ///
 /// Mainnet headers are 80 bytes each and grow by roughly 4 MB a year, so a
 /// real chain is far below the ceiling and these refusals cannot affect one.
+/// An ordinary persisted chain round-tripping through the same guard is
+/// `HeaderChainTests.persistence`.
 @Suite("Header storage bounds")
 struct HeaderStorageBoundsTests {
     /// Creates a file that *reports* a huge size without occupying the disk,
@@ -66,22 +68,5 @@ struct HeaderStorageBoundsTests {
                         "a small file must not be refused for its size")
             }
         }
-    }
-
-    /// A real persisted chain still round-trips, so the guard does not affect
-    /// ordinary operation.
-    @Test("an ordinary persisted chain still loads")
-    func ordinaryChainRoundTrips() async throws {
-        let chain = makeSyntheticChain(length: 5, watchHeight: 6)
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-headers-\(UUID().uuidString).dat")
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let written = try HeaderChain(params: chain.params, storageURL: url)
-        let appended = try await written.connect(chain.blocks.dropFirst().map(\.header))
-        #expect(appended.appended == 5)
-
-        let reloaded = try HeaderChain(params: chain.params, storageURL: url)
-        #expect(await reloaded.height == written.height)
     }
 }

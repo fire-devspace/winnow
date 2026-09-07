@@ -355,6 +355,13 @@ struct CheckpointMajorityTests {
 
     /// Without this, every refusal above could be explained by the sync simply
     /// never working on a chain this long.
+    ///
+    /// It is also the regression test for a bug the differential harness
+    /// caught: Core's ProcessGetCFCheckPt returns headers at heights 1000,
+    /// 2000, … ascending — never the stop block itself. FilterSync used to map
+    /// the first header onto the tip and reject every sync past height 1000,
+    /// so cfcheckpt headers mapping to checkpoint multiples rather than the
+    /// tip (Core semantics) is what the pinned header at 1,000 proves.
     @Test("three honest peers agree and the scan completes")
     func threeHonestPeersSync() async throws {
         let synthetic = Self.chain()
@@ -378,6 +385,7 @@ struct CheckpointMajorityTests {
 
         #expect(collector.matches.count == 1)
         #expect(await sync.lastScannedHeight == 1_001)
+        // The single checkpoint (height 1000) was pinned and cross-checked.
         #expect(await sync.filterHeader(at: 1_000) != nil)
         #expect(await pool.connectedPeers().count == 3)
 

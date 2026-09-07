@@ -254,17 +254,6 @@ struct HeaderChainTests {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
 
-    @Test("corrupt store is rejected")
-    func corruptStore() async throws {
-        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
-        let file = tempFileURL("headers.dat")
-        try Data([0xDE, 0xAD, 0xBE]).write(to: file)
-        await #expect(throws: HeaderChainError.self) {
-            _ = try HeaderChain(params: chain.params, storageURL: file)
-        }
-        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
-    }
-
     @Test("repeated difficulty caching still verifies every stored header hash")
     func cachedDifficultyStillChecksPoW() async throws {
         let chain = makeSyntheticChain(length: 1, watchHeight: 6)

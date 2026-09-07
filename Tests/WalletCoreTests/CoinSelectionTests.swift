@@ -105,27 +105,17 @@ struct CoinSelectionTests {
             _ = try CoinSelection.select(utxos: [utxo(1_000_000)], payments: payments,
                                          changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
         }
+        // The threshold is a boundary, not a gradient: one satoshi below is dust.
+        #expect(throws: CoinSelectionError.dustOutput(value: 329, threshold: 330)) {
+            _ = try CoinSelection.select(utxos: [utxo(1_000_000)],
+                                         payments: [Payment(amount: 329, scriptPubKey: p2tr)],
+                                         changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
         // At the threshold it is accepted.
         #expect(throws: Never.self) {
             _ = try CoinSelection.select(utxos: [utxo(1_000_000)],
                                          payments: [Payment(amount: 330, scriptPubKey: p2tr)],
                                          changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
-        }
-    }
-
-    @Test("non-positive, non-finite, or absurd feerates are rejected")
-    func feeRateSanity() {
-        let payments = [Payment(amount: 100_000, scriptPubKey: p2tr)]
-        for bad in [0.0, -5.0, Double.nan, Double.infinity, 10_001.0] {
-            #expect(throws: CoinSelectionError.self) {
-                _ = try CoinSelection.select(utxos: [utxo(1_000_000)], payments: payments,
-                                             changeScriptPubKey: p2tr, feeRateSatPerVByte: bad)
-            }
-        }
-        // The boundary rate is accepted.
-        #expect(throws: Never.self) {
-            _ = try CoinSelection.select(utxos: [utxo(100_000_000)], payments: payments,
-                                         changeScriptPubKey: p2tr, feeRateSatPerVByte: 10_000)
         }
     }
 
@@ -152,6 +142,12 @@ struct CoinSelectionTests {
         #expect(throws: CoinSelectionError.invalidAmount(Int64.max)) {
             _ = try CoinSelection.select(
                 utxos: [valid], payments: [Payment(amount: Int64.max, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+        // The boundary itself: one satoshi past MAX_MONEY is refused, not wrapped.
+        #expect(throws: CoinSelectionError.invalidAmount(BitcoinAmount.maximum + 1)) {
+            _ = try CoinSelection.select(
+                utxos: [valid], payments: [Payment(amount: BitcoinAmount.maximum + 1, scriptPubKey: p2tr)],
                 changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
         }
         #expect(throws: CoinSelectionError.amountOverflow) {

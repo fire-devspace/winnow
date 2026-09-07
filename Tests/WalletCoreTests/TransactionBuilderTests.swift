@@ -39,14 +39,7 @@ struct TransactionBuilderTests {
         // P2SH (prefix 0x05): hash160 0x89ABCDEFABCDABCDABCDABCDABCDABCDABCDABCD.
         let p2sh = try AddressDecoder.scriptPubKey(for: "3EExK1K1WioG5caKFqP724ymoEXJNsTjnK", network: .mainnet)
         #expect(p2sh == Data(hex: "a91489abcdefabcdabcdabcdabcdabcdabcdabcdabcd87"))
-    }
-
-    @Test("garbage and wrong-network addresses throw")
-    func invalid() {
-        #expect(throws: AddressError.self) {
-            _ = try AddressDecoder.scriptPubKey(for: "not-an-address", network: .mainnet)
-        }
-        // Mainnet base58 on signet.
+        // Wrong network is rejected for base58 too: mainnet P2PKH on signet.
         #expect(throws: AddressError.self) {
             _ = try AddressDecoder.scriptPubKey(for: "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH", network: .signet)
         }

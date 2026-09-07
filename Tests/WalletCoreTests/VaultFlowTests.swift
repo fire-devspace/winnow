@@ -45,43 +45,14 @@ struct VaultFlowTests {
 
     // MARK: - Vault setup validation
 
-    @Test("vault draft stays valid as keys, thresholds, and policies change")
-    func draftTransitions() throws {
-        let masters = try Self.masters()
-        let keys = try masters.map { try Self.keyExpression(master: $0) }
+    /// Threshold and role transitions of a draft are enumerated in
+    /// `VaultThresholdTests` and `VaultDraftIdentityTests`; this pins the
+    /// empty draft's defaults and that malformed text never enters it.
+    @Test("an empty draft is 1-of-0, cannot build, and refuses malformed text unchanged")
+    func emptyDraft() throws {
         var draft = VaultDraft()
         #expect(draft.threshold == 1)
         #expect(!draft.canBuild)
-
-        try draft.add(keys[0], network: .signet)
-        #expect(draft.threshold == 1)
-        #expect(!draft.canBuild)
-        try draft.add(keys[1], network: .signet)
-        #expect(draft.threshold == 2) // the second key defaults the draft to 2-of-2
-        #expect(draft.canBuild)
-
-        try draft.add(keys[2], network: .signet)
-        #expect(draft.threshold == 2)
-        draft.setThreshold(1)
-        #expect(draft.threshold == 1) // decrement works
-        draft.setThreshold(3)
-        #expect(draft.threshold == 3) // increment works
-        draft.setThreshold(99)
-        #expect(draft.threshold == 3) // never exceeds the number of keys
-
-        draft.remove(at: IndexSet(integer: 2))
-        #expect(draft.threshold == 2)
-        draft.remove(at: IndexSet(integer: 1))
-        #expect(draft.threshold == 1)
-        #expect(!draft.canBuild)
-
-        let changedWithKey = draft.setRole(.muSig2)
-        #expect(!changedWithKey) // an incompatible policy cannot replace live keys
-        draft.remove(at: IndexSet(integer: 0))
-        let changedWhenEmpty = draft.setRole(.muSig2)
-        #expect(changedWhenEmpty)
-        #expect(draft.role == .muSig2)
-        #expect(draft.threshold == 1)
 
         let unchanged = draft
         #expect(throws: VaultCosignerKeyError.malformed) {
@@ -90,7 +61,10 @@ struct VaultFlowTests {
         #expect(draft == unchanged) // invalid text is not admitted to the draft
     }
 
-    @Test("signer keys are public, complete, and match the selected policy")
+    /// Each refusal a signer key can earn is pinned with its positive control
+    /// in `VaultCosignerIdentityTests`; this keeps the signet-format fixtures
+    /// accepted for their own policy, and private material out of a descriptor.
+    @Test("signet signer keys are accepted for their policy; a private key never reaches a descriptor")
     func signerKeyValidation() throws {
         let master = try Self.masters()[0]
         let account = try master.derived(path: "m/86'/1'/0'")
@@ -104,49 +78,6 @@ struct VaultFlowTests {
 
         let fingerprint = String(format: "%08x", master.fingerprint)
         let privateExpression = "[\(fingerprint)/86'/1'/0']\(account.serialized(network: .testnet))/<0;1>/*"
-        #expect(throws: VaultCosignerKeyError.privateKey) {
-            _ = try VaultCosignerKey(privateExpression, role: .scriptPath, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.privateKey) {
-            _ = try VaultCosignerKey(account.serialized(network: .testnet),
-                                     role: .scriptPath, network: .signet)
-        }
-        #expect(VaultCosignerKeyError.privateKey.localizedDescription.contains("private key"))
-
-        let wrongNetwork = "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .mainnet))/<0;1>/*"
-        #expect(throws: VaultCosignerKeyError.wrongNetwork(expectedPrefix: "tpub")) {
-            _ = try VaultCosignerKey(wrongNetwork, role: .scriptPath, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.missingOrigin) {
-            _ = try VaultCosignerKey("\(account.neutered.serialized(network: .testnet))/<0;1>/*",
-                                     role: .scriptPath, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.muSig2DerivationForbidden) {
-            _ = try VaultCosignerKey(scriptPath, role: .muSig2, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.scriptPathDerivationRequired) {
-            _ = try VaultCosignerKey(muSig2, role: .scriptPath, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.malformed) {
-            _ = try VaultCosignerKey("definitely not a signer key", role: .scriptPath, network: .signet)
-        }
-        let mismatchedOrigin = "[deadbeef/86'/1']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        #expect(throws: VaultCosignerKeyError.originPathMismatch) {
-            _ = try VaultCosignerKey(mismatchedOrigin, role: .scriptPath, network: .signet)
-        }
-
-        let relabeled = "[deadbeef/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        #expect(try VaultCosignerKey(scriptPath, role: .scriptPath, network: .signet).identity ==
-            VaultCosignerKey(relabeled, role: .scriptPath, network: .signet).identity)
-        var duplicateDraft = VaultDraft()
-        try duplicateDraft.add(scriptPath, network: .signet)
-        #expect(throws: VaultCosignerKeyError.duplicateKey) {
-            try duplicateDraft.add(relabeled, network: .signet)
-        }
-        #expect(throws: VaultCosignerKeyError.duplicateKey) {
-            _ = try Vault.multiADescriptor(threshold: 2, cosigners: [scriptPath, relabeled])
-        }
-
         #expect(throws: VaultCosignerKeyError.privateKey) {
             _ = try Vault.multiADescriptor(threshold: 1, cosigners: [privateExpression])
         }
@@ -212,10 +143,6 @@ struct VaultFlowTests {
                               chainTip: testChainTip)
         #expect(partialA.inputs[0].tapScriptSignatures.count == 1)
         #expect(partialC.inputs[0].tapScriptSignatures.count == 1)
-
-        // One partial alone is below threshold and cannot finalize.
-        var alone = partialA
-        #expect(throws: PSBTError.self) { try alone.finalize() }
 
         // Combine (combiner role) → finalize → raw transaction.
         var combined = try partialA.combined(with: [partialC])

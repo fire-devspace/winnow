@@ -60,7 +60,7 @@ struct UnsupportedWalletDataTests {
     @Test("unsupported destinations cannot become payment scripts",
           arguments: ["sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2cgqvycxttddwsvgxe2usfpxumr70xc9pkqwv",
                       "tsp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2cgqvycxttddwsvgxe2usfpxumr70xc9pkqwv",
-                      "bc1qnotarealaddress"])
+                      "bc1qnotarealaddress", "not-an-address"])
     func unsupportedDestinationIsRefused(address: String) throws {
         for network in [BitcoinNetwork.mainnet, .signet] {
             #expect(throws: AddressError.self) {

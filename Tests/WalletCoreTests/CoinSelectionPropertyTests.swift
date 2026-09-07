@@ -133,31 +133,11 @@ struct CoinSelectionPropertyTests {
 
     // MARK: - Named boundaries
 
-    /// The dust threshold is a boundary, not a gradient: one satoshi below is
-    /// refused and the threshold itself is accepted.
-    @Test("a payment exactly at the dust threshold is accepted, one below is not")
-    func dustBoundaryIsExact() throws {
-        let script = Self.script(0xBB)
-        let dust = CoinSelection.dustThreshold(scriptPubKey: script)
-        let utxos = [Self.utxo(0, amount: 1_000_000)]
-
-        let atThreshold = try CoinSelection.select(
-            utxos: utxos, payments: [Payment(amount: dust, scriptPubKey: script)],
-            changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: 1)
-        #expect(atThreshold.fee > 0)
-
-        #expect(throws: CoinSelectionError.self) {
-            _ = try CoinSelection.select(
-                utxos: utxos, payments: [Payment(amount: dust - 1, scriptPubKey: script)],
-                changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: 1)
-        }
-    }
-
     /// A fee rate is bounded on both sides. Zero, negative, NaN and infinity
     /// would each underflow the fee and inflate change past the inputs;
     /// anything above Core's relay ceiling silently burns the balance.
     @Test("fee rates outside (0, 10000] are refused",
-          arguments: [0.0, -1.0, -0.0001, 10_000.001, 100_000.0,
+          arguments: [0.0, -1.0, -5.0, -0.0001, 10_000.001, 10_001.0, 100_000.0,
                       Double.nan, Double.infinity, -Double.infinity])
     func feeRateBounds(_ rate: Double) {
         // Asserting the specific case matters: with the ceiling removed the
@@ -191,32 +171,5 @@ struct CoinSelectionPropertyTests {
             utxos: utxos, payments: payments,
             changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
         Self.check(selection, payments: payments, offered: utxos, seed: 0, iteration: 0)
-    }
-
-    /// An amount above MAX_MONEY is refused rather than wrapping.
-    @Test("an amount above MAX_MONEY is refused")
-    func aboveMaxMoneyRefused() {
-        #expect(throws: CoinSelectionError.self) {
-            _ = try CoinSelection.select(
-                utxos: [Self.utxo(0, amount: BitcoinAmount.maximum)],
-                payments: [Payment(amount: BitcoinAmount.maximum + 1, scriptPubKey: Self.script(0xBB))],
-                changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: 1)
-        }
-    }
-
-    /// Many payments that individually fit but together exceed MAX_MONEY must
-    /// be caught by the running total, not only by the per-payment check.
-    @Test("payments summing past MAX_MONEY are refused")
-    func summedOverflowRefused() {
-        let half = BitcoinAmount.maximum / 2 + 1
-        let payments = [
-            Payment(amount: half, scriptPubKey: Self.script(0xBB)),
-            Payment(amount: half, scriptPubKey: Self.script(0xBC)),
-        ]
-        #expect(throws: CoinSelectionError.self) {
-            _ = try CoinSelection.select(
-                utxos: [Self.utxo(0, amount: BitcoinAmount.maximum)], payments: payments,
-                changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: 1)
-        }
     }
 }

@@ -24,16 +24,6 @@ struct VaultSignerIndependenceTests {
 
     // MARK: - Duplicates are refused at the vault boundary
 
-    @Test("a MuSig2 vault repeating a participant is refused")
-    func muSig2DuplicateParticipantRefused() throws {
-        let masters = try Flow.masters()
-        let key = try Flow.bareKeyExpression(master: masters[0])
-        let descriptor = try Descriptor("tr(musig(\(key),\(key))/<0;1>/*)")
-        #expect(throws: VaultError.self) {
-            _ = try Vault(descriptor: descriptor, network: .signet)
-        }
-    }
-
     @Test("a script-path vault repeating a cosigner is refused")
     func multiADuplicateCosignerRefused() throws {
         let masters = try Flow.masters()

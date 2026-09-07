@@ -117,6 +117,15 @@ struct VaultCosignerIdentityTests {
         }
     }
 
+    /// A key with no origin label at all cannot be checked against anything,
+    /// so it is refused rather than admitted on trust.
+    @Test("a key without an origin label is rejected")
+    func missingOriginRejected() throws {
+        #expect(throws: VaultCosignerKeyError.missingOrigin) {
+            _ = try VaultCosignerKey("\(Self.keyA)/<0;1>/*", role: .scriptPath, network: .mainnet)
+        }
+    }
+
     // MARK: - Network binding
 
     /// A mainnet account key offered to a signet vault is refused, so a vault
@@ -171,6 +180,13 @@ struct VaultCosignerIdentityTests {
             _ = try VaultCosignerKey("[6738736c]\(xprv)/<0;1>/*",
                                      role: .scriptPath, network: .mainnet)
         }
+        // Bare, with neither origin nor derivation: the private material is
+        // named before the shape is, so the message says what actually
+        // happened rather than what else the expression lacks.
+        #expect(throws: VaultCosignerKeyError.privateKey) {
+            _ = try VaultCosignerKey(xprv, role: .scriptPath, network: .mainnet)
+        }
+        #expect(VaultCosignerKeyError.privateKey.localizedDescription.contains("private key"))
         // The refusal is specific, not incidental: the matching public key of
         // the same seed is accepted at the same origin, so what is rejected is
         // the private material rather than the shape of the expression.
@@ -227,11 +243,20 @@ struct VaultDraftIdentityTests {
         var draft = VaultDraft(role: .scriptPath)
         let toMuSig = draft.setRole(.muSig2)
         #expect(toMuSig)
+        #expect(draft.role == .muSig2)
         let backToScriptPath = draft.setRole(.scriptPath)
         #expect(backToScriptPath)
+        #expect(draft.role == .scriptPath)
         try draft.add(Fixture.scriptPath(Fixture.originA, Fixture.keyA), network: .mainnet)
         let lockedOut = draft.setRole(.muSig2)
         #expect(!lockedOut, "changing role with cosigners present must be refused")
+        #expect(draft.role == .scriptPath)
+        // Removing the last cosigner releases the lock again.
+        draft.remove(at: IndexSet(integer: 0))
+        let released = draft.setRole(.muSig2) // mutating: cannot sit inside #expect
+        #expect(released)
+        #expect(draft.role == .muSig2)
+        #expect(draft.threshold == 1)
     }
 
     /// Removing a cosigner frees its identity again, so a legitimate re-entry

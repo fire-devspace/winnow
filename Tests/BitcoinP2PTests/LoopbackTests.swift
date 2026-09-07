@@ -130,23 +130,32 @@ struct LoopbackTests {
         await peer.disconnect()
     }
 
-    @Test("full BIP157 flow: checkpoints, pinned headers, filter match, block fetch")
-    func filterSync() async throws {
+    /// Runs alone and with a second honest peer. The two-peer form is the
+    /// positive control for `PeerDisagreementTests`: without it, a refusal
+    /// there could be the two-peer path being broken rather than the
+    /// disagreement being caught.
+    @Test("full BIP157 flow: checkpoints, pinned headers, filter match, block fetch",
+          arguments: [1, 2])
+    func filterSync(peerCount: Int) async throws {
         let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
-        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
-        try await node.start()
-        defer { Task { await node.stop() } }
+        let nodes = (0 ..< peerCount).map { _ in
+            LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        }
+        for node in nodes { try await node.start() }
+        defer { for node in nodes { Task { await node.stop() } } }
 
-        let pool = PeerPool(params: synthetic.params, peerCount: 1,
-                            manualPeers: [await node.endpoint],
+        var endpoints: [PeerEndpoint] = []
+        for node in nodes { endpoints.append(await node.endpoint) }
+        let pool = PeerPool(params: synthetic.params, peerCount: peerCount,
+                            manualPeers: endpoints,
                             peersFileURL: tempFileURL("peers.json"))
         await pool.start()
-        #expect(await pool.connectedPeers().count == 1)
+        #expect(await pool.connectedPeers().count == peerCount)
 
         let chain = try HeaderChain(params: synthetic.params)
         let progressFile = tempFileURL("filter-progress.json")
         let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
-                                  storageURL: progressFile, requiredCheckpointPeers: 1)
+                                  storageURL: progressFile, requiredCheckpointPeers: peerCount)
 
         let collector = MatchCollector()
         try await sync.sync(watchScripts: [synthetic.watchScript]) { match in
@@ -166,40 +175,12 @@ struct LoopbackTests {
 
         // Progress persists across instances.
         let reloaded = try FilterSync(pool: pool, chain: chain, startHeight: 1,
-                                      storageURL: progressFile, requiredCheckpointPeers: 1)
+                                      storageURL: progressFile, requiredCheckpointPeers: peerCount)
         #expect(await reloaded.nextScanHeight == 7)
         #expect(await reloaded.lastScannedHeight == 6)
 
         await pool.stop()
         try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent())
-    }
-
-    @Test("cfcheckpt headers map to checkpoint multiples, not the tip (Core semantics)")
-    func checkpointHeightMapping() async throws {
-        // Regression test for a bug caught by the differential harness: Core's
-        // ProcessGetCFCheckPt returns headers at heights 1000, 2000, …
-        // ascending — never the stop block itself. FilterSync used to map the
-        // first header onto the tip and reject every sync past height 1000.
-        let synthetic = makeSyntheticChain(length: 1_001, watchHeight: 3)
-        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
-        try await node.start()
-        defer { Task { await node.stop() } }
-
-        let pool = PeerPool(params: synthetic.params, peerCount: 1,
-                            manualPeers: [await node.endpoint])
-        await pool.start()
-        let chain = try HeaderChain(params: synthetic.params)
-        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
-                                  requiredCheckpointPeers: 1)
-        let collector = MatchCollector()
-        try await sync.sync(watchScripts: [synthetic.watchScript]) { match in
-            collector.add(match)
-        }
-        #expect(collector.matches.count == 1)
-        #expect(await sync.lastScannedHeight == 1_001)
-        // The single checkpoint (height 1000) was pinned and cross-checked.
-        #expect(await sync.filterHeader(at: 1_000) != nil)
-        await pool.stop()
     }
 
     @Test("a lying filter fails verification against the pinned header chain")

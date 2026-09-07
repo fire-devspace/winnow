@@ -156,34 +156,10 @@ struct PeerDisagreementTests {
         return result
     }
 
-    /// Positive control: the same two-peer setup with both peers honest syncs
-    /// normally. Without this the failure above could be the two-peer path
-    /// being broken rather than the disagreement being caught.
-    @Test("two honest peers sync normally")
-    func twoHonestPeersSync() async throws {
-        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
-        let first = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
-        let second = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
-        try await first.start()
-        try await second.start()
-        defer { Task { await first.stop(); await second.stop() } }
-
-        let pool = PeerPool(params: synthetic.params, peerCount: 2,
-                            manualPeers: [await first.endpoint, await second.endpoint],
-                            peersFileURL: tempFileURL("peers.json"))
-        await pool.start()
-
-        let chain = try HeaderChain(params: synthetic.params)
-        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
-                                  storageURL: tempFileURL("progress.json"),
-                                  requiredCheckpointPeers: 2)
-
-        let collector = MatchCollector()
-        try await sync.sync(watchScripts: [synthetic.watchScript]) { collector.add($0) }
-        #expect(collector.matches.count == 1)
-        #expect(await sync.nextScanHeight == 7)
-        await pool.stop()
-    }
+    // Positive control: the same two-peer setup with both peers honest syncs
+    // normally, so the failure above is the disagreement being caught rather
+    // than the two-peer path being broken. That is `LoopbackTests.filterSync`,
+    // which runs the full BIP157 flow with one peer and with two.
 
     /// The eclipse case, pinned as current behaviour rather than asserted as
     /// desirable.
