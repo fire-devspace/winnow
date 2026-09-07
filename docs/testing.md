@@ -1,5 +1,8 @@
 # Features, journeys, and evidence
 
+The [public testing guide](https://winnowwallet.com/testing) explains the suites,
+how to read a run, and where to find its artifacts.
+
 The supported product is the real iPhone app plus explicit debugging tools.
 Everyday and advanced journeys are declared in docs/journeys.json. The homepage
 and advanced page are generated from that file and the actual app test source

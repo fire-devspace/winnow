@@ -100,7 +100,7 @@ main{{max-width:64rem}} .journey{{display:flow-root;padding-bottom:1.2rem}}
 <body>
 <header class="topbar"><div class="bar">
 <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
-<nav class="links" aria-label="Main"><a href="/">Everyday use</a><a href="/advanced">Advanced</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
+<nav class="links" aria-label="Main"><a href="/">Everyday use</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
 </div></header>
 <main>
 <p class="lede">Early access · open source · iPhone</p>
@@ -112,12 +112,12 @@ main{{max-width:64rem}} .journey{{display:flow-root;padding-bottom:1.2rem}}
 {content}
 <section id="evidence"><h2>What the evidence means</h2>
 <p>Each journey above links to tests that drive the actual app against a disposable signet node. Images show test wallets. A screenshot or a test’s presence in the source is not a passing result: inspect the linked run for its revision, failures, and result bundle.</p>
-<p>Cryptographic vectors, hostile-peer checks, storage failures, and Bitcoin Core comparisons support these journeys. They establish properties that a successful screen flow alone cannot show. See the <a href="{SOURCE}docs/testing.md">testing and feature policy</a>.</p>
+<p>Cryptographic vectors, hostile-peer checks, storage failures, and Bitcoin Core comparisons support these journeys. They establish properties that a successful screen flow alone cannot show. <a href="/testing">Explore the testing suites and their artifacts</a>, or read the <a href="{SOURCE}docs/testing.md">testing and feature policy</a>.</p>
 <p>Simulator results do not establish hardware security, battery life, or independent security review. <a href="/roadmap">Those release requirements and future features live on the separate roadmap</a>.</p>
 </section>
 {"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Explore advanced wallet journeys</a> · <a href='/roadmap'>See planned work</a></p>"}
 </main>
-<footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/papers">Technical notes</a></div></footer>
+<footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/papers">Technical notes</a></div></footer>
 </body>
 </html>
 """

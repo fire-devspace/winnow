@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Testing &amp; evidence — Winnow</title>
+<meta name="description" content="How Winnow tests real wallet journeys, wallet and network rules, cryptography, and recovery — and how to read the results and artifacts.">
+<link rel="canonical" href="https://winnowwallet.com/testing">
+<link rel="stylesheet" href="site.css">
+<style>
+main,.topbar .bar,footer .bar{max-width:68rem}
+.jump-links{display:flex;flex-wrap:wrap;gap:.6rem 1.2rem;margin:1.4rem 0}
+.checks{list-style:none;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem}
+.checks li{padding:1rem;border-top:3px solid var(--mark);background:var(--paper-2);margin:0}
+.checks strong{display:block;margin-bottom:.3rem}
+.suites{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 2.5rem}
+.suites article{min-width:0;padding:1rem 0;border-bottom:1px solid var(--rule)}
+.suites h3{margin:.5rem 0}.suites p{margin:.6rem 0}
+.suite-links{font-size:.9rem}.example{border-left:3px solid var(--seed);padding:.1rem 1.2rem;margin:1.5rem 0}
+summary{cursor:pointer;color:var(--seed);font-weight:600}details{margin:1rem 0}
+td:first-child{min-width:12rem}td code,td a{overflow-wrap:anywhere}
+caption{text-align:left;padding:.75rem;color:var(--ink-2)}.table-wrap:focus-visible{outline-offset:2px}
+@media(max-width:48rem){.checks{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:36rem){.checks,.suites{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="bar">
+<a class="mark" href="/"><b>&#8383;</b> Winnow</a>
+<nav class="links" aria-label="Main"><a href="/">Everyday use</a><a href="/advanced">Advanced</a><a href="/testing" aria-current="page">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
+</div></header>
+<main>
+<h1>How Winnow is tested</h1>
+<p class="lede">Start with what a person needs to do. Check the screens, the wallet’s decisions, and what the Bitcoin network accepts. Keep enough evidence to investigate a failure.</p>
+<nav class="jump-links" aria-label="On this page"><a href="#suites">The test suites</a><a href="#artifacts">Read the artifacts</a><a href="#example">A real example</a><a href="#limits">What remains to prove</a></nav>
+<p><a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Browse app journeys &amp; node results</a> · <a href="https://github.com/winnowwallet/winnow/actions/workflows/ci.yml">Browse package &amp; app checks</a></p>
+
+<section aria-labelledby="payment-title">
+<h2 id="payment-title">One payment, several ways to check it</h2>
+<ol class="checks">
+<li><strong>1. Use the app</strong>Enter a recipient, review the amount and fee, and confirm the payment.</li>
+<li><strong>2. Check the decisions</strong>Verify selected coins, signatures, saved state, and recovery when something interrupts the flow.</li>
+<li><strong>3. Ask Bitcoin Core</strong>Have an independent node accept the transaction and include it in a block.</li>
+<li><strong>4. Read the result</strong>Check the app’s history, assertions, and recorded evidence for that exact revision.</li>
+</ol>
+<p>These checks examine different parts of the same promise. A feature earns its place through a documented journey; focused tests also protect the security rules and failure cases that a successful screen flow cannot establish. <a href="https://github.com/winnowwallet/winnow/blob/main/docs/testing.md">Read the testing and feature policy</a>.</p>
+</section>
+
+<section id="suites">
+<h2>The test suites</h2>
+<div class="suites">
+<article id="journeys">
+<h3>Real app journeys</h3>
+<p>The tests operate the iPhone app in a simulator: create and recover a wallet, receive and send, pay a person, coordinate shared savings, and use advanced signing or fee replacement.</p>
+<p>A disposable Bitcoin test network supplies real blocks and transactions. Assertions check what appears on screen and what the node sees. Screenshots capture selected moments along the way.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift">App scenarios</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/docs/journeys.json">Journey inventory</a> · <a href="#app-artifacts">Results and captures</a></p>
+</article>
+<article id="app-state">
+<h3>App state &amp; protected actions</h3>
+<p>Smaller app tests isolate decisions that are difficult to exhaust through taps: changing a recipient after review, reopening saved state, separating networks, handling damaged files, and requiring device authentication.</p>
+<p>They also check how wallet state becomes something understandable on screen, such as keeping a replaced payment beside its replacement.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/tree/main/AppTests">App tests</a> · <a href="#app-artifacts">App result bundles</a></p>
+</article>
+<article id="wallet-network">
+<h3>Wallet &amp; network rules</h3>
+<p>These checks exercise balances, fees, coin selection, backups, transaction relay, block headers, and compact filters. Controlled peers and damaged inputs test disagreement, disconnects, reorganization, and recovery.</p>
+<p>Wallet and networking live together in WalletCore. Focused tests make failures in their shared rules easier to reproduce.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/tree/main/Tests/WalletCoreTests">Wallet rules</a> · <a href="https://github.com/winnowwallet/winnow/tree/main/Tests/WalletCoreTests/Network">Network cases</a> · <a href="#logs">Job logs</a></p>
+</article>
+<article id="primitives">
+<h3>Cryptography &amp; data formats</h3>
+<p>Known-answer examples, including published Bitcoin test vectors, check keys, signatures, descriptors, and encodings. Invalid inputs and boundary cases check that malformed data is rejected.</p>
+<p>A known-answer test compares with an expected result established outside the code being tested. It helps catch two pieces of our own code agreeing on the same mistake.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/tree/main/Tests/BitcoinCoreTests">Primitive tests and vectors</a> · <a href="#logs">Package results</a></p>
+</article>
+<article id="core">
+<h3>Comparison with Bitcoin Core</h3>
+<p>“Differential” tests ask another implementation to judge our work. Bitcoin Core checks transactions, replacement fees, signing envelopes, and co-signing, while our wallet discovers and confirms payments through its peer protocol.</p>
+<p>The fixture starts with its own fresh test chain. Passing shows agreement for the exercised cases and Core version.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/tree/main/Tests/DifferentialTests">Core comparisons</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/scripts/signet-fixture">Isolated-node setup</a> · <a href="#node-artifacts">Node evidence</a></p>
+</article>
+<article id="fuzz">
+<h3>Fuzzing &amp; sanitizer runs</h3>
+<p>Fuzzing feeds many generated inputs into nine parsers, including transactions, network messages, and wallet imports. A fixed input sequence runs in routine CI; longer weekly runs rotate the sequence to explore further.</p>
+<p>Address Sanitizer looks for memory errors. Thread Sanitizer looks for data races. A saved seed identifies the input sequence so a finding can be replayed and kept as a regression test.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/actions/workflows/fuzz.yml">Longer fuzz runs</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/Tools/Fuzz/README.md">Harness and replay guide</a> · <a href="#fuzz-artifacts">Seeds and reproducers</a></p>
+</article>
+<article id="diagnostics">
+<h3>Debugging tools &amp; live-network runs</h3>
+<p>Tool tests check command behavior and known fuzz regressions. Operators can also collect simulator logs or run a longer “soak” against public signet to observe peer connections, sync progress, and resource use over time.</p>
+<p>These live observations depend on the network and machine used. A command’s help check does not exercise a live network run.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/tree/main/Tests/ToolsTests">Tool tests</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/Tools/Debug/README.md">Diagnostics and soak guide</a> · <a href="#field-artifacts">Field evidence</a></p>
+</article>
+<article id="release-checks">
+<h3>Release &amp; website checks</h3>
+<p>Build checks verify dependency resolution, compiler warnings, and exclusion of test-only controls from the release app. Complexity and size reports make growth visible.</p>
+<p>Website checks verify local links and images, and connect public feature descriptions to real app scenarios. They catch documentation drift; the scenario’s result still comes from its test run.</p>
+<p class="suite-links"><a href="https://github.com/winnowwallet/winnow/blob/main/.github/workflows/ci.yml">Build checks</a> · <a href="https://github.com/winnowwallet/winnow/actions/workflows/loc.yml">Size reports</a> · <a href="https://github.com/winnowwallet/winnow/actions/workflows/site.yml">Website checks</a></p>
+</article>
+</div>
+<details>
+<summary>When do these checks run?</summary>
+<p>Routine CI runs package and app checks, release-build checks, and the fixed fuzz corpus for pull requests and main. The full node and app-journey suites run for relevant code changes from this repository, on main, and on their nightly or explicitly dispatched runs. Fork pull requests do not use the dedicated node runner. Documentation-only changes can skip those node jobs.</p>
+<p>The longer sanitizer workflow runs weekly or on request. Live-network soaks and device exercises are separate observations. A release invokes CI and node checks again. Read the <a href="https://github.com/winnowwallet/winnow/blob/main/.github/workflows/node-tests.yml">node workflow</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/.github/workflows/fuzz.yml">fuzz schedule</a>, and <a href="https://github.com/winnowwallet/winnow/blob/main/.github/workflows/release.yml">release workflow</a> for the exact conditions.</p>
+</details>
+</section>
+
+<section id="artifacts">
+<h2>How to read the evidence</h2>
+<p>An <strong>artifact</strong> is a file or bundle saved by a run: its detailed results, logs, screenshots, or inputs needed to reproduce a problem.</p>
+<ol>
+<li><strong>Choose a run and check its revision.</strong> Confirm the commit, branch, date, and which jobs actually ran. A skipped job supplies no new test result.</li>
+<li><strong>Read the conclusion and failures.</strong> Open the relevant job and its test step. A run that stopped early may still upload partial evidence.</li>
+<li><strong>Open Artifacts on the run’s summary.</strong> Download the matching bundle and use the guide below. GitHub requires sign-in and repository read access for downloads; see its <a href="https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts">artifact download guide</a>.</li>
+</ol>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Artifact guide">
+<table>
+<caption>The names below come from the current workflows. The run number is appended to most download names.</caption>
+<thead><tr><th scope="col">Evidence</th><th scope="col">What it tells you</th><th scope="col">How to use it</th></tr></thead>
+<tbody>
+<tr id="logs"><td><strong>Job logs</strong><br>Package, app, node, and build steps</td><td>Which tests executed, their failures, and the context around a build or runtime error.</td><td>Read directly on <a href="https://github.com/winnowwallet/winnow/actions">GitHub Actions</a>. Start with the failing test or step; test counts alone do not explain coverage.</td></tr>
+<tr id="app-artifacts"><td><strong>App result bundles</strong><br><code>node-ui-…</code><br><code>app-tests-…</code></td><td><code>NodeUI.xcresult</code> and <code>AppTests.xcresult</code> hold per-test results and attachments. The bundles also include readable test logs.</td><td>Unzip, then open the <code>.xcresult</code> in Xcode to inspect a test and its failure details. Without Xcode, start with <code>node-ui.log</code> or <code>app-tests.log</code>. Retained for 14 days.</td></tr>
+<tr><td><strong>Screenshots &amp; timings</strong><br>Inside <code>node-ui-…</code></td><td>Selected screen states and measured steps from that run. <code>timings.json</code> contains the current process’s observations; incomplete runs can contain fewer scenarios.</td><td>View the PNGs and read the JSON as text. Pair them with the test result and revision. A capture shows a moment, and a simulator timing is specific to that machine. Retained with the UI bundle.</td></tr>
+<tr id="node-artifacts"><td><strong>Core comparison log</strong><br><code>node-differential-…</code></td><td><code>differential.log</code> records the independent-node checks, including acceptance, co-signing, and confirmation outcomes.</td><td>Open as text and find the named scenario and its conclusion. Use the <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">node workflow runs</a> to choose a revision. Retained for 14 days.</td></tr>
+<tr id="fuzz-artifacts"><td><strong>Fuzz logs &amp; reproducers</strong><br><code>fuzz-smoke-…</code><br><code>fuzz-address-…</code><br><code>fuzz-thread-…</code></td><td><code>run.log</code> describes the run. Longer runs save <code>seed.txt</code>. An interrupted case can leave <code>in-flight.txt</code>; detected invariant failures save input bytes.</td><td>Keep the revision, target selection, seed, input limit, and iteration count together. Follow the <a href="https://github.com/winnowwallet/winnow/blob/main/Tools/Fuzz/README.md">replay guide</a>. Smoke artifacts last 7 days; longer-run artifacts last 14 days.</td></tr>
+<tr><td><strong>Build provenance &amp; dependencies</strong><br><code>production-supply-chain-…</code></td><td><code>winnow.spdx.json</code> lists build components. <code>winnow-build-provenance.json</code> records the source and build inputs tied to the output.</td><td>Read the JSON alongside the build log. These describe what was built; they are not an independent security review. CI artifacts last 14 days; release metadata is also attached to <a href="https://github.com/winnowwallet/winnow/releases">GitHub releases</a>.</td></tr>
+<tr><td><strong>Size reports</strong><br><code>loc-…</code></td><td><code>loc.md</code>, <code>loc.csv</code>, and <code>loc.json</code> show counted code and changes against the comparison revision.</td><td>Read the workflow summary first, then the files for detail. The <a href="https://github.com/winnowwallet/winnow/actions/workflows/loc.yml">LOC workflow</a> retains these artifacts for 90 days.</td></tr>
+<tr id="field-artifacts"><td><strong>Soak &amp; device observations</strong></td><td>JSONL files record one observation per line over a live-network run. Dated screenshots and notes document specific device or manual exercises.</td><td>Check the date, device, network, and source revision. The <a href="https://github.com/winnowwallet/winnow/blob/main/docs/security/audit-manifest.md">August audit record</a> links its scope and evidence; the <a href="https://github.com/winnowwallet/winnow/blob/main/docs/security/evidence/signet-soak-at-tip-2026-08-24.jsonl">August 24 soak file</a> is a historical example.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Downloads expire and runs can be removed. If an example’s bundle is no longer available, choose a newer completed run in the same workflow and check its revision. Historical evidence remains evidence for its recorded conditions.</p>
+</section>
+
+<section id="example">
+<h2>A real example: finding a payment after a fee bump</h2>
+<div class="example">
+<p><strong>7 September 2026.</strong> The new fee-replacement journey found that Bitcoin Core accepted the replacement, but the app buried the original payment below older confirmed receipts. Scrolling a little further did not solve the experience.</p>
+<p>The fix keeps the replacement chain together in history and moves it with the final payment when it confirms. The app journey checks the exact original and replacement; focused tests cover repeated bumps, confirmation, and damaged links.</p>
+<p><a href="https://github.com/winnowwallet/winnow/actions/runs/34121342891">The failing run</a> · <a href="https://github.com/winnowwallet/winnow/pull/53">The change and explanation</a> · <a href="https://github.com/winnowwallet/winnow/blob/fe865f2fa46cd7cf6477cf912469e4c644003bcd/AppTests/HistoryDisplayTests.swift">Focused regression tests</a></p>
+</div>
+<p>The passing example below tested revision <a href="https://github.com/winnowwallet/winnow/commit/fe865f2fa46cd7cf6477cf912469e4c644003bcd"><code>fe865f2</code></a>. It is a dated worked example, not a live status display.</p>
+<ul>
+<li><a href="https://github.com/winnowwallet/winnow/actions/runs/34124678435">App journeys and Core comparisons</a>: all 15 app journeys passed, along with the host-process probe and Core comparisons. In Artifacts, choose <code>node-ui-34124678435</code> or <code>node-differential-34124678435</code>.</li>
+<li><a href="https://github.com/winnowwallet/winnow/actions/runs/34124678434">App and package checks</a>: 144 app tests and the package checks passed. Choose <code>app-tests-34124678434</code> for the app result bundle; the Intel package log reports 534 tests in 57 suites.</li>
+</ul>
+<p>Those UI, node, and app bundles are scheduled to expire on <strong>21 September 2026</strong>. For newer evidence, use the workflow links above.</p>
+</section>
+
+<section id="limits">
+<h2>What remains to prove</h2>
+<p>A simulator cannot establish locked-device Keychain enforcement, battery use on an iPhone, or independence of peers on the public network. Those require their own device and field evidence. Independent security review has a separately stated scope and revision.</p>
+<p>We keep meaningful cryptographic, hostile-input, storage, authorization, and recovery checks even when a successful app journey cannot reach their failure cases. Obsolete features and duplicate paths can leave with their tests.</p>
+<p><a href="/roadmap">Read the separate roadmap</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/docs/testing.md">Testing and feature policy</a> · <a href="https://github.com/winnowwallet/winnow/blob/main/docs/security/test-suite-map.md">Detailed suite map and historical scope</a></p>
+</section>
+</main>
+<footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/papers">Technical notes</a></div></footer>
+</body>
+</html>
