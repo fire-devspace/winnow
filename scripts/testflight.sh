@@ -220,7 +220,7 @@ raise SystemExit(0 if json.load(sys.stdin)["data"] else 1)
 }
 
 step_external() {
-  local bid gid state
+  local bid gid state response
   bid=$(build_id)
   gid=$(public_group_id)
 
@@ -248,13 +248,14 @@ step_external() {
   # quality-control state accepts a review submission. Retry that short race,
   # but surface any lasting API error instead of printing a false success.
   for attempt in $(seq 1 12); do
-    if asc POST /betaAppReviewSubmissions \
-      '{"data":{"type":"betaAppReviewSubmissions","relationships":{"build":{"data":{"type":"builds","id":"'$bid'"}}}}}' >/dev/null; then
+    if response=$(asc POST /betaAppReviewSubmissions \
+      '{"data":{"type":"betaAppReviewSubmissions","relationships":{"build":{"data":{"type":"builds","id":"'$bid'"}}}}}'); then
       state=$(review_state "$bid")
       echo "external: build $bid review state is $state"
       [ "$state" != "NOT_SUBMITTED" ]
       return
     fi
+    printf '%s\n' "$response" >&2
     echo "external: review submission not ready (attempt $attempt/12); retrying" >&2
     sleep 15
   done

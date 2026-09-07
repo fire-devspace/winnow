@@ -41,6 +41,9 @@ jobs:
           scripts/testflight.sh wait-processing
           scripts/testflight.sh notes
           scripts/testflight.sh internal
+          # Report Apple's current states before attempting review. The final
+          # external and status commands below still have to succeed.
+          scripts/testflight.sh status || true
           scripts/testflight.sh external
           scripts/testflight.sh status
 
