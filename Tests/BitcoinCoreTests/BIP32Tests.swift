@@ -1,5 +1,7 @@
+import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP32 test vectors parsed from bip-0032.mediawiki.
@@ -17,7 +19,7 @@ struct BIP32Tests {
     }
 
     static func vectors() throws -> [Vector] {
-        let text = try vectorString("bip-0032.mediawiki")
+        let text = try Vectors.string("bip-0032.mediawiki", in: .module)
         var vectors: [Vector] = []
         var seed: Data?
         var chains: [ChainEntry] = []
@@ -56,7 +58,7 @@ struct BIP32Tests {
     }
 
     static func invalidKeys() throws -> [String] {
-        let text = try vectorString("bip-0032.mediawiki")
+        let text = try Vectors.string("bip-0032.mediawiki", in: .module)
         guard let range = text.range(of: "===Test vector 5===") else { throw VectorError.malformed("no vector 5") }
         return text[range.upperBound...].components(separatedBy: .newlines).compactMap { line in
             guard line.hasPrefix("* "), let key = line.dropFirst(2).components(separatedBy: " (").first,

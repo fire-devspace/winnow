@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Every message payload: encode → decode round-trip, plus framed round-trip.

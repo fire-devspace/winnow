@@ -43,7 +43,7 @@ and `WinnowSoak`. The explorer backend is never instantiated by the wallet.
 | `Sources/WinnowApp` | iOS app (SwiftUI, iOS 17+) |
 | Other `Sources/` targets | Bitcoin libraries, offline CLI and soak driver |
 | `Tests/` | BIP vectors, unit, loopback and Core differential tests |
-| `Tests/NodeSupport` | Miner and RPC helpers shared by differential and UI tests |
+| `Tests/Support` | `TestSupport`: fixtures, loopback harness, miner and RPC helpers shared by every test target |
 | `AppTests/` | App state, privacy, journal redaction and iOS Keychain attributes |
 | `UITests/` | Simulator journeys and storefront capture |
 | `Tools/Fuzz/`, `Tools/Generate/`, `Tools/Story/` | Local development tools, outside the shipping app |
@@ -63,6 +63,10 @@ scripts/ci-story
 Use XcodeGen 2.46.0. `scripts/install-xcodegen` downloads and verifies that
 version; locally it prints the executable path to use. The generated Xcode
 project is ignored. Run app tests with a fresh results directory.
+Test fixtures live once, in the `TestSupport` library
+([`Tests/Support`](Tests/Support/README.md)); it imports neither `Testing` nor
+`XCTest`, so the swift-testing targets and the Xcode bundles share it and every
+assertion stays at the call site.
 `scripts/check-dependencies --xcode /path/to/DerivedData` verifies that Xcode uses the root
 package and its committed third-party dependency revision.
 

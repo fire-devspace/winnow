@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// People: the pay-to keys a fresh address is derived from, the cards people
@@ -9,10 +10,10 @@ import Testing
 /// co-owners and counts their approvals. Offline, signet-format fixtures.
 @Suite("People and shared savings")
 struct PeopleTests {
-    static func masters() throws -> [HDKey] { try VaultFlowTests.masters() }
+    static func masters() throws -> [HDKey] { try TestVaults.masters() }
 
     static func signer(_ master: HDKey) throws -> String {
-        try VaultFlowTests.keyExpression(master: master)
+        try TestVaults.keyExpression(master: master)
     }
 
     static func account(_ master: HDKey) throws -> HDKey {
@@ -202,7 +203,7 @@ struct PeopleTests {
         let masters = try Self.masters()
         let keys = try masters.map { try Self.signer($0) }
         let vault = try Vault(descriptor: Vault.multiADescriptor(threshold: 2, cosigners: keys), network: .signet)
-        let utxo = try VaultFlowTests.funding(vault: vault, amount: 100_000)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
         var psbt = try vault.createSpend(utxos: [utxo], payments: [Payment(amount: 40_000, scriptPubKey: destination)],
                                          changeIndex: 0, feeRateSatPerVByte: 2, chainTip: 200, randomness: { 0.5 })

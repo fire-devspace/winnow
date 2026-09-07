@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP380 checksum and key expression vectors parsed from bip-0380.mediawiki.
@@ -13,7 +14,7 @@ struct BIP380Tests {
 
     @Test("checksum test cases")
     func checksum() throws {
-        let text = try vectorString("bip-0380.mediawiki")
+        let text = try Vectors.string("bip-0380.mediawiki", in: .module)
         var cases: [(label: String, value: String)] = []
         var inSection = false
         for line in text.components(separatedBy: .newlines) {
@@ -47,7 +48,7 @@ struct BIP380Tests {
 
     @Test("key expression vectors")
     func keyExpressions() throws {
-        let text = try vectorString("bip-0380.mediawiki")
+        let text = try Vectors.string("bip-0380.mediawiki", in: .module)
         var valid: [String] = []
         var invalid: [String] = []
         var section = 0

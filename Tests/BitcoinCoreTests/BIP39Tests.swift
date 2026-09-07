@@ -1,5 +1,7 @@
+import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP39 vectors from trezor/python-mnemonic (passphrase "TREZOR").
@@ -13,7 +15,7 @@ struct BIP39Tests {
     }
 
     static func englishVectors() throws -> [Vector] {
-        let json = try JSONSerialization.jsonObject(with: vectorData("bip39-vectors.json")) as! [String: [[String]]]
+        let json = try Vectors.decode([String: [[String]]].self, "bip39-vectors.json", in: .module)
         return try json["english"]!.map { entry in
             guard let entropy = Data(hex: entry[0]), let seed = Data(hex: entry[2]) else {
                 throw VectorError.badHex(entry[0])

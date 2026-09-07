@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// HeaderChain: PoW-checked connect, fork choice, locator, persistence —
@@ -387,7 +388,7 @@ struct CheckpointStartTests {
     /// genesis-validated header file, and what the shipped constant was
     /// checked against.
     static func headersPastCheckpoint() throws -> [BlockHeader] {
-        let text = try String(decoding: vectorData("mainnet-headers-900001-902000.txt"), as: UTF8.self)
+        let text = try String(decoding: Vectors.data("mainnet-headers-900001-902000.txt", in: .module), as: UTF8.self)
         return try text.split(separator: "\n").map { line in
             guard let bytes = Data(hex: String(line)), bytes.count == BlockHeader.serializedSize else {
                 throw VectorError.malformed(String(line))

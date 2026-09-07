@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// A peer far behind the tip cannot serve filters or blocks near it, and
@@ -10,21 +11,6 @@ import Testing
 /// and never on what software it runs.
 @Suite("Stale tip eviction", .timeLimit(.minutes(2)))
 struct StaleTipEvictionTests {
-    /// Polls the pool until `predicate` holds for its seated endpoints, or
-    /// ten seconds pass. Eviction refills asynchronously, so `start()` alone
-    /// does not settle the pool.
-    private static func settle(_ pool: PeerPool,
-                               until predicate: @escaping ([PeerEndpoint]) -> Bool) async -> [PeerEndpoint] {
-        var seen: [PeerEndpoint] = []
-        for _ in 0 ..< 100 {
-            seen = []
-            for peer in await pool.connectedPeers() { seen.append(await peer.endpoint) }
-            if predicate(seen) { return seen }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        return seen
-    }
-
     /// The remembered-peers file the pool reads at start, version 2.
     private static func persistedPeersFile(_ endpoints: [PeerEndpoint]) -> Data {
         let entries = endpoints.map {
@@ -54,7 +40,7 @@ struct StaleTipEvictionTests {
         let pool = PeerPool(params: synthetic.params, peerCount: 2,
                             manualPeers: [currentEndpoint], peersFileURL: store)
         await pool.start()
-        let both = await Self.settle(pool) { $0.count == 2 }
+        let both = await settle(pool) { $0.count == 2 }
         #expect(both.count == 2, "before any header sync there is no validated tip, so nothing is judged")
 
         // Headers sync against the current node gives the pool a tip it can
@@ -62,7 +48,7 @@ struct StaleTipEvictionTests {
         let chain = try HeaderChain(params: synthetic.params)
         _ = try await pool.syncHeaders(chain)
         #expect(await chain.height == 120)
-        let seated = await Self.settle(pool) { $0 == [currentEndpoint] }
+        let seated = await settle(pool) { $0 == [currentEndpoint] }
         #expect(seated == [currentEndpoint], "only the peer near the tip keeps its seat")
         #expect(await pool.rejectionReason(staleEndpoint)?.hasPrefix("stale tip:") == true)
         #expect(await pool.coolingEndpoints.contains(staleEndpoint), "cooled off, not banned")
@@ -90,12 +76,12 @@ struct StaleTipEvictionTests {
                                 return store
                             }())
         await pool.start()
-        _ = await Self.settle(pool) { $0.count == 3 }
+        _ = await settle(pool) { $0.count == 3 }
         let chain = try HeaderChain(params: synthetic.params)
         _ = try await pool.syncHeaders(chain)
         // Int32.min widened, not trapped; Int32.max is ahead of the tip, which
         // this rule does not judge (the header sync does).
-        let seated = await Self.settle(pool) { !$0.contains(endpoints[2]) }
+        let seated = await settle(pool) { !$0.contains(endpoints[2]) }
         #expect(seated.contains(endpoints[0]), "the honest peer keeps its seat whatever a liar claims")
         #expect(seated.contains(endpoints[1]), "claiming ahead of the tip is not staleness")
         #expect(!seated.contains(endpoints[2]), "a negative height is far behind any tip")
@@ -117,7 +103,7 @@ struct StaleTipEvictionTests {
         await pool.start()
         let chain = try HeaderChain(params: synthetic.params)
         _ = try await pool.syncHeaders(chain)
-        let seated = await Self.settle(pool) { $0.count == 2 }
+        let seated = await settle(pool) { $0.count == 2 }
         #expect(Set(seated) == Set(endpoints), "59 blocks apart is inside the tolerance")
         for endpoint in endpoints {
             #expect(await pool.rejectionReason(endpoint) == nil)
@@ -144,7 +130,7 @@ struct StaleTipEvictionTests {
         await pool.start()
         let chain = try HeaderChain(params: synthetic.params)
         _ = try await pool.syncHeaders(chain)
-        let seated = await Self.settle(pool) { $0.count == 2 }
+        let seated = await settle(pool) { $0.count == 2 }
         #expect(seated.contains(ownEndpoint), "the user's explicit choice is not overruled")
         #expect(await pool.rejectionReason(ownEndpoint) == nil)
         await pool.stop()
@@ -167,19 +153,19 @@ struct StaleTipEvictionTests {
         let pool = PeerPool(params: long.params, peerCount: 2,
                             manualPeers: [await manual.endpoint], peersFileURL: store)
         await pool.start()
-        _ = await Self.settle(pool) { $0.count == 2 }
+        _ = await settle(pool) { $0.count == 2 }
 
         let chain = try HeaderChain(params: long.params)
         _ = try await pool.syncHeaders(chain)
         #expect(await chain.height == 120)
-        #expect(await Self.settle(pool) { $0.count == 2 }.count == 2, "judged at 120 against 120: both stay")
+        #expect(await settle(pool) { $0.count == 2 }.count == 2, "judged at 120 against 120: both stay")
 
         // The chain moves 130 blocks past what the peers reported at their
         // handshake, learned from headers the pool did not get from them.
         _ = try await chain.connect(long.blocks[121...].map(\.header))
         #expect(await chain.height == 250)
         _ = try await pool.syncHeaders(chain)
-        let seated = await Self.settle(pool) { $0.count == 2 }
+        let seated = await settle(pool) { $0.count == 2 }
         #expect(seated.contains(rememberedEndpoint),
                 "a height that only aged with the tip is not a stale tip; the seat was judged when taken")
         #expect(await pool.rejectionReason(rememberedEndpoint) == nil)

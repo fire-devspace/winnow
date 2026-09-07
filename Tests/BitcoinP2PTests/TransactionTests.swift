@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Raw transaction and block parsing, incl. the genesis coinbase txid KAT.

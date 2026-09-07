@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import P256K
+import TestSupport
 import WalletCore
 import XCTest
 
@@ -25,7 +26,7 @@ final class HostProcessProbeTests: XCTestCase {
 /// End-to-end UI tests against the local custom-signet node (default datadir
 /// ~/.bitcoin-mysignet, P2P 127.0.0.1:38401 — overridable via the
 /// WINNOW_NODE_HOST/WINNOW_P2P_PORT/WINNOW_RPC_PORT/WINNOW_DATADIR
-/// environment variables, see UITests/BitcoinCLI.swift). The app is launched with
+/// environment variables, see Tests/Support/Node/BitcoinCLI.swift). The app is launched with
 /// WINNOW_E2E=1 (see Sources/WinnowApp/E2EMode.swift): throwaway storage
 /// and Keychain namespace, custom-signet params, the node as manual peer, and
 /// a fixed wallet entropy for reproducible screenshots.

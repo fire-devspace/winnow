@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 import WalletCore
 
 /// Mixed-implementation vault interoperability (invariant S8, issue #58).
@@ -85,13 +86,8 @@ struct VaultInteropDiffTests {
             let entropy = Data([0x40 + index] + Data(repeating: 0, count: 15))
             ourMasters.append(try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: entropy))))
         }
-        func ourExpression(_ master: HDKey) throws -> String {
-            let account = try master.derived(path: "m/86'/1'/0'")
-            return "[\(String(format: "%08x", master.fingerprint))/86'/1'/0']"
-                + "\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        }
         let coreExpression = core.publicExpression + "/<0;1>/*"
-        let cosigners = [coreExpression] + (try ourMasters.map(ourExpression))
+        let cosigners = [coreExpression] + (try ourMasters.map { try TestVaults.keyExpression(master: $0) })
         let descriptor = try Vault.multiADescriptor(threshold: 2, cosigners: cosigners)
         let vault = try Vault(descriptor: descriptor, network: .signet)
         #expect(vault.usesUnspendableInternalKey, "a vault Core co-signs must be script-path only")
@@ -237,8 +233,7 @@ struct VaultInteropDiffTests {
         let silentEntropy = Data([0x60] + Data(repeating: 0, count: 15))
         let silentMaster = try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: silentEntropy)))
         let silentAccount = try silentMaster.derived(path: "m/86'/1'/0'")
-        let silentExpression = "[\(String(format: "%08x", silentMaster.fingerprint))/86'/1'/0']"
-            + "\(silentAccount.neutered.serialized(network: .testnet))/<0;1>/*"
+        let silentExpression = try TestVaults.keyExpression(master: silentMaster)
         let expressionA = coreA.publicExpression + "/<0;1>/*"
         let expressionB = coreB.publicExpression + "/<0;1>/*"
         let descriptor = try Vault.multiADescriptor(
@@ -387,9 +382,7 @@ struct VaultInteropDiffTests {
         let coreExpression = core.publicExpression + "/<0;1>/*"
         let silentEntropy = Data([0x73] + Data(repeating: 0, count: 15))
         let silentMaster = try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: silentEntropy)))
-        let silentAccount = try silentMaster.derived(path: "m/86'/1'/0'")
-        let silentExpression = "[\(String(format: "%08x", silentMaster.fingerprint))/86'/1'/0']"
-            + "\(silentAccount.neutered.serialized(network: .testnet))/<0;1>/*"
+        let silentExpression = try TestVaults.keyExpression(master: silentMaster)
         let descriptor = try Vault.multiADescriptor(
             threshold: 2, cosigners: [groupExpression, coreExpression, silentExpression])
         let vault = try Vault(descriptor: descriptor, network: .signet)
@@ -553,11 +546,9 @@ struct VaultInteropDiffTests {
         let core = try coreParticipant(wallet: "interop")
         let ourMaster = try HDKey(seed: BIP39.seed(
             mnemonic: BIP39.mnemonic(entropy: Data([0x60] + Data(repeating: 0, count: 15)))))
-        let ourAccount = try ourMaster.derived(path: "m/86'/1'/0'")
         // BIP390: participants carry no derivation of their own when the
         // musig() itself has the suffix.
-        let ourBare = "[\(String(format: "%08x", ourMaster.fingerprint))/86'/1'/0']"
-            + ourAccount.neutered.serialized(network: .testnet)
+        let ourBare = try TestVaults.bareKeyExpression(master: ourMaster)
         let vault = try Vault("tr(musig(\(core.publicExpression),\(ourBare))/<0;1>/*)",
                               network: .signet)
 

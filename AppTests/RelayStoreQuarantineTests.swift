@@ -19,14 +19,6 @@ import XCTest
 /// deleting a file they cannot see was the remedy.
 @MainActor
 final class RelayStoreQuarantineTests: XCTestCase {
-    private final class SilentAuthenticator: DeviceAuthenticating {
-        func authenticate(reason: String) async throws {}
-    }
-
-    private func makeModel() -> AppModel {
-        AppModel(deviceAuthenticator: SilentAuthenticator())
-    }
-
     private func makeDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "winnow-relay-quarantine-\(UUID().uuidString)", directoryHint: .isDirectory)

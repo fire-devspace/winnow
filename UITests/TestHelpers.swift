@@ -1,4 +1,5 @@
 import Foundation
+import TestSupport
 import XCTest
 
 /// Screenshot capture: XCTAttachment on the test result AND a PNG copy on the

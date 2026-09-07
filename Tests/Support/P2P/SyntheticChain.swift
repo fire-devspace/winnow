@@ -1,13 +1,11 @@
 import BitcoinCore
+import BitcoinP2P
 import Foundation
-@testable import BitcoinP2P
-
-/// Test doubles shared across BitcoinP2PTests.
 
 /// Regtest-style parameters: bits 0x207fffff gives a target near 2^255, so a
 /// valid header is "mined" in ~2 nonce tries. Used to exercise HeaderChain's
 /// real PoW checks without a node.
-func makeTestParams(genesis: BlockHeader) -> NetworkParams {
+public func makeTestParams(genesis: BlockHeader) -> NetworkParams {
     NetworkParams(
         network: .signet,
         magic: Data([0x0A, 0x03, 0xCF, 0x40]),
@@ -17,36 +15,43 @@ func makeTestParams(genesis: BlockHeader) -> NetworkParams {
         genesisNonce: genesis.nonce,
         genesisMerkleRoot: genesis.merkleRoot,
         genesisHash: genesis.hash,
-        powLimit: Data(displayHex: "7fffff0000000000000000000000000000000000000000000000000000000000"),
+        // 7fffff00…00 in display order, stored in internal (reversed) order.
+        powLimit: Data(repeating: 0, count: 29) + Data([0xFF, 0xFF, 0x7F]),
         dnsSeeds: []
     )
 }
 
+/// The trivial-difficulty target, bits 0x207fffff, as a 256-bit big-endian
+/// number: mantissa 0x7fffff in the top three bytes, zero below. A hash meets
+/// it when, read as a big-endian integer, it is no larger.
+private let trivialTargetBigEndian: [UInt8] = [0x7F, 0xFF, 0xFF] + [UInt8](repeating: 0, count: 29)
+
 /// Mines a header at trivial difficulty (bits 0x207fffff).
-func minedHeader(previousHash: Data, merkleRoot: Data, time: UInt32) -> BlockHeader {
+public func minedHeader(previousHash: Data, merkleRoot: Data, time: UInt32) -> BlockHeader {
     let bits: UInt32 = 0x207F_FFFF
-    let target = UInt256.target(compact: bits)!
     var nonce: UInt32 = 0
     while true {
         let header = BlockHeader(version: 1, previousHash: previousHash, merkleRoot: merkleRoot,
                                  time: time, bits: bits, nonce: nonce)
-        if UInt256(littleEndian: header.hash) <= target { return header }
+        // The hash is little-endian; reversed, it compares as the integer.
+        let hashBigEndian = Array(header.hash.reversed())
+        if !trivialTargetBigEndian.lexicographicallyPrecedes(hashBigEndian) { return header }
         nonce &+= 1
     }
 }
 
 /// A synthetic, fully valid (PoW-wise) block chain for loopback tests.
-struct SyntheticChain {
-    let params: NetworkParams
+public struct SyntheticChain {
+    public let params: NetworkParams
     /// All blocks, height-indexed (element 0 is genesis).
-    let blocks: [Block]
-    let watchScript: Data
-    let watchHeight: UInt32
+    public let blocks: [Block]
+    public let watchScript: Data
+    public let watchHeight: UInt32
 }
 
 /// Builds a chain of single-transaction blocks; the block at `watchHeight`
 /// pays to `watchScript` (a P2TR-shaped output).
-func makeSyntheticChain(length: Int = 6, watchHeight: UInt32 = 3) -> SyntheticChain {
+public func makeSyntheticChain(length: Int = 6, watchHeight: UInt32 = 3) -> SyntheticChain {
     let watchScript = Data([0x51, 0x20] + repeatElement(0x42, count: 32))
 
     func coinbase(height: Int, includeWatch: Bool) -> Transaction {
@@ -77,7 +82,7 @@ func makeSyntheticChain(length: Int = 6, watchHeight: UInt32 = 3) -> SyntheticCh
 }
 
 /// A segwit transaction with one witness item, for relay tests.
-func makeFakeSegwitTx() -> Transaction {
+public func makeFakeSegwitTx() -> Transaction {
     var input = Transaction.Input(
         previousOutput: Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32), vout: 0),
         scriptSig: Data(), sequence: 0xFFFF_FFFD)
@@ -87,16 +92,6 @@ func makeFakeSegwitTx() -> Transaction {
     return Transaction(version: 2, inputs: [input], outputs: [output], locktime: 0)
 }
 
-/// Temporary file URL that is removed on test teardown best-effort.
-func tempFileURL(_ name: String) -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("winnow-tests-\(UUID().uuidString)")
-        .appendingPathComponent(name)
-    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                             withIntermediateDirectories: true)
-    return url
-}
-
 /// Resumes a continuation at most once: the first resume wins, later ones
 /// are dropped. Wraps every checked continuation handed to a Network.framework
 /// state handler — NWConnection/NWListener can still deliver a state update
@@ -104,19 +99,19 @@ func tempFileURL(_ name: String) -> URL {
 /// nil-ing the handler inside itself does not by itself prevent a second
 /// resume (a fatal "continuation misuse" trap; seen on CI as ECONNRESET
 /// delivered after .ready).
-final class ResumeOnce: @unchecked Sendable {
+public final class ResumeOnce: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Error>?
     private let lock = NSLock()
 
-    init(_ continuation: CheckedContinuation<Void, Error>) {
+    public init(_ continuation: CheckedContinuation<Void, Error>) {
         self.continuation = continuation
     }
 
-    func resume() {
+    public func resume() {
         take()?.resume()
     }
 
-    func resume(throwing error: Error) {
+    public func resume(throwing error: Error) {
         take()?.resume(throwing: error)
     }
 
@@ -127,22 +122,4 @@ final class ResumeOnce: @unchecked Sendable {
         self.continuation = nil
         return continuation
     }
-}
-
-/// Collects BlockMatches from FilterSync's @Sendable callback.
-final class MatchCollector: @unchecked Sendable {
-    private(set) var matches: [BlockMatch] = []
-    func add(_ match: BlockMatch) { matches.append(match) }
-}
-
-func vectorData(_ name: String) throws -> Data {
-    guard let url = Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Vectors") else {
-        throw VectorError.missingFile(name)
-    }
-    return try Data(contentsOf: url)
-}
-
-enum VectorError: Error {
-    case missingFile(String)
-    case malformed(String)
 }

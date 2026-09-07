@@ -2,6 +2,7 @@ import BitcoinCore
 @testable import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 
 /// `getblockfilter` (Core 31.1, blockfilterindex) vs our BIP158 GCS: rebuild
 /// each basic filter from the block's contents (output scripts + spent

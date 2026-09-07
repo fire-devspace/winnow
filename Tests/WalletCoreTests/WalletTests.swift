@@ -3,21 +3,15 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 @Suite("Wallet")
 struct WalletTests {
-    private func makeWallet(network: BitcoinNetwork = .signet,
-                            storageURL: URL? = nil,
-                            keyStore: KeyStore = InMemoryKeyStore()) async throws -> Wallet {
-        try await Wallet.create(network: network, keyStore: keyStore, storageURL: storageURL,
-                                entropy: testEntropy, creationHeight: 100)
-    }
-
     @Test("create: mnemonic stored, descriptor shape, wallet ID = master fingerprint")
     func create() async throws {
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(keyStore: keyStore)
+        let wallet = try makeTestWallet(keyStore: keyStore)
         // The all-zero entropy mnemonic's master fingerprint (BIP32/BIP86 vectors).
         let id = await wallet.id
         #expect(id == "73c5da0a")
@@ -53,7 +47,7 @@ struct WalletTests {
     @Test("address derivation matches BIP86 (incl. the official mainnet vector)")
     func addresses() async throws {
         let master = try testMaster()
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         // Signet: coin type 1 — cross-checked against BitcoinCore's BIP86.
         for index: UInt32 in [0, 1, 7] {
             let internalKey = try BIP86.internalKey(from: master, coinType: 1, change: 0, index: index)
@@ -64,14 +58,14 @@ struct WalletTests {
                 == BIP86.address(internalKey: changeInternal, hrp: "tb"))
         }
         // Mainnet: the official BIP86 vector for m/86'/0'/0'/0/0.
-        let mainnet = try await makeWallet(network: .mainnet)
+        let mainnet = try makeTestWallet(network: .mainnet)
         #expect(try await mainnet.address(chain: .receive, index: 0)
-            == "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr")
+            == TestScripts.bip86FirstMainnetAddress)
     }
 
     @Test("freshReceiveAddress advances the index; watch list covers the gap window")
     func gapLimit() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         #expect(await wallet.nextReceiveIndex == 0)
         let first = try await wallet.freshReceiveAddress()
         #expect(first == (try await wallet.address(chain: .receive, index: 0)))
@@ -82,7 +76,7 @@ struct WalletTests {
 
     @Test("apply: a matched payment becomes a UTXO + history; a spend shrinks the set")
     func applyMatches() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
         let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
             Transaction.Output(value: 200_000, scriptPubKey: script),
@@ -114,7 +108,7 @@ struct WalletTests {
 
     @Test("block application rejects wallet-wide monetary overflow atomically")
     func applyRejectsAggregateOverflow() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
         let first = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
             .init(value: BitcoinAmount.maximum, scriptPubKey: script),
@@ -139,7 +133,7 @@ struct WalletTests {
 
     @Test("payments beyond the gap-limit window are not detected; inside it, indices advance")
     func gapWindow() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         // Index 25 is outside the initial window (0 used + 20 lookahead).
         let outside = try await wallet.scriptPubKey(chain: .receive, index: 25)
         let txOutside = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
@@ -162,21 +156,14 @@ struct WalletTests {
 
     @Test("send: coin selection → PSBT → signed tx whose witnesses verify")
     func send() async throws {
-        let wallet = try await makeWallet()
         // Two funding outputs: receive 0 and change 0 (received as change).
-        for (chain, index, amount) in [(AddressChain.receive, UInt32(0), Int64(150_000)),
-                                       (AddressChain.change, UInt32(0), Int64(80_000))] {
-            let script = try await wallet.scriptPubKey(chain: chain, index: index)
-            let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-                Transaction.Output(value: amount, scriptPubKey: script),
-            ], locktime: 0)
-            try await wallet.apply(match: fakeMatch(height: 100 + index, transactions: [funding]))
-        }
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100), (.change, 0, 80_000, 100)],
+                                                mature: false)
         #expect(await wallet.balance == 230_000)
         #expect(await wallet.nextChangeIndex == 1) // funding to change 0 advanced it
         try await matureCoinbase(wallet, height: 101)
 
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         let built = try await wallet.send(payments: [Payment(amount: 100_000, scriptPubKey: destination)],
                                           feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
         let tx = built.transaction
@@ -217,17 +204,12 @@ struct WalletTests {
 
     @Test("coinbase outputs are credited immediately but not spendable until 100 confirmations")
     func coinbaseMaturity() async throws {
-        let wallet = try await makeWallet()
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)], mature: false)
         #expect(await wallet.utxos.first?.isCoinbase == true)
         #expect(await wallet.spendableUtxos.isEmpty)
         #expect(await wallet.balance == 150_000)
 
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         await #expect(throws: CoinSelectionError.noUTXOs) {
             try await wallet.buildSend(
                 payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -252,17 +234,11 @@ struct WalletTests {
 
     @Test("buildSend leaves wallet state untouched until commit (rollback safety)")
     func buildSendDefersCommit() async throws {
-        let wallet = try await makeWallet()
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
         let utxosBefore = await wallet.utxos.count
         let changeIndexBefore = await wallet.nextChangeIndex
 
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
 
@@ -284,15 +260,11 @@ struct WalletTests {
         let url = tempFileURL("wallet.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                coins: [(.receive, 0, 150_000, 100)])
         let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
 
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
         try await wallet.commit(original)
@@ -371,13 +343,7 @@ struct WalletTests {
 
     @Test("same-input bump refuses a changeless send")
     func feeBumpNeedsChange() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 100_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 100_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x88, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 99_778, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
@@ -395,13 +361,7 @@ struct WalletTests {
 
     @Test("a parent whose pending change was spent by a child refuses a bump")
     func feeBumpRefusesSpentChange() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x55, count: 32))
         let parent = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
@@ -430,13 +390,7 @@ struct WalletTests {
 
     @Test("fee bump removes change when the higher-fee remainder becomes dust")
     func feeBumpDropsDustChange() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 101_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 101_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -459,13 +413,7 @@ struct WalletTests {
 
     @Test("confirmation chooses one replacement-chain member without double-counting change")
     func feeBumpConfirmationRace() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
@@ -492,13 +440,7 @@ struct WalletTests {
 
     @Test("a middle replacement confirming discards only its later descendants")
     func feeBumpMiddleConfirmation() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x66, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
@@ -528,13 +470,7 @@ struct WalletTests {
 
     @Test("an already-relayed replacement confirms safely if its state commit failed")
     func uncommittedFeeBumpConfirmation() async throws {
-        let wallet = try await makeWallet()
-        let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: fundingScript),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
         let destination = Data([0x51, 0x20] + repeatElement(0x44, count: 32))
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -565,7 +501,7 @@ struct WalletTests {
 
     @Test("a reordered-input replacement reconciles the losing pending send")
     func reorderedInputReplacementConfirmation() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         let fundingScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
         let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
             Transaction.Output(value: 80_000, scriptPubKey: fundingScript),
@@ -603,13 +539,9 @@ struct WalletTests {
         let url = tempFileURL("wallet.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        let wallet = try makeTestWallet(storageURL: url, keyStore: keyStore)
         _ = try await wallet.freshReceiveAddress()
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 42_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        try await fund(wallet, amount: 42_000, height: 100)
 
         let reopened = try await Wallet.open(storageURL: url, keyStore: keyStore)
         let reopenedID = await reopened.id
@@ -627,12 +559,8 @@ struct WalletTests {
         let url = tempFileURL("corrupt-amount-wallet.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 42_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let wallet = try makeTestWallet(storageURL: url, keyStore: keyStore)
+        try await fund(wallet, amount: 42_000, height: 100)
 
         let data = try Data(contentsOf: url)
         var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -651,7 +579,7 @@ struct WalletTests {
 
     @Test("invalid block amounts are rejected atomically before wallet mutation")
     func invalidBlockAmounts() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
         let valid = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
             Transaction.Output(value: 42_000, scriptPubKey: script),
@@ -671,7 +599,7 @@ struct WalletTests {
 
     @Test("zero-value watched outputs are ignored without wedging later blocks")
     func zeroValueWatchedOutputDoesNotWedgeScan() async throws {
-        let wallet = try await makeWallet()
+        let wallet = try makeTestWallet()
         let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
         let zero = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
             Transaction.Output(value: 0, scriptPubKey: script),
@@ -697,7 +625,7 @@ struct WalletTests {
         let url = tempFileURL("legacy-wallet.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
+        let wallet = try makeTestWallet(storageURL: url, keyStore: keyStore)
         _ = try await wallet.freshReceiveAddress()
 
         let data = try Data(contentsOf: url)
@@ -716,14 +644,9 @@ struct WalletTests {
     func commitPersistFailureLeavesStateUntouched() async throws {
         let url = tempFileURL("commit-rollback-wallet.json")
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                coins: [(.receive, 0, 150_000, 100)])
+        let destination = TestScripts.p2trDestination
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2,
             chainTip: testChainTip, randomness: { 0.5 })
@@ -748,14 +671,9 @@ struct WalletTests {
     func corruptPersistedTombstone() async throws {
         let url = tempFileURL("corrupt-tombstone-wallet.json")
         let keyStore = InMemoryKeyStore()
-        let wallet = try await makeWallet(storageURL: url, keyStore: keyStore)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 150_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                coins: [(.receive, 0, 150_000, 100)])
+        let destination = TestScripts.p2trDestination
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)], feeRateSatPerVByte: 2,
             chainTip: testChainTip, randomness: { 0.5 })

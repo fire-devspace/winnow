@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// Integer-boundary properties of coin selection (epic #100, invariant S9).
@@ -17,23 +18,6 @@ import Testing
 /// printed in the assertion.
 @Suite("Coin selection properties")
 struct CoinSelectionPropertyTests {
-    /// Same generator as `WinnowFuzz`, so a failing case can be replayed there.
-    struct SplitMix64 {
-        var state: UInt64
-        mutating func next() -> UInt64 {
-            state &+= 0x9E37_79B9_7F4A_7C15
-            var value = state
-            value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-            value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-            return value ^ (value >> 31)
-        }
-        mutating func int(_ range: ClosedRange<Int64>) -> Int64 {
-            let span = UInt64(range.upperBound - range.lowerBound) &+ 1
-            return range.lowerBound &+ Int64(next() % max(span, 1))
-        }
-        mutating func count(_ upperBound: Int) -> Int { Int(next() % UInt64(max(upperBound, 1))) }
-    }
-
     static func script(_ byte: UInt8) -> Data { Data([0x51, 0x20] + repeatElement(byte, count: 32)) }
     static let changeScript = script(0xCC)
 
@@ -79,7 +63,7 @@ struct CoinSelectionPropertyTests {
     @Test("value is conserved across ordinary amounts")
     func conservationOrdinary() throws {
         let seed: UInt64 = 0x5309_1A7E_0000_0001
-        var rng = SplitMix64(state: seed)
+        var rng = SeededRandom(state: seed)
         var accepted = 0
         for iteration in 0 ..< 4_000 {
             let utxos = (0 ... rng.count(6)).map { Self.utxo($0, amount: rng.int(1 ... 5_000_000)) }
@@ -106,7 +90,7 @@ struct CoinSelectionPropertyTests {
     @Test("extreme amounts either conserve value or are refused")
     func conservationAtExtremes() throws {
         let seed: UInt64 = 0x5309_1A7E_0000_0002
-        var rng = SplitMix64(state: seed)
+        var rng = SeededRandom(state: seed)
         let extremes: [Int64] = [
             1, 2, 329, 330, 331,
             BitcoinAmount.maximum - 1, BitcoinAmount.maximum,

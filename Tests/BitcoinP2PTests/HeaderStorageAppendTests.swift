@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Header persistence writes only the new headers (#83).
@@ -18,11 +19,6 @@ import Testing
 /// than as silently wrong bytes.
 @Suite("Header storage append")
 struct HeaderStorageAppendTests {
-
-    static func url() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-append-\(UUID().uuidString).dat")
-    }
 
     /// `count` headers building on `previous`, at trivial difficulty.
     static func headers(after previous: Data, count: Int, time: UInt32 = 1_600_000_000) -> [BlockHeader] {
@@ -84,7 +80,7 @@ struct HeaderStorageAppendTests {
     @Test("appending to a checkpoint-rooted file uses the marker layout's offsets")
     func appendToCheckpointRootedFile() async throws {
         let (params, checkpointTip) = try Self.checkpointRooted()
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
@@ -112,7 +108,7 @@ struct HeaderStorageAppendTests {
     @Test("two appends in a row reload as one chain")
     func appendAfterAppendReloads() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: synthetic.params, storageURL: url)
@@ -139,7 +135,7 @@ struct HeaderStorageAppendTests {
     @Test("an append after a reorg lands at the new end of the file")
     func appendAfterReorgReloads() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: synthetic.params, storageURL: url)
@@ -171,7 +167,7 @@ struct HeaderStorageAppendTests {
     @Test("an append after reopening the file continues the chain")
     func appendAfterReopenReloads() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let first = Self.headers(after: synthetic.blocks[0].hash, count: 3)
@@ -197,7 +193,7 @@ struct HeaderStorageAppendTests {
     @Test("an append after a failed write falls back to rewriting the file")
     func appendAfterFailedWriteRecovers() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
             try? FileManager.default.removeItem(at: url)
@@ -240,7 +236,7 @@ struct HeaderStorageAppendTests {
     @Test("an interrupted append is overwritten by the next one")
     func interruptedAppendIsOverwritten() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let committed = Self.headers(after: synthetic.blocks[0].hash, count: 3)
@@ -279,7 +275,7 @@ struct HeaderStorageAppendTests {
     @Test("total bytes written grows linearly, not quadratically, across batches")
     func writeVolumeIsLinear() async throws {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = Self.url()
+        let url = tempFileURL("headers.dat")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: synthetic.params, storageURL: url)

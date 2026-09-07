@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Bounds on the persisted header file (epic #100, invariant S10).
@@ -20,8 +21,7 @@ struct HeaderStorageBoundsTests {
     /// Creates a file that *reports* a huge size without occupying the disk,
     /// so the size guard can be exercised without writing 256 MB.
     static func sparseFile(bytes: Int64) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-headers-\(UUID().uuidString).dat")
+        let url = tempFileURL("headers.dat")
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         try handle.truncate(atOffset: UInt64(bytes))

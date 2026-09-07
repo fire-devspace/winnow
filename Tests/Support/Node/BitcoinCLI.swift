@@ -1,10 +1,12 @@
+import BitcoinP2P
 import Foundation
 
 /// Process-based `bitcoin-cli` runner for the dev custom-signet node
 /// (default datadir ~/.bitcoin-mysignet, RPC :38400, P2P :38401 on
 /// 127.0.0.1), plus the JSON accessors the differential checks lean on.
 ///
-/// Shared source for the SwiftPM differential and Xcode UI test targets.
+/// Shared by the SwiftPM differential and Xcode UI test targets through the
+/// TestSupport library.
 ///
 /// Node location is env-configurable (CI runners reach the node over
 /// LAN/Tailscale, not loopback); the defaults reproduce the local dev setup
@@ -22,17 +24,17 @@ import Foundation
 ///
 /// Everything here is read-only against the node EXCEPT `generatetoaddress`
 /// mining on the disposable custom signet, which is expected and safe.
-enum BitcoinCLI {
+public enum BitcoinCLI {
     /// The node's BIP325 signet challenge (hex); its signing key lives in the
     /// "miner" wallet of the same datadir.
-    static let challengeHex =
+    public static let challengeHex =
         "512102d4d3dfe322ab358061c7e08beebb48dc06a4c175342b975ecd0d55a79e6d6cdc51ae"
-    static let challenge = Data(hex: challengeHex)!
+    public static let challenge = Data(hex: challengeHex)!
 
     /// The HOST home directory: inside the iOS simulator NSHomeDirectory()
     /// is the test runner's container; the node datadir lives in the real
     /// user home.
-    static var hostHome: String {
+    public static var hostHome: String {
         ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
     }
 
@@ -52,7 +54,7 @@ enum BitcoinCLI {
     /// The same lookup for suites that gate on an environment flag of their
     /// own (the storefront capture): process environment first, then
     /// ~/.winnow-node.env.
-    static func environmentValue(_ key: String) -> String? { env(key) }
+    public static func environmentValue(_ key: String) -> String? { env(key) }
 
     private static let fileOverrides: [String: String] = {
         let url = URL(fileURLWithPath: hostHome).appending(path: ".winnow-node.env")
@@ -67,23 +69,23 @@ enum BitcoinCLI {
         return result
     }()
 
-    static let nodeHost = env("WINNOW_NODE_HOST") ?? "127.0.0.1"
-    static let p2pPort: UInt16 = env("WINNOW_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
-    static let rpcPort = env("WINNOW_RPC_PORT").flatMap { Int($0) } ?? 38_400
-    static let datadir = env("WINNOW_DATADIR") ?? "\(hostHome)/.bitcoin-mysignet"
+    public static let nodeHost = env("WINNOW_NODE_HOST") ?? "127.0.0.1"
+    public static let p2pPort: UInt16 = env("WINNOW_P2P_PORT").flatMap { UInt16($0) } ?? 38_401
+    public static let rpcPort = env("WINNOW_RPC_PORT").flatMap { Int($0) } ?? 38_400
+    public static let datadir = env("WINNOW_DATADIR") ?? "\(hostHome)/.bitcoin-mysignet"
 
-    struct CLIError: Error, CustomStringConvertible, Equatable {
-        let arguments: [String]
-        let status: Int32
-        let output: String
+    public struct CLIError: Error, CustomStringConvertible, Equatable {
+        public let arguments: [String]
+        public let status: Int32
+        public let output: String
 
-        var description: String {
+        public var description: String {
             "bitcoin-cli \(arguments.joined(separator: " ")) failed (\(status)): \(output)"
         }
     }
 
     /// bitcoin-util binary (same install as bitcoin-cli), used for PoW grinding.
-    static var bitcoinUtilPath: String? {
+    public static var bitcoinUtilPath: String? {
         if let cli = binaryPath {
             let util = (cli as NSString).deletingLastPathComponent + "/bitcoin-util"
             if FileManager.default.isExecutableFile(atPath: util) { return util }
@@ -97,14 +99,14 @@ enum BitcoinCLI {
     /// is arm64 (`/opt/homebrew`), and hardcoding the arm64 one is what made
     /// the UI suite unable to find an installed bitcoin-cli on runner-1
     /// (#31). Override with WINNOW_BITCOIN_CLI (a full path to the binary).
-    static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
+    public static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
 
     /// bitcoin-cli binary: WINNOW_BITCOIN_CLI, else the first hit in
     /// `searchPaths`.
     ///
     /// The simulator uses explicit host paths. Native macOS tests also search
     /// PATH so a locally installed node need not live in a Homebrew prefix.
-    static var binaryPath: String? {
+    public static var binaryPath: String? {
         if let override = env("WINNOW_BITCOIN_CLI"),
            FileManager.default.isExecutableFile(atPath: override) { return override }
         var directories = searchPaths
@@ -119,7 +121,7 @@ enum BitcoinCLI {
     /// Runs `bitcoin-cli` with the node selection flags prepended; returns the
     /// trimmed stdout. Throws `CLIError` on a non-zero exit.
     @discardableResult
-    static func run(_ arguments: [String], wallet: String? = nil) throws -> String {
+    public static func run(_ arguments: [String], wallet: String? = nil) throws -> String {
         guard let binary = binaryPath else {
             throw CLIError(arguments: arguments, status: -1,
                            output: "bitcoin-cli not found in \(searchPaths.joined(separator: ", "))"
@@ -141,7 +143,7 @@ enum BitcoinCLI {
 
     /// Runs a JSON-producing command; nil for empty output, the raw string
     /// for non-JSON results (e.g. a bare `submitblock` reject reason).
-    static func runJSON(_ arguments: [String], wallet: String? = nil) throws -> Any? {
+    public static func runJSON(_ arguments: [String], wallet: String? = nil) throws -> Any? {
         let output = try run(arguments, wallet: wallet)
         guard !output.isEmpty else { return nil }
         // Bare scalars/unquoted text (submitblock rejections) come back raw.
@@ -149,7 +151,7 @@ enum BitcoinCLI {
                                                   options: [.fragmentsAllowed])) ?? output
     }
 
-    static func runObject(_ arguments: [String], wallet: String? = nil) throws -> [String: Any] {
+    public static func runObject(_ arguments: [String], wallet: String? = nil) throws -> [String: Any] {
         guard let object = try runJSON(arguments, wallet: wallet) as? [String: Any] else {
             throw CLIError(arguments: arguments, status: -1, output: "expected a JSON object")
         }
@@ -158,21 +160,21 @@ enum BitcoinCLI {
 
     // MARK: - Convenience accessors for loosely-typed RPC JSON
 
-    static func string(_ object: [String: Any], _ key: String) throws -> String {
+    public static func string(_ object: [String: Any], _ key: String) throws -> String {
         guard let value = object[key] as? String else {
             throw CLIError(arguments: [key], status: -1, output: "missing string field \(key)")
         }
         return value
     }
 
-    static func int(_ object: [String: Any], _ key: String) throws -> Int {
+    public static func int(_ object: [String: Any], _ key: String) throws -> Int {
         guard let value = object[key] as? NSNumber else {
             throw CLIError(arguments: [key], status: -1, output: "missing numeric field \(key)")
         }
         return value.intValue
     }
 
-    static func array(_ object: [String: Any], _ key: String) throws -> [Any] {
+    public static func array(_ object: [String: Any], _ key: String) throws -> [Any] {
         guard let value = object[key] as? [Any] else {
             throw CLIError(arguments: [key], status: -1, output: "missing array field \(key)")
         }
@@ -180,7 +182,7 @@ enum BitcoinCLI {
     }
 
     /// A BTC-amount JSON number as exact sats (Core prints 8 decimals).
-    static func sats(_ value: Any) throws -> Int64 {
+    public static func sats(_ value: Any) throws -> Int64 {
         guard let number = value as? NSNumber else {
             throw CLIError(arguments: ["amount"], status: -1, output: "expected numeric amount")
         }
@@ -189,20 +191,20 @@ enum BitcoinCLI {
 
     // MARK: - Node facts
 
-    static func blockCount() throws -> Int {
+    public static func blockCount() throws -> Int {
         try Int(run(["getblockcount"]))!
     }
 
-    static func blockHash(at height: Int) throws -> String {
+    public static func blockHash(at height: Int) throws -> String {
         try run(["getblockhash", String(height)])
     }
 
-    static func bestBlockHash() throws -> String {
+    public static func bestBlockHash() throws -> String {
         try run(["getbestblockhash"])
     }
 
     /// The scriptPubKey (hex) paid by output `vout` of `txid` (txindex on).
-    static func spentScript(txid: String, vout: Int) throws -> String {
+    public static func spentScript(txid: String, vout: Int) throws -> String {
         let tx = try runObject(["getrawtransaction", txid, "true"])
         let vouts = try array(tx, "vout")
         let output = vouts[vout] as! [String: Any]
@@ -211,7 +213,7 @@ enum BitcoinCLI {
     }
 
     /// A fresh bech32m address from the node's "miner" wallet (send target).
-    static func newMinerAddress() throws -> String {
+    public static func newMinerAddress() throws -> String {
         try run(["getnewaddress", "e2e", "bech32m"], wallet: "miner")
     }
 
@@ -220,19 +222,19 @@ enum BitcoinCLI {
     /// Loads or creates a keyed descriptor wallet on the node. The fixture's
     /// "miner" wallet is blank (signing key only), so a suite that wants the
     /// node to *pay* the app needs a wallet of its own.
-    static func ensureWallet(_ name: String) throws {
+    public static func ensureWallet(_ name: String) throws {
         if try run(["listwallets"]).contains("\"\(name)\"") { return }
         if (try? run(["loadwallet", name])) != nil { return }
         try run(["-named", "createwallet", "wallet_name=\(name)"])
     }
 
     /// A fresh bech32m address from `wallet`.
-    static func newAddress(wallet: String) throws -> String {
+    public static func newAddress(wallet: String) throws -> String {
         try run(["getnewaddress", "", "bech32m"], wallet: wallet)
     }
 
     /// `wallet`'s trusted (spendable, confirmed) balance in sats.
-    static func trustedBalanceSats(wallet: String) throws -> Int64 {
+    public static func trustedBalanceSats(wallet: String) throws -> Int64 {
         let balances = try runObject(["getbalances"], wallet: wallet)
         guard let mine = balances["mine"] as? [String: Any], let trusted = mine["trusted"] else { return 0 }
         return try sats(trusted)
@@ -241,14 +243,14 @@ enum BitcoinCLI {
     /// Pays `sats` to `address` from `wallet` at `feeRate` sat/vB; returns
     /// the txid. Amounts are formatted from integers, never through Double.
     @discardableResult
-    static func sendToAddress(wallet: String, address: String, sats: Int64, feeRate: Int) throws -> String {
+    public static func sendToAddress(wallet: String, address: String, sats: Int64, feeRate: Int) throws -> String {
         let amount = "\(sats / 100_000_000)." + String(format: "%08d", sats % 100_000_000)
         return try run(["-named", "sendtoaddress", "address=\(address)", "amount=\(amount)",
                         "fee_rate=\(feeRate)"], wallet: wallet)
     }
 
     /// (txid, value in sats, scriptPubKey hex) of a transaction's output 0.
-    static func outputZero(txid: String) throws -> (txid: String, amount: Int64, scriptPubKey: String) {
+    public static func outputZero(txid: String) throws -> (txid: String, amount: Int64, scriptPubKey: String) {
         let tx = try runObject(["getrawtransaction", txid, "true"])
         let vouts = try array(tx, "vout")
         guard let output = vouts.first as? [String: Any],
@@ -259,7 +261,7 @@ enum BitcoinCLI {
     }
 
     /// The coinbase txid of a block.
-    static func coinbaseTxid(blockHash: String) throws -> String {
+    public static func coinbaseTxid(blockHash: String) throws -> String {
         let block = try runObject(["getblock", blockHash])
         let txs = try array(block, "tx")
         guard let txid = txs.first as? String else {
@@ -269,17 +271,17 @@ enum BitcoinCLI {
     }
 
     /// The height a block was accepted at.
-    static func blockHeight(of blockHash: String) throws -> Int {
+    public static func blockHeight(of blockHash: String) throws -> Int {
         try int(runObject(["getblock", blockHash]), "height")
     }
 
     /// Current mempool txids (display hex).
-    static func mempoolTxids() throws -> [String] {
+    public static func mempoolTxids() throws -> [String] {
         (try runJSON(["getrawmempool"]) as? [String]) ?? []
     }
 
     /// Unspent outputs paying a scriptPubKey (hex), from the node's UTXO set.
-    static func unspents(scriptHex: String) throws
+    public static func unspents(scriptHex: String) throws
         -> [(txid: String, vout: UInt32, amount: Int64, height: UInt32)] {
         let result = try runObject(["scantxoutset", "start", "[\"raw(\(scriptHex))\"]"])
         return try array(result, "unspents").compactMap { entry in

@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// BIP341 script-path (BIP342 ext_flag = 1) test vectors
@@ -35,7 +36,7 @@ struct SighashBIP341ScriptPathTests {
     }
 
     static func vector() throws -> Vector {
-        let json = try JSONSerialization.jsonObject(with: vectorData("bip341-scriptpath-test-vectors.json")) as! [String: Any]
+        let json = try Vectors.json("bip341-scriptpath-test-vectors.json", in: .module) as! [String: Any]
         func hex(_ value: String) throws -> Data {
             guard let data = Data(hex: value) else { throw VectorError.badHex(value) }
             return data

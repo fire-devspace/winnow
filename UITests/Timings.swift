@@ -1,4 +1,5 @@
 import Foundation
+import TestSupport
 import XCTest
 
 /// Per-scenario wall-clock timing for the e2e suite. Each test records named

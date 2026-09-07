@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// MempoolWindow against loopback nodes (docs/read-side.md §2.8): the relay
@@ -9,7 +10,7 @@ import Testing
 struct MempoolWindowTests {
     /// P2TR-shaped watched script (also the output of makeFakeSegwitTx()).
     static let watchedScript = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
-    static let otherScript = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+    static let otherScript = TestScripts.p2trDestination
 
     /// A segwit fixture tx with unique txid (seed feeds the input outpoint).
     private func makeTx(seed: UInt8, outputs: [(Int64, Data)]) -> Transaction {
@@ -83,7 +84,7 @@ struct MempoolWindowTests {
         #expect(await pool.connectedPeers().count == 2)
 
         let window = MempoolWindow(pool: pool, watchScripts: [Self.watchedScript])
-        let seen = WindowEventCollector()
+        let seen = EventCollector<MempoolWindow.Event>()
         let events = await window.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -158,7 +159,7 @@ struct MempoolWindowTests {
 
         let window = MempoolWindow(pool: pool, watchScripts: [])
         await window.watchEcho(of: ours.txid)
-        let seen = WindowEventCollector()
+        let seen = EventCollector<MempoolWindow.Event>()
         let events = await window.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -206,7 +207,7 @@ struct MempoolWindowTests {
         #expect(await pool.connectedPeers().count == 2)
 
         let window = MempoolWindow(pool: pool, watchScripts: [Self.watchedScript])
-        let seen = WindowEventCollector()
+        let seen = EventCollector<MempoolWindow.Event>()
         let events = await window.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -279,7 +280,7 @@ struct MempoolWindowTests {
         await pool.start()
 
         let window = MempoolWindow(pool: pool, watchScripts: [Self.watchedScript])
-        let seen = WindowEventCollector()
+        let seen = EventCollector<MempoolWindow.Event>()
         let events = await window.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -301,41 +302,5 @@ struct MempoolWindowTests {
         #expect(await node.nextMessage(command: "getdata", timeout: .milliseconds(500)) == nil)
 
         await pool.stop()
-    }
-}
-
-/// Polls `condition` every 10ms until it holds or `timeout` elapses.
-/// Waits for `condition`, and gives up eventually so a hung test fails instead
-/// of hanging forever.
-///
-/// The timeout is a HANG-GUARD, not a performance claim. Nothing here asserts
-/// that the condition is met within it — on a contended CI runner a short
-/// deadline turns into an assertion nobody wrote, which is how these became
-/// intermittent (#144). Keep it generous: a real hang fails either way.
-private func pollUntil(_ timeout: Duration = .seconds(60),
-                       _ condition: () async -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return false
-}
-
-/// Collects MempoolWindow events from the AsyncStream consumer task.
-private final class WindowEventCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [MempoolWindow.Event] = []
-
-    var events: [MempoolWindow.Event] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage
-    }
-
-    func add(_ event: MempoolWindow.Event) {
-        lock.lock()
-        storage.append(event)
-        lock.unlock()
     }
 }

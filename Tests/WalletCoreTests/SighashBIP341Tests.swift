@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// The keyPathSpending section of the official BIP341 wallet test vectors
@@ -33,7 +34,7 @@ struct SighashBIP341Tests {
     }
 
     static func vector() throws -> Vector {
-        let json = try JSONSerialization.jsonObject(with: vectorData("bip341-wallet-test-vectors.json")) as! [String: Any]
+        let json = try Vectors.json("bip341-wallet-test-vectors.json", in: .module) as! [String: Any]
         let spending = (json["keyPathSpending"] as! [[String: Any]])[0]
         func hex(_ value: String) throws -> Data {
             guard let data = Data(hex: value) else { throw VectorError.badHex(value) }

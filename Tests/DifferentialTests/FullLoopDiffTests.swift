@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 import WalletCore
 
 /// The whole pipeline against the dev node over real P2P with custom-signet

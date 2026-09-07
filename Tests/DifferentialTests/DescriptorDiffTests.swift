@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 
 /// `deriveaddresses` (Bitcoin Core 31, custom signet) vs our
 /// `Descriptor.derived(index:network:)` — the descriptor engine is the wallet's

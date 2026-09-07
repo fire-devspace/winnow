@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 @Suite("KeyStore")

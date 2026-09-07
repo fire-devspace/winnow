@@ -4,29 +4,29 @@ import Foundation
 /// Foundation's `Process` is iOS-unavailable even though the simulator runs
 /// macOS binaries fine, so this goes through posix_spawn directly (the
 /// simulator applies no sandbox to the test runner).
-enum HostProcess {
+public enum HostProcess {
     // Single-writer storage, synchronized by the group join in run().
     private final class PipeOutput: @unchecked Sendable {
         var data = Data()
     }
 
-    struct SpawnError: Error, CustomStringConvertible {
-        let path: String
-        let code: Int32
-        var description: String { "posix_spawn(\(path)) failed: errno \(code)" }
+    public struct SpawnError: Error, CustomStringConvertible {
+        public let path: String
+        public let code: Int32
+        public var description: String { "posix_spawn(\(path)) failed: errno \(code)" }
     }
 
-    struct Result {
-        var status: Int32
-        var stdout: String
-        var stderr: String
+    public struct Result {
+        public var status: Int32
+        public var stdout: String
+        public var stderr: String
     }
 
     /// Runs `path` with `arguments`, feeding `input` to stdin; waits for exit
     /// and collects stdout/stderr. Throws on spawn failure only — check
     /// `result.status` for the command's own exit code.
     @discardableResult
-    static func run(_ path: String, _ arguments: [String] = [], input: Data? = nil) throws -> Result {
+    public static func run(_ path: String, _ arguments: [String] = [], input: Data? = nil) throws -> Result {
         var outPipe: [Int32] = [-1, -1]
         var errPipe: [Int32] = [-1, -1]
         var inPipe: [Int32] = [-1, -1]

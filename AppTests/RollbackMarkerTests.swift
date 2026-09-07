@@ -1,6 +1,7 @@
 @testable import WinnowApp
 import BitcoinP2P
 import Foundation
+import TestSupport
 import WalletCore
 import XCTest
 
@@ -17,14 +18,6 @@ import XCTest
 /// reads as if the guarantee holds.
 @MainActor
 final class RollbackMarkerTests: XCTestCase {
-    private final class SilentAuthenticator: DeviceAuthenticating {
-        func authenticate(reason: String) async throws {}
-    }
-
-    private func makeModel() -> AppModel {
-        AppModel(deviceAuthenticator: SilentAuthenticator())
-    }
-
     /// The stores a rollback moves, with a fork to find: a wallet scanned
     /// through block 500, a filter frontier that agrees, and one own send the
     /// broadcaster holds as confirmed at 300. Nothing is persisted and the
@@ -37,8 +30,7 @@ final class RollbackMarkerTests: XCTestCase {
     }
 
     private func makeFixture() async throws -> Fixture {
-        let wallet = try Wallet.create(network: .signet, keyStore: InMemoryKeyStore(), storageURL: nil,
-                                       entropy: Data(repeating: 0, count: 16), creationHeight: 100)
+        let wallet = try makeTestWallet()
         try await wallet.recordScanHeight(501)
         let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
         let chain = try HeaderChain(params: .signet)

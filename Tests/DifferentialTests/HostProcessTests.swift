@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 
 @Suite("Shared host process runner")
 struct HostProcessTests {

@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// BIP133: a peer whose fee filter is above a transaction's rate has said it

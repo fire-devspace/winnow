@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// The wallet rolls back after a chain reorg (#127, SEC-016).
@@ -23,37 +24,15 @@ import Testing
 /// above it could never be recovered by a rescan that starts above the fork.
 @Suite("Reorg rollback")
 struct ReorgRollbackTests {
-    private var destination: Data { Data([0x51, 0x20] + repeatElement(0x99, count: 32)) }
-
-    private func wallet() async throws -> Wallet {
-        try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
-                                storageURL: nil, entropy: testEntropy, creationHeight: 100)
-    }
-
-    /// Funds the wallet at `height` and returns the funding txid.
-    @discardableResult
-    private func fund(_ wallet: Wallet, amount: Int64, height: UInt32,
-                      index: UInt32 = 0) async throws -> Data {
-        let script = try await wallet.scriptPubKey(chain: .receive, index: index)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: amount, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: height, transactions: [funding]))
-        return funding.txid
-    }
+    private var destination: Data { TestScripts.p2trDestination }
 
     /// A coin confirmed above the fork and reserved by our own in-flight send:
     /// funded at 220 and matured, spent by a committed send, then rolled back
     /// to 200. Returns the funding transaction too, so a test can re-find it.
     private func reservedCoinAboveFork() async throws
         -> (wallet: Wallet, funding: Transaction, prepared: Wallet.PreparedSend) {
-        let wallet = try await wallet()
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 500_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 220, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 220)
+        let (wallet, fundings) = try await fundedWallet(coins: [(.receive, 0, 500_000, 220)])
+        let funding = fundings[0]
 
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
@@ -69,7 +48,7 @@ struct ReorgRollbackTests {
     /// A payment that only existed on the orphaned branch.
     @Test("a receive confirmed above the fork is dropped")
     func orphanedReceiveIsDropped() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 150_000, height: 100)
         try await fund(wallet, amount: 250_000, height: 220, index: 1)
         try await wallet.recordScanHeight(221)
@@ -94,8 +73,8 @@ struct ReorgRollbackTests {
     /// vanishing mid-flight.
     @Test("a coin spent above the fork stays reserved for the still-live spend")
     func spendAboveForkStaysReserved() async throws {
-        let wallet = try await wallet()
-        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100)
+        let wallet = try makeTestWallet()
+        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100).txid
 
         let spend = Transaction(
             version: 2,
@@ -123,8 +102,8 @@ struct ReorgRollbackTests {
     /// from the coin the still-live transaction is spending.
     @Test("a send built after the reorg cannot conflict with the live spend")
     func noConflictingSendAfterReorg() async throws {
-        let wallet = try await wallet()
-        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100)
+        let wallet = try makeTestWallet()
+        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100).txid
         let spend = Transaction(
             version: 2,
             inputs: [Transaction.Input(previousOutput: .init(txid: fundingTxid, vout: 0),
@@ -148,8 +127,8 @@ struct ReorgRollbackTests {
     /// history entry — the same machinery a fresh pending send uses.
     @Test("the re-pended spend heals when it confirms on the new branch")
     func rependedSpendReconfirms() async throws {
-        let wallet = try await wallet()
-        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100)
+        let wallet = try makeTestWallet()
+        let fundingTxid = try await fund(wallet, amount: 150_000, height: 100).txid
         let spend = Transaction(
             version: 2,
             inputs: [Transaction.Input(previousOutput: .init(txid: fundingTxid, vout: 0),
@@ -174,7 +153,7 @@ struct ReorgRollbackTests {
     /// other spends.
     @Test("a spend still in flight is not restored")
     func inFlightSpendStaysReserved() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 500_000, height: 100)
         try await wallet.recordScanHeight(221)
 
@@ -245,7 +224,7 @@ struct ReorgRollbackTests {
     /// discloses nothing. A reorg must never cost the user their address gap.
     @Test("address indices and identity survive a rollback")
     func intentStateIsUntouched() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 150_000, height: 210)
         _ = try await wallet.scriptPubKey(chain: .receive, index: 4)
         try await wallet.recordScanHeight(230)
@@ -268,7 +247,7 @@ struct ReorgRollbackTests {
     /// state is not above any fork and must survive.
     @Test("pending change and pending history survive")
     func pendingStateSurvives() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 500_000, height: 100)
         try await wallet.recordScanHeight(221)
         let prepared = try await wallet.buildSend(
@@ -292,7 +271,7 @@ struct ReorgRollbackTests {
     /// indistinguishable from having run it once.
     @Test("rolling back twice is the same as once")
     func rollbackIsIdempotent() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 150_000, height: 100)
         try await fund(wallet, amount: 250_000, height: 220, index: 1)
         try await wallet.recordScanHeight(221)
@@ -323,7 +302,7 @@ struct ReorgRollbackTests {
     /// doubt. Advancing here would skip blocks that have never been read.
     @Test("a rollback never moves the frontier forward")
     func frontierNeverAdvances() async throws {
-        let wallet = try await wallet()
+        let wallet = try makeTestWallet()
         try await fund(wallet, amount: 150_000, height: 100)
         try await wallet.recordScanHeight(150)
 

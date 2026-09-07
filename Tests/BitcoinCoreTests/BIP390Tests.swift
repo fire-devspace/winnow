@@ -1,43 +1,16 @@
+import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP390 musig() descriptor vectors (from bip-0390.mediawiki) and BIP328
 /// aggregate-key derivation vectors (from bip-0328.mediawiki).
 @Suite("BIP390 musig()")
 struct BIP390Tests {
-    struct Vectors {
-        var valid: [(descriptor: String, scripts: [String])] = []
-        var invalid: [String] = []
-    }
-
-    static func vectors() throws -> Vectors {
-        let text = try vectorString("bip-0390.mediawiki")
-        var vectors = Vectors()
-        var section = 0
-        for line in text.components(separatedBy: .newlines) {
-            if line.hasPrefix("==Test Vectors==") { section = 1; continue }
-            if line.hasPrefix("Invalid descriptors") { section = 2; continue }
-            if line.hasPrefix("==Backwards Compatibility==") { section = 0 }
-            let tags = ttTags(in: line)
-            guard !tags.isEmpty else { continue }
-            switch section {
-            case 1 where line.hasPrefix("* <tt>"):
-                vectors.valid.append((tags[0], []))
-            case 1 where line.hasPrefix("** <tt>"):
-                vectors.valid[vectors.valid.count - 1].scripts.append(tags[0])
-            case 2 where line.hasPrefix("* "):
-                vectors.invalid.append(tags.last!)
-            default:
-                break
-            }
-        }
-        return vectors
-    }
-
     @Test("vector block parsed")
     func parsed() throws {
-        let vectors = try Self.vectors()
+        let vectors = try Vectors.descriptorVectors("bip-0390.mediawiki", in: .module)
         #expect(vectors.valid.count == 6)
         #expect(vectors.valid.map(\.scripts.count) == [1, 1, 3, 3, 3, 1])
         #expect(vectors.invalid.count == 14)
@@ -45,7 +18,7 @@ struct BIP390Tests {
 
     @Test("valid musig descriptors produce the expected scriptPubKeys")
     func validDescriptors() throws {
-        for (text, scripts) in try Self.vectors().valid {
+        for (text, scripts) in try Vectors.descriptorVectors("bip-0390.mediawiki", in: .module).valid {
             let descriptor = try Descriptor(text)
             for (index, expected) in scripts.enumerated() {
                 let outputs = try descriptor.derived(index: UInt32(index))
@@ -57,7 +30,7 @@ struct BIP390Tests {
 
     @Test("invalid musig descriptors are rejected at parse or derive time")
     func invalidDescriptors() throws {
-        for text in try Self.vectors().invalid {
+        for text in try Vectors.descriptorVectors("bip-0390.mediawiki", in: .module).invalid {
             #expect((try? Descriptor(text).derived(index: 0)) == nil, "accepted: \(text)")
         }
     }
@@ -66,7 +39,7 @@ struct BIP390Tests {
     /// synthetic xpub (fixed chaincode) serializes as given.
     @Test("BIP328 aggregate pubkeys and synthetic xpubs")
     func bip328() throws {
-        let text = try vectorString("bip-0328.mediawiki")
+        let text = try Vectors.string("bip-0328.mediawiki", in: .module)
         var vectors: [(aggregate: String, xpub: String, keys: [String])] = []
         for line in text.components(separatedBy: .newlines) {
             let tags = ttTags(in: line)

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// A slow peer is cooled off; a dishonest one is banned (#82).
@@ -17,11 +18,6 @@ import Testing
 /// thing bans exist for.
 @Suite("Peer cooldown")
 struct PeerCooldownTests {
-
-    static func peersFile() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-cooldown-peers-\(UUID().uuidString).json")
-    }
 
     /// Reads the peers file in whichever format it holds. The seeding below
     /// deliberately writes the pre-#3 bare array, so these also exercise the
@@ -82,7 +78,7 @@ struct PeerCooldownTests {
         defer { Task { await slow.stop() } }
         let endpoint = await slow.endpoint
 
-        let file = Self.peersFile()
+        let file = tempFileURL("peers.json")
         defer { try? FileManager.default.removeItem(at: file) }
         // Seed the file so the endpoint is already "known good" before the
         // timeout, which is the situation a returning user is in.
@@ -133,7 +129,7 @@ struct PeerCooldownTests {
         let bannedEndpoint = await banned.endpoint
         let cooledEndpoint = await cooled.endpoint
 
-        let file = Self.peersFile()
+        let file = tempFileURL("peers.json")
         defer { try? FileManager.default.removeItem(at: file) }
         try JSONEncoder().encode([bannedEndpoint, cooledEndpoint]).write(to: file)
 

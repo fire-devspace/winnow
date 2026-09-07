@@ -2,6 +2,7 @@ import BitcoinCore
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// Thresholds and signing coverage (epic #100, invariant S8).
@@ -20,21 +21,13 @@ struct VaultThresholdTests {
 
     let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32))
 
-    /// Builds a k-of-3 vault from the shared deterministic cosigner masters.
-    static func vault(threshold k: Int) throws -> (vault: Vault, masters: [HDKey]) {
-        let masters = try Flow.masters()
-        let descriptor = try Vault.multiADescriptor(
-            threshold: k, cosigners: try masters.map { try Flow.keyExpression(master: $0) })
-        return (try Vault(descriptor: descriptor, network: .signet), masters)
-    }
-
     // MARK: - Threshold boundaries
 
     /// k must lie in 1...n. Zero and negative thresholds would be a vault
     /// anyone can spend; k > n would be a vault nobody can spend.
     @Test("a threshold outside 1...n is refused", arguments: [-1, 0, 4, 99])
     func thresholdOutsideRangeRefused(_ k: Int) throws {
-        let expressions = try Flow.masters().map { try Flow.keyExpression(master: $0) }
+        let expressions = try TestVaults.masters().map { try TestVaults.keyExpression(master: $0) }
         #expect(throws: DescriptorError.invalidThreshold) {
             _ = try Vault.multiADescriptor(threshold: k, cosigners: expressions)
         }
@@ -47,7 +40,7 @@ struct VaultThresholdTests {
     func inRangeThresholdsAreDistinct() throws {
         var addresses: Set<String> = []
         for k in 1 ... 3 {
-            let built = try Self.vault(threshold: k)
+            let built = try TestVaults.multiAVault(threshold: k)
             #expect(built.vault.usesUnspendableInternalKey)
             addresses.insert(try built.vault.address(index: 0))
         }
@@ -61,8 +54,8 @@ struct VaultThresholdTests {
     @Test("every 2-of-3 cosigner pair can spend",
           arguments: [(0, 1), (0, 2), (1, 2)])
     func everyPairCanSpend(_ pair: (Int, Int)) throws {
-        let (vault, masters) = try Self.vault(threshold: 2)
-        let utxo = try Flow.funding(vault: vault, amount: 100_000)
+        let (vault, masters) = try TestVaults.multiAVault(threshold: 2)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let owned = [Vault.OutputCoordinate(choice: 1, index: 0)]
         let created = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
@@ -90,8 +83,8 @@ struct VaultThresholdTests {
     /// checked for each of the three in turn rather than for one sample.
     @Test("no single cosigner can finalize a 2-of-3", arguments: [0, 1, 2])
     func noSingleCosignerCanSpend(_ index: Int) throws {
-        let (vault, masters) = try Self.vault(threshold: 2)
-        let utxo = try Flow.funding(vault: vault, amount: 100_000)
+        let (vault, masters) = try TestVaults.multiAVault(threshold: 2)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let owned = [Vault.OutputCoordinate(choice: 1, index: 0)]
         let created = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
@@ -113,8 +106,8 @@ struct VaultThresholdTests {
     /// boundary is checked from below as well as at it.
     @Test("a 3-of-3 vault needs all three cosigners")
     func threeOfThreeNeedsEveryone() throws {
-        let (vault, masters) = try Self.vault(threshold: 3)
-        let utxo = try Flow.funding(vault: vault, amount: 100_000)
+        let (vault, masters) = try TestVaults.multiAVault(threshold: 3)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let owned = [Vault.OutputCoordinate(choice: 1, index: 0)]
         let created = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
@@ -186,9 +179,9 @@ struct VaultThresholdTests {
     @Test("draft threshold stays valid across stepper and deletion")
     func draftThresholdStaysValid() throws {
         var draft = VaultDraft(role: .scriptPath)
-        let masters = try Flow.masters()
+        let masters = try TestVaults.masters()
         for master in masters {
-            try draft.add(try Flow.keyExpression(master: master), network: .signet)
+            try draft.add(try TestVaults.keyExpression(master: master), network: .signet)
             #expect(draft.threshold >= 1)
             #expect(draft.threshold <= draft.cosigners.count)
         }

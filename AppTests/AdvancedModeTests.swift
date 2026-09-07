@@ -7,10 +7,6 @@ import XCTest
 /// network, and turning it off hides rather than deletes.
 @MainActor
 final class AdvancedModeTests: XCTestCase {
-    private final class SilentAuthenticator: DeviceAuthenticating {
-        func authenticate(reason: String) async throws {}
-    }
-
     private var saved: [String: Any?] = [:]
     private var trackedKeys: [String] {
         [AppModel.DefaultsKey.network, AppModel.DefaultsKey.advancedMode,

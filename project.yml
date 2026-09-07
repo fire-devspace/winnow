@@ -70,6 +70,8 @@ targets:
         # Sync-while-active by design: no UIBackgroundModes.
         CODE_SIGN_STYLE: Automatic
 
+  # Unit tests, hosted in the app. TestSupport carries the shared fixtures
+  # (temp files, wallet and vault builders, the fake segwit transaction).
   WinnowAppTests:
     type: bundle.unit-test
     platform: iOS
@@ -78,6 +80,8 @@ targets:
       - path: AppTests
     dependencies:
       - target: WinnowApp
+      - package: Winnow
+        product: TestSupport
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.btcswift.app.tests
@@ -92,17 +96,19 @@ targets:
   # End-to-end UI tests (XCUITest): drive the app on the local custom-signet
   # node and capture screenshots of every major use case into
   # docs/screenshots/. Node access (bitcoin-cli mining/funding) happens from
-  # the macOS test-runner process. Tests/NodeSupport is shared with the
-  # differential suite, so the miner and RPC helpers have one implementation.
+  # the macOS test-runner process. The miner and RPC helpers live in the
+  # package's TestSupport library (Tests/Support), shared with the SwiftPM
+  # differential suite, so they have one implementation.
   WinnowAppUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
     sources:
       - path: UITests
-      - path: Tests/NodeSupport
     dependencies:
       - target: WinnowApp
+      - package: Winnow
+        product: TestSupport
       - package: Winnow
         product: BitcoinCore
       - package: Winnow

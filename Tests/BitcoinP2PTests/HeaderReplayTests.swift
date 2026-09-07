@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// A `headers` message the peer sent on its own — the BIP130 announcement of

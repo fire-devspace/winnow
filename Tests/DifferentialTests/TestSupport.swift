@@ -1,6 +1,7 @@
 import BitcoinCore
 import BitcoinP2P
 import Foundation
+import TestSupport
 @testable import WalletCore
 
 /// Master switch: the differential suite talks to the dev custom-signet node
@@ -17,42 +18,6 @@ import Foundation
 /// the run stalls indefinitely instead of failing, which looks exactly like a
 /// hang with no output.
 let diffEnabled = ProcessInfo.processInfo.environment["WINNOW_DIFF"] == "1"
-
-/// The well-known BIP39 all-"abandon" mnemonic — the harness never holds
-/// real funds; this is a disposable signet.
-let testMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-
-func testMaster() throws -> HDKey {
-    try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
-}
-
-/// Thread-safe sink for FilterSync matches.
-final class MatchCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: [BlockMatch] = []
-
-    var matches: [BlockMatch] {
-        lock.lock()
-        defer { lock.unlock() }
-        return stored
-    }
-
-    func add(_ match: BlockMatch) {
-        lock.lock()
-        stored.append(match)
-        lock.unlock()
-    }
-}
-
-/// Temporary file URL under a per-run directory.
-func tempFileURL(_ name: String) -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("winnow-diff-tests-\(UUID().uuidString)")
-        .appendingPathComponent(name)
-    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                             withIntermediateDirectories: true)
-    return url
-}
 
 // MARK: - PSBT envelope conversion for Core
 

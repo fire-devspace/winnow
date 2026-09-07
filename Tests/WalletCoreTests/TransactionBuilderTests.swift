@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 @Suite("Address decoding + transaction building")
@@ -10,7 +11,7 @@ struct TransactionBuilderTests {
 
     @Test("P2TR bech32m address → scriptPubKey (mainnet and signet HRPs)")
     func p2tr() throws {
-        let address = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
+        let address = TestScripts.bip86FirstMainnetAddress
         let script = try AddressDecoder.scriptPubKey(for: address, network: .mainnet)
         #expect(script.count == 34 && script.starts(with: [0x51, 0x20]))
         #expect(AddressDecoder.isP2TR(script))

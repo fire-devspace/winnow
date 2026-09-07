@@ -1,6 +1,8 @@
+import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP341 wallet test vectors (bip341-wallet-test-vectors.json, referenced from
@@ -23,7 +25,7 @@ struct BIP341Tests {
     }
 
     static func vectors() throws -> [Vector] {
-        let json = try JSONSerialization.jsonObject(with: vectorData("bip341-wallet-test-vectors.json")) as! [String: Any]
+        let json = try Vectors.json("bip341-wallet-test-vectors.json", in: .module) as! [String: Any]
         return try (json["scriptPubKey"] as! [[String: Any]]).map { entry in
             let given = entry["given"] as! [String: Any]
             let intermediary = entry["intermediary"] as! [String: Any]

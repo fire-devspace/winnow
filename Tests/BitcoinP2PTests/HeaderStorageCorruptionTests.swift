@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// A damaged header file must never load as a chain (epic #100, invariant S5).
@@ -18,8 +19,7 @@ struct HeaderStorageCorruptionTests {
     /// Writes a real four-header chain and returns its file.
     static func persistedChain() async throws -> (url: URL, params: NetworkParams, bytes: Data) {
         let synthetic = makeSyntheticChain(length: 1, watchHeight: 6)
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-corrupt-\(UUID().uuidString).dat")
+        let url = tempFileURL("headers.dat")
         let chain = try HeaderChain(params: synthetic.params, storageURL: url)
         var previous = synthetic.blocks[0].hash
         var headers: [BlockHeader] = []
@@ -36,8 +36,7 @@ struct HeaderStorageCorruptionTests {
     }
 
     static func write(_ bytes: Data) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("winnow-corrupt-\(UUID().uuidString).dat")
+        let url = tempFileURL("headers.dat")
         try bytes.write(to: url)
         return url
     }

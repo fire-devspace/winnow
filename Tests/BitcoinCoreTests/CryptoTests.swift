@@ -1,3 +1,4 @@
+import BitcoinP2P
 import Foundation
 import Testing
 @testable import BitcoinCore

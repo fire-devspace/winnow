@@ -2,6 +2,7 @@ import BitcoinCore
 @testable import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 import WalletCore
 
 /// The BIP157 client path against the dev node over real P2P: header sync
@@ -13,9 +14,8 @@ import WalletCore
 /// (`SignetIntegrationTests`, `SignetWalletIntegrationTests`) that dialed a
 /// hardcoded public-signet node on 127.0.0.1:38333 and returned early when
 /// it was absent. No workflow set the variable, so they never ran. They
-/// live here now because `Tests/NodeSupport` — the miner and the RPC helper
-/// — is compiled only into this target, and SwiftPM forbids a source file
-/// from belonging to two targets.
+/// live here now, next to the other suites that drive the node through the
+/// `TestSupport` harness (the miner and the RPC helper).
 @Suite("filter sync differential", .enabled(if: diffEnabled))
 struct FilterSyncDiffTests {
     private let params = NetworkParams.customSignet(challenge: BitcoinCLI.challenge,

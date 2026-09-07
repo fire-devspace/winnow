@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// Spent coins are marked rather than deleted (#127, groundwork).
@@ -21,20 +22,13 @@ import Testing
 /// that a tombstone can never be mistaken for money.
 @Suite("Spent coin tombstones")
 struct SpentCoinTombstoneTests {
+    /// A matured coin at receive 0, and the txid that funded it.
     private func fundedWallet(amount: Int64 = 500_000) async throws -> (Wallet, Data) {
-        let wallet = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
-                                             storageURL: nil, entropy: testEntropy,
-                                             creationHeight: 100)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: amount, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
-        return (wallet, funding.txid)
+        let funded = try await TestSupport.fundedWallet(coins: [(.receive, 0, amount, 100)])
+        return (funded.wallet, funded.fundings[0].txid)
     }
 
-    private var destination: Data { Data([0x51, 0x20] + repeatElement(0x99, count: 32)) }
+    private var destination: Data { TestScripts.p2trDestination }
 
     /// A spend seen in a block. The coin leaves the wallet's view entirely --
     /// balance, the coin list, and the spendable set -- while the row survives.

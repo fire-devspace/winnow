@@ -11,9 +11,10 @@ import P256K
 /// getblocktemplate → build coinbase → BIP325 block signature (legacy
 /// SIGHASH_ALL against the challenge) → PoW grind → submitblock.
 ///
-/// Shared source for the SwiftPM differential and Xcode UI test targets.
-enum SignetMiner {
-    enum MinerError: Error, Equatable {
+/// Shared by the SwiftPM differential and Xcode UI test targets through the
+/// TestSupport library.
+public enum SignetMiner {
+    public enum MinerError: Error, Equatable {
         case wallet(String)
         case rejected(String)
     }
@@ -167,7 +168,7 @@ enum SignetMiner {
     /// exactly one draw and does nothing else. Both are emitted anyway so one
     /// awk recipe reads either trace line.
     @discardableResult
-    static func mineBlock(payingTo payoutScript: Data) async throws -> String {
+    public static func mineBlock(payingTo payoutScript: Data) async throws -> String {
         let start = ContinuousClock.now
         let submission: (hash: String, answer: String?)
         do {
@@ -199,7 +200,7 @@ enum SignetMiner {
     /// differential run on a fresh runner, at height 0. Distinct from the
     /// filter tests' outsider script (0xEE): mining to that one would turn
     /// the false-positive control into a false negative.
-    static func ensureChainHeight(atLeast target: Int) async throws {
+    public static func ensureChainHeight(atLeast target: Int) async throws {
         let burnScript = Data([0x51, 0x20]) + Data(repeating: 0xB0, count: 32)
         while try BitcoinCLI.blockCount() < target {
             try await mineOntoTip(payingTo: burnScript)
@@ -219,7 +220,7 @@ enum SignetMiner {
     /// contended p — two suites mining together — is still unobserved, and it
     /// is the one this bound has to survive.
     @discardableResult
-    static func mineOntoTip(payingTo payoutScript: Data,
+    public static func mineOntoTip(payingTo payoutScript: Data,
                             maxAttempts: Int = 20) async throws -> String {
         let start = ContinuousClock.now
         var draws = Duration.zero
@@ -384,7 +385,7 @@ enum SignetMiner {
     }
 }
 
-extension Data {
+public extension Data {
     /// Little-endian fixed-width appends (BitcoinP2P's are module-internal).
     mutating func appendUInt32LE(_ value: UInt32) {
         Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }

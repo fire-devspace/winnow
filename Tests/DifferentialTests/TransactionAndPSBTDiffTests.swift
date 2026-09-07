@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// `decoderawtransaction` (Core 31) vs our serialization/parsing — field-level
@@ -88,25 +89,6 @@ struct TransactionDiffTests {
     }
 
     // MARK: - Corpus
-
-    /// Deterministic generator so a failure names a seed and an index that
-    /// reproduce it exactly, the way `CoinSelectionPropertyTests` does. A
-    /// differential failure you cannot re-run is a rumour.
-    private struct SeededRandom {
-        var state: UInt64
-        mutating func next() -> UInt64 {
-            state &+= 0x9E37_79B9_7F4A_7C15
-            var value = state
-            value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-            value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-            return value ^ (value >> 31)
-        }
-        mutating func below(_ bound: Int) -> Int { bound <= 0 ? 0 : Int(next() % UInt64(bound)) }
-        mutating func pick<T>(_ options: [T]) -> T { options[below(options.count)] }
-        mutating func bytes(_ count: Int) -> Data {
-            Data((0 ..< count).map { _ in UInt8(next() & 0xFF) })
-        }
-    }
 
     /// Every output shape the wallet can pay, plus the ones only a third party
     /// creates. The last two are the interesting ones: an OP_RETURN carrying

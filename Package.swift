@@ -9,6 +9,8 @@ let package = Package(
         .library(name: "BitcoinP2P", targets: ["BitcoinP2P"]),
         .library(name: "BlockchainBackend", targets: ["BlockchainBackend"]),
         .library(name: "WalletCore", targets: ["WalletCore"]),
+        // Test fixtures shared by every test target, SwiftPM and Xcode alike.
+        .library(name: "TestSupport", targets: ["TestSupport"]),
         .executable(name: "btc-swift", targets: ["BtcSwiftCLI"]),
         .executable(name: "WinnowSoak", targets: ["WinnowSoak"]),
         .executable(name: "winnow-story", targets: ["WinnowStoryCLI"]),
@@ -63,6 +65,16 @@ let package = Package(
             dependencies: ["BitcoinCore", "BitcoinP2P", "WinnowFuzzCore"],
             path: "Tools/Fuzz/Sources/WinnowFuzz"
         ),
+        // Framework-agnostic fixtures (no Testing, no XCTest) so the
+        // swift-testing targets below and the Xcode app test bundles share one
+        // implementation. P256K: the signet miner signs block challenges.
+        .target(
+            name: "TestSupport",
+            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore",
+                           .product(name: "P256K", package: "swift-secp256k1")],
+            path: "Tests/Support",
+            exclude: ["README.md"]
+        ),
         .testTarget(
             name: "WinnowStoryCLITests",
             dependencies: ["WinnowStoryCLI"],
@@ -75,25 +87,24 @@ let package = Package(
         ),
         .testTarget(
             name: "BitcoinCoreTests",
-            dependencies: ["BitcoinCore"],
+            // BitcoinP2P only for its public `Data(hex:)` / `.hex` helpers.
+            dependencies: ["BitcoinCore", "BitcoinP2P", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "BitcoinP2PTests",
-            dependencies: ["BitcoinP2P", "BitcoinCore"],
+            dependencies: ["BitcoinP2P", "BitcoinCore", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "WalletCoreTests",
-            dependencies: ["WalletCore", "BitcoinP2P", "BlockchainBackend"],
+            dependencies: ["WalletCore", "BitcoinP2P", "BlockchainBackend", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "DifferentialTests",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"],
-            path: "Tests",
-            exclude: ["BitcoinCoreTests", "BitcoinP2PTests", "FuzzRegressions", "WalletCoreTests"],
-            sources: ["DifferentialTests", "NodeSupport"]
+            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore", "TestSupport"],
+            path: "Tests/DifferentialTests"
         ),
         .testTarget(
             name: "FuzzRegressionTests",

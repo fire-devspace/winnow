@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// The BIP157 cfcheckpt majority rule, actually exercised (epic #100, S5).

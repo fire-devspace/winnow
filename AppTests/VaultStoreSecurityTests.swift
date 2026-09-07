@@ -1,12 +1,13 @@
 @testable import WinnowApp
 import BitcoinCore
 import BitcoinP2P
+import TestSupport
 import WalletCore
 import XCTest
 
 final class VaultStoreSecurityTests: XCTestCase {
     func testMissingVaultFileIsAnEmptyStore() async {
-        let url = temporaryURL()
+        let url = tempFileURL("vault-store.json")
         let store = VaultStore()
 
         let result = await store.configure(storageURL: url, network: .signet)
@@ -16,7 +17,7 @@ final class VaultStoreSecurityTests: XCTestCase {
     }
 
     func testMalformedVaultFileFailsClosedAndIsNotRewritten() async throws {
-        let url = temporaryURL()
+        let url = tempFileURL("vault-store.json")
         let original = Data("not vault json".utf8)
         try original.write(to: url, options: .atomic)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -179,12 +180,8 @@ final class VaultStoreSecurityTests: XCTestCase {
     }
 
     private func makeFixture() throws -> (record: VaultRecord, vault: Vault) {
-        let masters = try [Data(repeating: 0x31, count: 16), Data(repeating: 0x42, count: 16)]
-            .map { try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: $0))) }
-        let keys = try masters.map { master in
-            let account = try master.derived(path: "m/86'/1'/0'")
-            return "[\(String(format: "%08x", master.fingerprint))/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        }
+        let masters = try [UInt8(0x31), 0x42].map { try TestVaults.master(entropyByte: $0) }
+        let keys = try masters.map { try TestVaults.keyExpression(master: $0) }
         let descriptor = try Vault.multiADescriptor(threshold: 2, cosigners: keys)
         let serialized = descriptor.serialized()
         let id = String(serialized.split(separator: "#").last!)
@@ -201,13 +198,8 @@ final class VaultStoreSecurityTests: XCTestCase {
     }
 
     private func write(_ records: [VaultRecord]) throws -> URL {
-        let url = temporaryURL()
+        let url = tempFileURL("vault-store.json")
         try JSONEncoder().encode(records).write(to: url, options: .atomic)
         return url
-    }
-
-    private func temporaryURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("vault-store-\(UUID().uuidString).json")
     }
 }

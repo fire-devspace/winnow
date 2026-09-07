@@ -1,6 +1,6 @@
 import Foundation
-import Network
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// PeerPool dial rounds: candidates are raced in parallel with a short
@@ -36,7 +36,7 @@ struct PeerPoolTests {
         let goodA = LoopbackNode(params: params)
         let goodB = LoopbackNode(params: params)
         let nonFilter = LoopbackNode(params: params, services: 1) // handshake rejects
-        let silent = SilentNode()
+        let silent = LoopbackNode(params: params, startSilent: true)
         try await goodA.start()
         try await goodB.start()
         try await nonFilter.start()
@@ -89,10 +89,10 @@ struct PeerPoolTests {
 
     @Test("a round of silent candidates exhausts in ~one dial timeout, not five")
     func exhaustionIsParallel() async throws {
-        var nodes: [SilentNode] = []
+        var nodes: [LoopbackNode] = []
         var endpoints: [PeerEndpoint] = []
         for _ in 0 ..< 5 {
-            let node = SilentNode()
+            let node = LoopbackNode(params: params, startSilent: true)
             try await node.start()
             nodes.append(node)
             endpoints.append(await node.endpoint)
@@ -103,7 +103,7 @@ struct PeerPoolTests {
         // ratio. An absolute bound is a claim about the machine as much as the
         // code: on a contended runner `elapsed < 2s` fails while the racing it
         // is meant to prove works perfectly (#144).
-        let single = SilentNode()
+        let single = LoopbackNode(params: params, startSilent: true)
         try await single.start()
         defer { Task { await single.stop() } }
         let onePool = PeerPool(params: params, peerCount: 1,
@@ -132,10 +132,10 @@ struct PeerPoolTests {
 
     @Test("total dial effort is capped per round")
     func dialAttemptsCapped() async throws {
-        var nodes: [SilentNode] = []
+        var nodes: [LoopbackNode] = []
         var endpoints: [PeerEndpoint] = []
         for _ in 0 ..< 5 {
-            let node = SilentNode()
+            let node = LoopbackNode(params: params, startSilent: true)
             try await node.start()
             nodes.append(node)
             endpoints.append(await node.endpoint)
@@ -271,54 +271,5 @@ struct PeerPoolTests {
         }())
         #expect(await pool.connectedPeers().count == 1)
         await pool.stop()
-    }
-}
-
-/// A listener that accepts connections and never speaks — exercises the
-/// pool's per-attempt dial timeout.
-private actor SilentNode {
-    private var listener: NWListener?
-    private var held: [NWConnection] = []
-    private(set) var port: UInt16 = 0
-
-    var endpoint: PeerEndpoint { PeerEndpoint(host: "127.0.0.1", port: port) }
-
-    func start() async throws {
-        let listener = try NWListener(using: .tcp, on: .any)
-        self.listener = listener
-        listener.newConnectionHandler = { connection in
-            connection.start(queue: DispatchQueue(label: "org.winnow.tests.silent.conn"))
-            Task { await self.hold(connection) }
-        }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let resumeOnce = ResumeOnce(continuation)
-            listener.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    listener.stateUpdateHandler = nil
-                    Task { await self.capturePortAndResume(resumeOnce) }
-                case let .failed(error):
-                    listener.stateUpdateHandler = nil
-                    resumeOnce.resume(throwing: error)
-                default:
-                    break
-                }
-            }
-            listener.start(queue: DispatchQueue(label: "org.winnow.tests.silent"))
-        }
-    }
-
-    func stop() {
-        for connection in held { connection.cancel() }
-        listener?.cancel()
-    }
-
-    private func hold(_ connection: NWConnection) {
-        held.append(connection)
-    }
-
-    private func capturePortAndResume(_ resumeOnce: ResumeOnce) {
-        port = listener?.port?.rawValue ?? 0
-        resumeOnce.resume()
     }
 }

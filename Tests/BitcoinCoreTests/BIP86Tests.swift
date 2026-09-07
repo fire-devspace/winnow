@@ -1,6 +1,8 @@
+import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP86 test vectors parsed from bip-0086.mediawiki.
@@ -26,7 +28,7 @@ struct BIP86Tests {
     }
 
     static func vectors() throws -> Vectors {
-        let text = try vectorString("bip-0086.mediawiki")
+        let text = try TestSupport.Vectors.string("bip-0086.mediawiki", in: .module)
         // The document has several <pre> blocks; the test vectors are the one with the mnemonic.
         var body: Substring?
         for chunk in text.components(separatedBy: "<pre>") {

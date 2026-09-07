@@ -1,6 +1,8 @@
+import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// Official BIP327 MuSig2 test vectors (bitcoin/bips bip-0327/vectors):
@@ -10,11 +12,7 @@ import Testing
 @Suite("BIP327 MuSig2 vectors")
 struct MuSig2Tests {
     static func vectors(_ name: String) throws -> [String: Any] {
-        guard let url = Bundle.module.url(forResource: name, withExtension: nil,
-                                          subdirectory: "Vectors/bip327") else {
-            throw VectorError.missingFile(name)
-        }
-        return try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        try Vectors.json(name, in: .module, subdirectory: "Vectors/bip327") as! [String: Any]
     }
 
     static func hex(_ value: String) -> Data { value.isEmpty ? Data() : Data(hex: value)! }

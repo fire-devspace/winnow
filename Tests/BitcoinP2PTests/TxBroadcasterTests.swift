@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// TxBroadcaster against loopback nodes: inv announcement, getdata answer,
@@ -50,7 +51,7 @@ struct TxBroadcasterTests {
         }
 
         // Events: announced to 3 peers, then requested by each.
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let consumer = Task {
             for await event in events { seen.add(event) }
         }
@@ -106,7 +107,7 @@ struct TxBroadcasterTests {
         await pool.start()
 
         let broadcaster = try TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(3_600))
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let events = await broadcaster.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -154,7 +155,7 @@ struct TxBroadcasterTests {
                                         maxRebroadcastInterval: .milliseconds(600),
                                         maxAnnouncementsPerPeer: 2,
                                         announcementTimeout: .milliseconds(100))
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let events = await broadcaster.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -301,7 +302,7 @@ struct TxBroadcasterTests {
                                         rebroadcastBaseInterval: .milliseconds(150),
                                         maxRebroadcastInterval: .milliseconds(600),
                                         announcementTimeout: .seconds(30))
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let events = await broadcaster.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -434,7 +435,7 @@ struct TxBroadcasterTests {
         let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
                                             rebroadcastBaseInterval: .seconds(3_600))
         let events = await broadcaster.events()
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
         let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
@@ -459,7 +460,7 @@ struct TxBroadcasterTests {
         let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
                                             rebroadcastBaseInterval: .milliseconds(100))
         let events = await broadcaster.events()
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
         let txid = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
@@ -521,7 +522,7 @@ struct TxBroadcasterTests {
                                         rebroadcastBaseInterval: .milliseconds(150),
                                         maxRebroadcastInterval: .milliseconds(600),
                                         announcementTimeout: .seconds(30))
-        let seen = EventCollector()
+        let seen = EventCollector<TxBroadcaster.Event>()
         let events = await broadcaster.events()
         let consumer = Task { for await event in events { seen.add(event) } }
         defer { consumer.cancel() }
@@ -568,42 +569,6 @@ struct TxBroadcasterTests {
         #expect(seen.events.contains { $0 == .feeFloorExceeded(txid: txid, floor: 2_000) })
 
         await pool.stop()
-    }
-}
-
-/// Polls `condition` every 10ms until it holds or `timeout` elapses.
-/// Waits for `condition`, and gives up eventually so a hung test fails instead
-/// of hanging forever.
-///
-/// The timeout is a HANG-GUARD, not a performance claim. Nothing here asserts
-/// that the condition is met within it — on a contended CI runner a short
-/// deadline turns into an assertion nobody wrote, which is how these became
-/// intermittent (#144). Keep it generous: a real hang fails either way.
-private func pollUntil(_ timeout: Duration = .seconds(60),
-                       _ condition: () async -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return false
-}
-
-/// Collects broadcaster events from the AsyncStream consumer task.
-private final class EventCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [TxBroadcaster.Event] = []
-
-    var events: [TxBroadcaster.Event] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage
-    }
-
-    func add(_ event: TxBroadcaster.Event) {
-        lock.lock()
-        storage.append(event)
-        lock.unlock()
     }
 }
 

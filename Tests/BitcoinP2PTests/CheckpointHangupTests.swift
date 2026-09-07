@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// The mainnet failure of 2026-09-04, reproduced: a peer a little behind the

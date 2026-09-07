@@ -1,16 +1,13 @@
 @testable import WinnowApp
 import BitcoinCore
 import BitcoinP2P
+import TestSupport
 import WalletCore
 import XCTest
 
 /// How people reach the send review and how vaults become shared savings.
 @MainActor
 final class PeoplePaymentTests: XCTestCase {
-    private final class SilentAuthenticator: DeviceAuthenticating {
-        func authenticate(reason: String) async throws {}
-    }
-
     private var savedNetwork: String?
 
     override func setUp() {
@@ -48,13 +45,8 @@ final class PeoplePaymentTests: XCTestCase {
         await model.vaultStore.configure(storageURL: directory.appendingPathComponent("vaults.json"), network: .signet)
         await model.peopleStore.configure(storageURL: directory.appendingPathComponent("people.json"), network: .signet)
 
-        let masters = try [0xA1, 0xB2, 0xC3].map { byte -> HDKey in
-            try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: Data(repeating: UInt8(byte), count: 16))))
-        }
-        let keys = try masters.map { master -> String in
-            let account = try master.derived(path: "m/86'/1'/0'")
-            return "[\(String(format: "%08x", master.fingerprint))/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        }
+        let masters = try TestVaults.masters()
+        let keys = try masters.map { try TestVaults.keyExpression(master: $0) }
         let descriptor = try Vault.multiADescriptor(threshold: 2, cosigners: keys)
         let record = try await model.addVault(name: "Savings with Alice, Bob", descriptor: descriptor)
         _ = try XCTUnwrap(model.sharedSavings.first, "new savings must be visible without a sync refresh")
@@ -110,13 +102,8 @@ final class PeoplePaymentTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         await model.vaultStore.configure(storageURL: directory.appendingPathComponent("vaults.json"), network: .signet)
-        let masters = try [0xA1, 0xB2].map { byte -> HDKey in
-            try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: Data(repeating: UInt8(byte), count: 16))))
-        }
-        let keys = try masters.map { master -> String in
-            let account = try master.derived(path: "m/86'/1'/0'")
-            return "[\(String(format: "%08x", master.fingerprint))/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-        }
+        let masters = Array(try TestVaults.masters().prefix(2))
+        let keys = try masters.map { try TestVaults.keyExpression(master: $0) }
         let record = try await model.vaultStore.add(name: "Ours", descriptor: Vault.multiADescriptor(threshold: 2, cosigners: keys),
                                                     createdAtHeight: 0)
         await model.refresh()

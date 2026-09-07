@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Loopback integration: real NWConnection transport against a fake node.

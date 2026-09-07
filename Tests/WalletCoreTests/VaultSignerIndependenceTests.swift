@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// A vault policy must need as many independent signers as it advertises
@@ -18,16 +19,14 @@ import Testing
 /// signatures come from the same key.
 @Suite("Vault signer independence")
 struct VaultSignerIndependenceTests {
-    typealias Flow = VaultFlowTests
-
     static func nums() -> String { Taproot.unspendableInternalKey.hex }
 
     // MARK: - Duplicates are refused at the vault boundary
 
     @Test("a script-path vault repeating a cosigner is refused")
     func multiADuplicateCosignerRefused() throws {
-        let masters = try Flow.masters()
-        let key = try Flow.keyExpression(master: masters[0])
+        let masters = try TestVaults.masters()
+        let key = try TestVaults.keyExpression(master: masters[0])
         let descriptor = try Descriptor("tr(\(Self.nums()),sortedmulti_a(2,\(key),\(key)))")
         #expect(throws: VaultError.self) {
             _ = try Vault(descriptor: descriptor, network: .signet)
@@ -38,8 +37,8 @@ struct VaultSignerIndependenceTests {
     /// is unauthenticated metadata — cannot disguise the repeat.
     @Test("a duplicate disguised by a different origin label is still refused")
     func duplicateBehindRelabelledOriginRefused() throws {
-        let masters = try Flow.masters()
-        let real = try Flow.bareKeyExpression(master: masters[0])
+        let masters = try TestVaults.masters()
+        let real = try TestVaults.bareKeyExpression(master: masters[0])
         // Same account key, different origin text.
         guard let bracket = real.firstIndex(of: "]") else {
             Issue.record("fixture has no origin label")
@@ -59,9 +58,9 @@ struct VaultSignerIndependenceTests {
     /// adjacent pair.
     @Test("a duplicate in any position of a three-participant vault is refused")
     func duplicateInAnyPositionRefused() throws {
-        let masters = try Flow.masters()
-        let a = try Flow.bareKeyExpression(master: masters[0])
-        let b = try Flow.bareKeyExpression(master: masters[1])
+        let masters = try TestVaults.masters()
+        let a = try TestVaults.bareKeyExpression(master: masters[0])
+        let b = try TestVaults.bareKeyExpression(master: masters[1])
         let descriptor = try Descriptor("tr(musig(\(a),\(b),\(a))/<0;1>/*)")
         #expect(throws: VaultError.self) {
             _ = try Vault(descriptor: descriptor, network: .signet)
@@ -74,17 +73,17 @@ struct VaultSignerIndependenceTests {
     /// initializer rejecting these shapes outright.
     @Test("a MuSig2 vault with distinct participants is accepted")
     func distinctMuSig2Accepted() throws {
-        let masters = try Flow.masters()
-        let a = try Flow.bareKeyExpression(master: masters[0])
-        let b = try Flow.bareKeyExpression(master: masters[1])
+        let masters = try TestVaults.masters()
+        let a = try TestVaults.bareKeyExpression(master: masters[0])
+        let b = try TestVaults.bareKeyExpression(master: masters[1])
         let vault = try Vault(descriptor: try Descriptor("tr(musig(\(a),\(b))/<0;1>/*)"), network: .signet)
         #expect(try vault.address(index: 0).hasPrefix("tb1p"))
     }
 
     @Test("a script-path vault with distinct cosigners is accepted")
     func distinctMultiAAccepted() throws {
-        let masters = try Flow.masters()
-        let expressions = try masters.map { try Flow.keyExpression(master: $0) }
+        let masters = try TestVaults.masters()
+        let expressions = try masters.map { try TestVaults.keyExpression(master: $0) }
         let vault = try Vault(descriptor: try Vault.multiADescriptor(threshold: 2, cosigners: expressions),
                               network: .signet)
         #expect(vault.usesUnspendableInternalKey)
@@ -95,8 +94,8 @@ struct VaultSignerIndependenceTests {
     /// descriptor string, reconstructed exactly as the vault store does it.
     @Test("a duplicate reaching the vault store as a descriptor string is refused")
     func duplicateFromDescriptorTextRefused() throws {
-        let masters = try Flow.masters()
-        let key = try Flow.bareKeyExpression(master: masters[0])
+        let masters = try TestVaults.masters()
+        let key = try TestVaults.bareKeyExpression(master: masters[0])
         let text = try Descriptor("tr(musig(\(key),\(key))/<0;1>/*)").serialized()
         #expect(throws: VaultError.self) {
             _ = try Vault(text, network: .signet)
@@ -130,8 +129,8 @@ struct VaultSignerIndependenceTests {
     /// indices would not be a proof either; only pinning the suffix is.
     @Test("two expressions over one account key can differ at index 0 and collide at index 1")
     func collisionExistsAtALaterIndex() throws {
-        let master = try Flow.masters()[0]
-        let ranged = try Flow.keyExpression(master: master)
+        let master = try TestVaults.masters()[0]
+        let ranged = try TestVaults.keyExpression(master: master)
         let fixed = try Self.fixedExpression(master: master, choice: 0, index: 1)
 
         #expect(try Self.resolve(ranged, index: 0, choice: 0) != Self.resolve(fixed, index: 0, choice: 0))
@@ -140,8 +139,8 @@ struct VaultSignerIndependenceTests {
 
     @Test("a script-path vault whose cosigners collide at a later receive index is refused")
     func collidingReceiveIndexRefused() throws {
-        let master = try Flow.masters()[0]
-        let ranged = try Flow.keyExpression(master: master)
+        let master = try TestVaults.masters()[0]
+        let ranged = try TestVaults.keyExpression(master: master)
         let fixed = try Self.fixedExpression(master: master, choice: 0, index: 1)
         let descriptor = try Descriptor("tr(\(Self.nums()),sortedmulti_a(2,\(ranged),\(fixed)))")
         #expect(throws: VaultError.self) {
@@ -154,8 +153,8 @@ struct VaultSignerIndependenceTests {
     /// on change.
     @Test("a script-path vault whose cosigners collide at a later change index is refused")
     func collidingChangeIndexRefused() throws {
-        let master = try Flow.masters()[0]
-        let ranged = try Flow.keyExpression(master: master)
+        let master = try TestVaults.masters()[0]
+        let ranged = try TestVaults.keyExpression(master: master)
         let fixed = try Self.fixedExpression(master: master, choice: 1, index: 1)
 
         #expect(try Self.resolve(ranged, index: 1, choice: 1) == Self.resolve(fixed, index: 1, choice: 1))
@@ -171,8 +170,8 @@ struct VaultSignerIndependenceTests {
     /// script-path one.
     @Test("a MuSig2 vault whose participants carry their own colliding suffixes is refused")
     func muSig2ParticipantSuffixRefused() throws {
-        let master = try Flow.masters()[0]
-        let ranged = try Flow.keyExpression(master: master)
+        let master = try TestVaults.masters()[0]
+        let ranged = try TestVaults.keyExpression(master: master)
         let fixed = try Self.fixedExpression(master: master, choice: 0, index: 1)
         let descriptor = try Descriptor("tr(musig(\(ranged),\(fixed)))")
         #expect(throws: VaultError.self) {
@@ -185,8 +184,8 @@ struct VaultSignerIndependenceTests {
     /// it has to go, whether or not this particular pair happens to overlap.
     @Test("an unsupported cosigner derivation is refused even without a collision")
     func unsupportedSuffixRefused() throws {
-        let masters = try Flow.masters()
-        let a = try Flow.keyExpression(master: masters[0])
+        let masters = try TestVaults.masters()
+        let a = try TestVaults.keyExpression(master: masters[0])
         let b = try Self.fixedExpression(master: masters[1], choice: 0, index: 7)
         let descriptor = try Descriptor("tr(\(Self.nums()),sortedmulti_a(2,\(a),\(b)))")
         #expect(throws: VaultError.self) {
@@ -198,8 +197,8 @@ struct VaultSignerIndependenceTests {
     /// or a generic key error would send someone looking in the wrong place.
     @Test("the refusal names the derivation paths, not malformed text")
     func refusalNamesTheDerivation() throws {
-        let master = try Flow.masters()[0]
-        let ranged = try Flow.keyExpression(master: master)
+        let master = try TestVaults.masters()[0]
+        let ranged = try TestVaults.keyExpression(master: master)
         let fixed = try Self.fixedExpression(master: master, choice: 0, index: 1)
         let descriptor = try Descriptor("tr(\(Self.nums()),sortedmulti_a(2,\(ranged),\(fixed)))")
         do {
@@ -218,10 +217,10 @@ struct VaultSignerIndependenceTests {
     /// the script at all.
     @Test("a script-path vault whose internal key can spend alone is refused")
     func spendableInternalKeyRefused() throws {
-        let masters = try Flow.masters()
-        let a = try Flow.keyExpression(master: masters[0])
-        let b = try Flow.keyExpression(master: masters[1])
-        let internalKey = try Flow.keyExpression(master: masters[2])
+        let masters = try TestVaults.masters()
+        let a = try TestVaults.keyExpression(master: masters[0])
+        let b = try TestVaults.keyExpression(master: masters[1])
+        let internalKey = try TestVaults.keyExpression(master: masters[2])
         let descriptor = try Descriptor("tr(\(internalKey),sortedmulti_a(2,\(a),\(b)))")
         #expect(throws: VaultError.self) {
             _ = try Vault(descriptor: descriptor, network: .signet)
@@ -230,10 +229,10 @@ struct VaultSignerIndependenceTests {
 
     @Test("the internal-key refusal says the internal key can spend on its own")
     func spendableInternalKeyRefusalIsSpecific() throws {
-        let masters = try Flow.masters()
-        let a = try Flow.keyExpression(master: masters[0])
-        let b = try Flow.keyExpression(master: masters[1])
-        let internalKey = try Flow.keyExpression(master: masters[2])
+        let masters = try TestVaults.masters()
+        let a = try TestVaults.keyExpression(master: masters[0])
+        let b = try TestVaults.keyExpression(master: masters[1])
+        let internalKey = try TestVaults.keyExpression(master: masters[2])
         let descriptor = try Descriptor("tr(\(internalKey),sortedmulti_a(2,\(a),\(b)))")
         do {
             _ = try Vault(descriptor: descriptor, network: .signet)

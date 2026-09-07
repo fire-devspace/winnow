@@ -2,6 +2,7 @@ import BitcoinCore
 import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// A draw sequence the test controls, so both randomness branches can be
@@ -44,20 +45,7 @@ final class DrawSequence: @unchecked Sendable {
 /// the tip is not final and would not relay.
 @Suite("Anti-fee-sniping locktime")
 struct AntiFeeSnipingTests {
-    private func makeFundedWallet() async throws -> Wallet {
-        let wallet = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
-                                             storageURL: nil, entropy: testEntropy,
-                                             creationHeight: 100)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 500_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        try await matureCoinbase(wallet, height: 100)
-        return wallet
-    }
-
-    private var destination: Data { Data([0x51, 0x20] + repeatElement(0x99, count: 32)) }
+    private var destination: Data { TestScripts.p2trDestination }
 
     // MARK: - The rule itself
 
@@ -145,7 +133,7 @@ struct AntiFeeSnipingTests {
     /// before the locktime was threaded through.
     @Test("a freshly built send does not ship nLockTime = 0")
     func buildSendStampsALocktime() async throws {
-        let wallet = try await makeFundedWallet()
+        let wallet = try await fundedWallet().wallet
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: 840_000, randomness: DrawSequence(0.5).next)
@@ -156,7 +144,7 @@ struct AntiFeeSnipingTests {
     /// The lookback branch reaches the money path too, not only the helper.
     @Test("a send can carry a recent height instead of the tip")
     func buildSendCanReachBack() async throws {
-        let wallet = try await makeFundedWallet()
+        let wallet = try await fundedWallet().wallet
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: 840_000, randomness: DrawSequence(0.05, 0.42).next)
@@ -168,7 +156,7 @@ struct AntiFeeSnipingTests {
     /// what opts the transaction into BIP125 replacement.
     @Test("inputs stay non-final so the locktime is actually enforced")
     func inputsRemainNonFinal() async throws {
-        let wallet = try await makeFundedWallet()
+        let wallet = try await fundedWallet().wallet
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: 840_000, randomness: DrawSequence(0.5).next)
@@ -181,7 +169,7 @@ struct AntiFeeSnipingTests {
     /// spend, so this documents the boundary rather than endorsing it.
     @Test("a wallet with no validated tip stamps zero")
     func unsyncedWalletStampsZero() async throws {
-        let wallet = try await makeFundedWallet()
+        let wallet = try await fundedWallet().wallet
         let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: 0)
@@ -194,7 +182,7 @@ struct AntiFeeSnipingTests {
     /// requires a replacement to preserve it.
     @Test("a fee bump keeps the original locktime")
     func feeBumpPreservesLocktime() async throws {
-        let wallet = try await makeFundedWallet()
+        let wallet = try await fundedWallet().wallet
         let original = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: 840_000, randomness: DrawSequence(0.05, 0.42).next)
@@ -214,9 +202,9 @@ struct AntiFeeSnipingTests {
     func vaultSpendStampsALocktime() throws {
         let masters = try (0 ..< 3).map { try HDKey(seed: Data(repeating: UInt8($0 + 1), count: 32)) }
         let descriptor = try Vault.multiADescriptor(
-            threshold: 2, cosigners: masters.map { try VaultFlowTests.keyExpression(master: $0) })
+            threshold: 2, cosigners: masters.map { try TestVaults.keyExpression(master: $0) })
         let vault = try Vault(descriptor: descriptor, network: .signet)
-        let utxo = try VaultFlowTests.funding(vault: vault, amount: 100_000)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
 
         let psbt = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],

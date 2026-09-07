@@ -1,6 +1,7 @@
 import BitcoinCore
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// Filter verification + matching against real BIP158 testnet vectors,
@@ -8,37 +9,9 @@ import Testing
 /// header chain rule FilterSync pins.
 @Suite("Filter matching (BIP158 vectors)")
 struct FilterMatchingTests {
-    struct Vector {
-        let height: Int
-        let blockHash: Data // internal order
-        let block: Block
-        let previousHeader: Data // internal order
-        let filter: Data // NBytes
-        let header: Data // internal order
-    }
-
-    static func vectors() throws -> [Vector] {
-        let json = try JSONSerialization.jsonObject(with: vectorData("bip158-testnet-19.json")) as! [Any]
-        return try json.dropFirst().map { entry in
-            let row = entry as! [Any]
-            guard let blockData = Data(hex: row[2] as! String),
-                  let filter = Data(hex: row[5] as! String),
-                  let header = Data(hex: row[6] as! String).map({ Data($0.reversed()) }),
-                  let blockHash = Data(hex: row[1] as! String).map({ Data($0.reversed()) }),
-                  let previousHeader = Data(hex: row[4] as! String).map({ Data($0.reversed()) })
-            else { throw VectorError.malformed("hex") }
-            return Vector(height: row[0] as! Int,
-                          blockHash: blockHash,
-                          block: try Block.decode(blockData),
-                          previousHeader: previousHeader,
-                          filter: filter,
-                          header: header)
-        }
-    }
-
     @Test("parsed filters match their block's output scripts")
     func matchRealScripts() throws {
-        for vector in try Self.vectors() {
+        for vector in try Vectors.bip158(in: .module) {
             let message = CFilterMessage(blockHash: vector.blockHash, filter: vector.filter)
             let parsed = try message.parsedFilter()
             let filter = try GCSFilter(p: GCSFilter.defaultP, m: GCSFilter.defaultM,
@@ -65,7 +38,7 @@ struct FilterMatchingTests {
 
     @Test("filter headers follow the BIP158 chain rule")
     func headerChainRule() throws {
-        for vector in try Self.vectors() {
+        for vector in try Vectors.bip158(in: .module) {
             // header[h] = SHA256d(SHA256d(filter) || header[h-1]) — the exact
             // check FilterSync performs per cfilter.
             let computed = SHA256d.hash(GCSFilter.filterHash(vector.filter) + vector.previousHeader)
@@ -75,7 +48,7 @@ struct FilterMatchingTests {
 
     @Test("cfilter wire round-trip carries the NBytes unchanged")
     func cfilterRoundTrip() throws {
-        let vector = try Self.vectors()[0]
+        let vector = try Vectors.bip158(in: .module)[0]
         let message = CFilterMessage(blockHash: vector.blockHash, filter: vector.filter)
         let decoded = try PeerMessage.decode(command: "cfilter", payload: message.serialized)
         #expect(decoded == .cfilter(message))

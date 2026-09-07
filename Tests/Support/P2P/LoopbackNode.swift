@@ -1,65 +1,67 @@
 import BitcoinCore
+import BitcoinP2P
+import CryptoKit
 import Foundation
 import Network
-@testable import BitcoinP2P
 
 /// A loopback fake full node speaking just enough of the P2P protocol to test
 /// PeerConnection / HeaderChain / FilterSync / TxBroadcaster without touching
 /// the network: version handshake, ping/pong, feefilter push, getheaders,
 /// and BIP157 getcfcheckpt/getcfheaders/getcfilters/getdata served from a
-/// synthetic chain.
-actor LoopbackNode {
-    enum NodeError: Error {
+/// synthetic chain. `startSilent` is the node that accepts and never speaks,
+/// for the pool's dial timeout.
+public actor LoopbackNode {
+    public enum NodeError: Error {
         case failed(String)
     }
 
-    let params: NetworkParams
-    let services: UInt64
+    public let params: NetworkParams
+    public let services: UInt64
     /// Height-indexed blocks served over getheaders/getdata (empty: headers-disabled node).
-    let chain: [Block]
+    public let chain: [Block]
     /// Completes the handshake, then never answers `getheaders` — a peer that
     /// is reachable and well-behaved but too slow to reply, which is the shape
     /// that used to get an endpoint banned for the session (#82).
-    let withholdHeaders: Bool
+    public let withholdHeaders: Bool
     /// When set, the filter served for this height is bit-flipped (lying node).
-    let corruptFilterAtHeight: Int?
+    public let corruptFilterAtHeight: Int?
     /// Serves filter *commitments* that disagree with the honest chain while
     /// keeping block headers honest — a peer lying about BIP157 filter
     /// headers rather than about the chain itself. This is the shape the
     /// cfcheckpt majority rule exists to defend against.
-    let lieAboutFilterCommitments: Bool
+    public let lieAboutFilterCommitments: Bool
     /// Reports this height in its version message instead of the chain's
     /// real height — a peer lying about where its tip is.
-    let claimedStartHeight: Int32?
+    public let claimedStartHeight: Int32?
     /// Hangs up when asked about a block it does not have, which is what
     /// Bitcoin Core does with a `getcfcheckpt` for an unknown stop hash. The
     /// shape of a peer that is behind the tip we are asking about.
-    let disconnectOnUnknownStopHash: Bool
+    public let disconnectOnUnknownStopHash: Bool
     /// Answers every getcfcheckpt with this stop hash instead of the one the
     /// client asked about — a peer replying about a different chain (#129).
-    let cfcheckptStopHashOverride: Data?
+    public let cfcheckptStopHashOverride: Data?
     /// Distinguishes one liar's fabricated commitment chain from another's.
     /// The lie is a byte-flip on every filter hash; with a fixed flip, two
     /// lying nodes fabricate *identical* chains and form a majority for the
     /// lie instead of a three-way split. Varying the salt makes each liar
     /// wrong in its own self-consistent way (#129).
-    let lieSalt: UInt8
+    public let lieSalt: UInt8
     /// When set, the node answers inv announcements of transactions with a
     /// getdata after this delay (nil = never request, the silent peer).
-    let autoRequestDelay: Duration?
+    public let autoRequestDelay: Duration?
     /// Optional delay before the node sends its version message. Tests use
     /// this to make pool connection order deterministic.
-    let versionDelay: Duration
+    public let versionDelay: Duration
     /// The node's mempool: transactions it serves over getdata (MSG_TX /
     /// MSG_WITNESS_TX) — unknown tx hashes get a notfound.
-    let transactions: [Data: Transaction] // keyed by txid (internal order)
+    public let transactions: [Data: Transaction] // keyed by txid (internal order)
 
     private var listener: NWListener?
     private var connection: NWConnection?
     private var framer: MessageFramer
-    private(set) var port: UInt16 = 0
+    public private(set) var port: UInt16 = 0
     /// The BIP37 relay flag from the client's version handshake.
-    private(set) var clientRelay: Bool?
+    public private(set) var clientRelay: Bool?
 
     /// All decoded post-handshake messages received from the client.
     private var inbox: [PeerMessage] = []
@@ -69,7 +71,7 @@ actor LoopbackNode {
     private var filterHashes: [Data] = []
     private var filterHeaders: [Data] = []
 
-    init(params: NetworkParams, services: UInt64 = PeerConnection.nodeCompactFilters,
+    public init(params: NetworkParams, services: UInt64 = PeerConnection.nodeCompactFilters,
          chain: [Block] = [], withholdHeaders: Bool = false,
          corruptFilterAtHeight: Int? = nil,
          lieAboutFilterCommitments: Bool = false, lieSalt: UInt8 = 0xFF,
@@ -101,9 +103,9 @@ actor LoopbackNode {
     /// Connections accepted while silent, cancelled on `stop()`.
     private var heldWhileSilent: [NWConnection] = []
 
-    var endpoint: PeerEndpoint { PeerEndpoint(host: "127.0.0.1", port: port) }
+    public var endpoint: PeerEndpoint { PeerEndpoint(host: "127.0.0.1", port: port) }
 
-    func start() async throws {
+    public func start() async throws {
         // Always an ephemeral port, and never rebound. A node that needs to
         // refuse before it serves starts silent and flips with
         // `beginServing()`, so its port is held for the node's whole life.
@@ -142,7 +144,7 @@ actor LoopbackNode {
         computeFilters()
     }
 
-    func stop() {
+    public func stop() {
         connection?.cancel()
         for held in heldWhileSilent { held.cancel() }
         heldWhileSilent.removeAll()
@@ -151,7 +153,7 @@ actor LoopbackNode {
 
     /// Starts answering handshakes on the already-bound listener. The port
     /// does not change, so a client that was refused can simply dial again.
-    func beginServing() {
+    public func beginServing() {
         serving = true
     }
 
@@ -161,7 +163,7 @@ actor LoopbackNode {
     }
 
     /// Sends any message from the node side (e.g. feefilter, getdata).
-    func send(_ message: PeerMessage) async throws {
+    public func send(_ message: PeerMessage) async throws {
         guard let connection else { throw NodeError.failed("no connection") }
         let framed = MessageFramer.frame(command: message.command, payload: message.payload, magic: params.magic)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -173,7 +175,7 @@ actor LoopbackNode {
 
     /// Removes and returns the first received message with this command,
     /// waiting up to `timeout` for it to arrive.
-    func nextMessage(command: String, timeout: Duration = .seconds(10)) async -> PeerMessage? {
+    public func nextMessage(command: String, timeout: Duration = .seconds(10)) async -> PeerMessage? {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
             if let index = inbox.firstIndex(where: { $0.command == command }) {
@@ -186,6 +188,12 @@ actor LoopbackNode {
 
     // MARK: - Internals
 
+    /// BIP157 filter headers chain by double SHA-256, which BitcoinP2P keeps
+    /// module-internal.
+    private static func sha256d(_ data: Data) -> Data {
+        Data(SHA256.hash(data: Data(SHA256.hash(data: data))))
+    }
+
     private func computeFilters() {
         var previous = Data(repeating: 0, count: 32)
         for block in chain {
@@ -195,7 +203,7 @@ actor LoopbackNode {
                 .filter { !$0.isEmpty && $0.first != 0x6A }
             let filter = try! GCSFilter(items: items, key: block.hash.prefix(16)).serialized
             let filterHash = GCSFilter.filterHash(filter)
-            let filterHeader = SHA256d.hash(filterHash + previous)
+            let filterHeader = Self.sha256d(filterHash + previous)
             filters.append(filter)
             filterHashes.append(filterHash)
             filterHeaders.append(filterHeader)
@@ -208,7 +216,7 @@ actor LoopbackNode {
         var lyingPrevious = Data(repeating: 0, count: 32)
         for index in filterHashes.indices {
             filterHashes[index][0] ^= lieSalt
-            let header = SHA256d.hash(filterHashes[index] + lyingPrevious)
+            let header = Self.sha256d(filterHashes[index] + lyingPrevious)
             filterHeaders[index] = header
             lyingPrevious = header
         }

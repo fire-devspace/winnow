@@ -1,43 +1,16 @@
+import BitcoinP2P
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinCore
 
 /// BIP387 multi_a/sortedmulti_a vectors parsed from bip-0387.mediawiki.
 /// (The task brief calls these "BIP388 vectors"; the descriptor fragments live in BIP387.)
 @Suite("BIP387 multi_a/sortedmulti_a")
 struct BIP387Tests {
-    struct Vectors {
-        var valid: [(descriptor: String, scripts: [String])] = []
-        var invalid: [String] = []
-    }
-
-    static func vectors() throws -> Vectors {
-        let text = try vectorString("bip-0387.mediawiki")
-        var vectors = Vectors()
-        var section = 0 // 0 = before, 1 = valid, 2 = invalid
-        for line in text.components(separatedBy: .newlines) {
-            if line.hasPrefix("==Test Vectors==") { section = 1; continue }
-            if line.hasPrefix("Invalid descriptors") { section = 2; continue }
-            if line.hasPrefix("==Backwards Compatibility==") { section = 0 }
-            let tags = ttTags(in: line)
-            guard !tags.isEmpty else { continue }
-            switch section {
-            case 1 where line.hasPrefix("* <tt>"):
-                vectors.valid.append((tags[0], []))
-            case 1 where line.hasPrefix("** <tt>"):
-                vectors.valid[vectors.valid.count - 1].scripts.append(tags[0])
-            case 2 where line.hasPrefix("* "):
-                vectors.invalid.append(tags.last!)
-            default:
-                break
-            }
-        }
-        return vectors
-    }
-
     @Test("vector block parsed")
     func parsed() throws {
-        let vectors = try Self.vectors()
+        let vectors = try Vectors.descriptorVectors("bip-0387.mediawiki", in: .module)
         #expect(vectors.valid.count == 6)
         #expect(vectors.valid.map(\.scripts.count) == [1, 1, 1, 1, 3, 3])
         #expect(vectors.invalid.count == 7)
@@ -45,7 +18,7 @@ struct BIP387Tests {
 
     @Test("valid descriptors produce the expected scriptPubKeys")
     func validDescriptors() throws {
-        for (text, scripts) in try Self.vectors().valid {
+        for (text, scripts) in try Vectors.descriptorVectors("bip-0387.mediawiki", in: .module).valid {
             let descriptor = try Descriptor(text)
             for (index, expected) in scripts.enumerated() {
                 let outputs = try descriptor.derived(index: UInt32(index))
@@ -61,7 +34,7 @@ struct BIP387Tests {
 
     @Test("invalid descriptors are rejected at parse or derive time")
     func invalidDescriptors() throws {
-        for text in try Self.vectors().invalid {
+        for text in try Vectors.descriptorVectors("bip-0387.mediawiki", in: .module).invalid {
             #expect((try? Descriptor(text).derived(index: 0)) == nil, "accepted: \(text)")
         }
     }

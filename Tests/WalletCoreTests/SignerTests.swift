@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// End-to-end key-path signing: fake UTXO set → build tx → sighash → sign →
@@ -67,7 +68,7 @@ struct SignerTests {
     @Test("SIGHASH_ALL appends the hash type byte; fixed aux rand is deterministic")
     func sighashAllDeterministic() throws {
         let fixture = try Fixture(indices: [2], amounts: [75_000])
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         let tx = try TransactionBuilder.build(inputs: fixture.utxos.map(\.outpoint),
                                               payments: [Payment(amount: 70_000, scriptPubKey: destination)])
         let witness1 = try Signer.witness(tx: tx, inputIndex: 0, spentOutputs: fixture.utxos.map(\.spent),
@@ -92,7 +93,7 @@ struct SignerTests {
         let fixture = try Fixture(indices: [0], amounts: [10_000])
         var tx = try TransactionBuilder.build(inputs: fixture.utxos.map(\.outpoint),
                                               payments: [Payment(amount: 9_000,
-                                                                 scriptPubKey: Data([0x51, 0x20] + repeatElement(0x99, count: 32)))])
+                                                                 scriptPubKey: TestScripts.p2trDestination)])
         #expect(throws: SignerError.self) {
             try Signer.sign(tx: &tx, spentOutputs: fixture.utxos.map(\.spent)) { _ in nil }
         }
@@ -104,7 +105,7 @@ struct SignerTests {
         var tx = try TransactionBuilder.build(
             inputs: fixture.utxos.map(\.outpoint),
             payments: [Payment(amount: 9_000,
-                               scriptPubKey: Data([0x51, 0x20] + repeatElement(0x99, count: 32)))])
+                               scriptPubKey: TestScripts.p2trDestination)])
         #expect(throws: SignerError.spentOutputCountMismatch(inputs: 1, spentOutputs: 0)) {
             try Signer.sign(tx: &tx, spentOutputs: []) { _ in nil }
         }

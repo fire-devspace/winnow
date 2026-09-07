@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// End-to-end vault flows (signet-format fixtures, fully offline): a 2-of-3
@@ -11,36 +12,6 @@ import Testing
 /// cosigners, with the final witnesses verified cryptographically.
 @Suite("Vault end-to-end flows")
 struct VaultFlowTests {
-    /// Three cosigner HD masters (fixed entropy — deterministic fixtures).
-    static func masters() throws -> [HDKey] {
-        try [Data(repeating: 0xA1, count: 16), Data(repeating: 0xB2, count: 16),
-             Data(repeating: 0xC3, count: 16)]
-            .map { try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: $0))) }
-    }
-
-    /// `[fp/86'/1'/0']tpub…/<0;1>/*` cosigner key expression text.
-    static func keyExpression(master: HDKey) throws -> String {
-        let account = try master.derived(path: "m/86'/1'/0'")
-        let fingerprint = String(format: "%08x", master.fingerprint)
-        return "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .testnet))/<0;1>/*"
-    }
-
-    /// Bare `[fp/86'/1'/0']tpub…` — musig() participants carry no own
-    /// derivation when the musig has a suffix (BIP390).
-    static func bareKeyExpression(master: HDKey) throws -> String {
-        let account = try master.derived(path: "m/86'/1'/0'")
-        let fingerprint = String(format: "%08x", master.fingerprint)
-        return "[\(fingerprint)/86'/1'/0']\(account.neutered.serialized(network: .testnet))"
-    }
-
-    /// A fabricated funding UTXO paying the vault at (choice, index).
-    static func funding(vault: Vault, amount: Int64, choice: AddressChain = .receive,
-                        index: UInt32 = 0, height: UInt32 = 100) throws -> WalletUTXO {
-        try WalletUTXO(txid: Data(repeating: 0x5A, count: 32), vout: 0, amount: amount,
-                       scriptPubKey: vault.scriptPubKey(index: index, choice: choice.rawValue),
-                       chain: choice, index: index, height: height)
-    }
-
     let destination = Data([0x51, 0x20] + repeatElement(0x77, count: 32)) // external P2TR
 
     // MARK: - Vault setup validation
@@ -66,10 +37,10 @@ struct VaultFlowTests {
     /// accepted for their own policy, and private material out of a descriptor.
     @Test("signet signer keys are accepted for their policy; a private key never reaches a descriptor")
     func signerKeyValidation() throws {
-        let master = try Self.masters()[0]
+        let master = try TestVaults.masters()[0]
         let account = try master.derived(path: "m/86'/1'/0'")
-        let scriptPath = try Self.keyExpression(master: master)
-        let muSig2 = try Self.bareKeyExpression(master: master)
+        let scriptPath = try TestVaults.keyExpression(master: master)
+        let muSig2 = try TestVaults.bareKeyExpression(master: master)
 
         #expect(try VaultCosignerKey(scriptPath, role: .scriptPath,
                                     network: .signet).expression == scriptPath)
@@ -87,9 +58,9 @@ struct VaultFlowTests {
 
     @Test("2-of-3 multi_a vault: derive, fund, build, 2 cosigners, combine, finalize, verify")
     func multiAVault() throws {
-        let masters = try Self.masters()
+        let masters = try TestVaults.masters()
         let descriptor = try Vault.multiADescriptor(threshold: 2,
-                                                    cosigners: masters.map { try Self.keyExpression(master: $0) })
+                                                    cosigners: masters.map { try TestVaults.keyExpression(master: $0) })
         let vault = try Vault(descriptor: descriptor, network: .signet)
 
         // The vault commits to the NUMS internal key; addresses are bech32m.
@@ -101,7 +72,7 @@ struct VaultFlowTests {
         #expect(try Vault(descriptor.serialized(), network: .signet).address(index: 0) == address)
 
         // Fund the vault and build the spend PSBT (creator role).
-        let utxo = try Self.funding(vault: vault, amount: 100_000)
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let created = try vault.createSpend(utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
                                             changeIndex: 0, feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
         let input = created.inputs[0]
@@ -194,11 +165,8 @@ struct VaultFlowTests {
 
     @Test("an immature coinbase coin cannot pass review; a mature one can")
     func coinbaseMaturity() throws {
-        let masters = try Self.masters()
-        let descriptor = try Vault.multiADescriptor(
-            threshold: 2, cosigners: masters.map { try Self.keyExpression(master: $0) })
-        let vault = try Vault(descriptor: descriptor, network: .signet)
-        var utxo = try Self.funding(vault: vault, amount: 100_000, height: 1_000)
+        let (vault, _) = try TestVaults.multiAVault()
+        var utxo = try TestVaults.funding(vault: vault, amount: 100_000, height: 1_000)
         utxo.isCoinbase = true
         let owned = [Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0)]
         let spend = try vault.createSpend(
@@ -227,11 +195,8 @@ struct VaultFlowTests {
 
     @Test("vault review trusts known coins and descriptor scripts, not PSBT labels")
     func vaultSpendReview() throws {
-        let masters = try Self.masters()
-        let descriptor = try Vault.multiADescriptor(
-            threshold: 2, cosigners: masters.map { try Self.keyExpression(master: $0) })
-        let vault = try Vault(descriptor: descriptor, network: .signet)
-        let utxo = try Self.funding(vault: vault, amount: 100_000)
+        let (vault, _) = try TestVaults.multiAVault()
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let changeCoordinate = Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0)
         let created = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
@@ -318,11 +283,8 @@ struct VaultFlowTests {
     /// refused it: a PSBT nobody could sign.
     @Test("createSpend refuses the fee its cosigners' review would refuse")
     func createSpendFeeCeiling() throws {
-        let masters = try Self.masters()
-        let descriptor = try Vault.multiADescriptor(
-            threshold: 2, cosigners: masters.map { try Self.keyExpression(master: $0) })
-        let vault = try Vault(descriptor: descriptor, network: .signet)
-        let utxo = try Self.funding(vault: vault, amount: 100_000)
+        let (vault, _) = try TestVaults.multiAVault()
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         // A one-input, two-output multi_a spend is about 220 vbytes, so 100
         // sat/vB is roughly a 22,000-sat fee: past the 10,000-sat ceiling for
         // this coin, yet still affordable, so the ceiling is the only refusal.
@@ -341,11 +303,8 @@ struct VaultFlowTests {
     /// layer, where the outputs — and so the fee — can be set to the satoshi.
     @Test("the fee ceiling admits one tenth of the inputs and refuses one satoshi more")
     func feeCeilingBoundary() throws {
-        let masters = try Self.masters()
-        let descriptor = try Vault.multiADescriptor(
-            threshold: 2, cosigners: masters.map { try Self.keyExpression(master: $0) })
-        let vault = try Vault(descriptor: descriptor, network: .signet)
-        let utxo = try Self.funding(vault: vault, amount: 100_000)
+        let (vault, _) = try TestVaults.multiAVault()
+        let utxo = try TestVaults.funding(vault: vault, amount: 100_000)
         let owned = [Vault.OutputCoordinate(choice: AddressChain.change.rawValue, index: 0)]
         let created = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
@@ -376,12 +335,9 @@ struct VaultFlowTests {
 
     @Test("2-of-2 musig vault: nonce round, partial sigs, aggregate, BIP340-verifiable")
     func muSigVault() throws {
-        let masters = try Self.masters().prefix(2).map { $0 }
-        let keys = try masters.map { try Self.bareKeyExpression(master: $0) }
-        let text = "tr(musig(\(keys[0]),\(keys[1]))/<0;1>/*)"
-        let vault = try Vault(text, network: .signet)
+        let (vault, masters) = try TestVaults.muSig2Vault()
 
-        let utxo = try Self.funding(vault: vault, amount: 80_000)
+        let utxo = try TestVaults.funding(vault: vault, amount: 80_000)
         let created = try vault.createSpend(utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
                                             changeIndex: 0, feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
         let context = try vault.muSig2Context(choice: 0, index: 0)
@@ -464,15 +420,13 @@ struct VaultFlowTests {
 
     @Test("musig vault rejects a partial signed with the wrong key")
     func muSigWrongKey() throws {
-        let masters = try Self.masters().prefix(2).map { $0 }
-        let keys = try masters.map { try Self.bareKeyExpression(master: $0) }
-        let vault = try Vault("tr(musig(\(keys[0]),\(keys[1]))/<0;1>/*)", network: .signet)
-        let utxo = try Self.funding(vault: vault, amount: 80_000)
+        let (vault, _) = try TestVaults.muSig2Vault()
+        let utxo = try TestVaults.funding(vault: vault, amount: 80_000)
         var psbt = try vault.createSpend(utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: destination)],
                                          changeIndex: 0, feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
         let context = try vault.muSig2Context(choice: 0, index: 0)
         // The third master is not a participant: no nonce, no signature.
-        let outsider = try Self.masters()[2]
+        let outsider = try TestVaults.masters()[2]
         #expect(throws: VaultError.noCosignerKey(input: 0)) {
             _ = try vault.muSig2AttachNonce(
                 &psbt, input: 0, context: context, master: outsider,

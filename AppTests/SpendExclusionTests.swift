@@ -16,10 +16,6 @@ import XCTest
 /// These tests drive the guarantee itself.
 @MainActor
 final class SpendExclusionTests: XCTestCase {
-    private final class SilentAuthenticator: DeviceAuthenticating {
-        func authenticate(reason: String) async throws {}
-    }
-
     /// A suspension point the test controls. Everything is main-actor
     /// isolated, so `open()` racing `wait()` is ordered rather than a race.
     @MainActor
@@ -37,10 +33,6 @@ final class SpendExclusionTests: XCTestCase {
             continuation?.resume()
             continuation = nil
         }
-    }
-
-    private func makeModel() -> AppModel {
-        AppModel(deviceAuthenticator: SilentAuthenticator())
     }
 
     private func samplePreview() -> AppModel.SendPreview {

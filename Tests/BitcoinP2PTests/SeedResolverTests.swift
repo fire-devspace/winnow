@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import BitcoinP2P
 
 /// DoH dns-json parse, RFC1918/loopback filter, getaddrinfo fallback, and
@@ -8,7 +9,7 @@ import Testing
 struct SeedResolverTests {
     @Test("dns-json A/AAAA parse keeps public IPs and drops RFC1918 on mainnet")
     func parseAndFilterPublic() throws {
-        let hosts = try DNSJSON.hosts(from: vectorData("doh-a-and-aaaa.json"))
+        let hosts = try DNSJSON.hosts(from: Vectors.data("doh-a-and-aaaa.json", in: .module))
         #expect(hosts == ["1.2.3.4", "5.6.7.8", "10.0.0.1", "192.168.1.9", "2001:db8::1"])
 
         let publicNets = SeedResolver.endpoints(hosts: hosts, port: 8333, allowPrivate: false)
@@ -21,18 +22,18 @@ struct SeedResolverTests {
 
     @Test("CNAME rows are ignored; the following A is kept")
     func cnameThenA() throws {
-        let hosts = try DNSJSON.hosts(from: vectorData("doh-cname-then-a.json"))
+        let hosts = try DNSJSON.hosts(from: Vectors.data("doh-cname-then-a.json", in: .module))
         #expect(hosts == ["9.9.9.9"])
     }
 
     @Test("non-zero dns-json Status yields no hosts")
     func servfail() throws {
-        #expect(try DNSJSON.hosts(from: vectorData("doh-servfail.json")).isEmpty)
+        #expect(try DNSJSON.hosts(from: Vectors.data("doh-servfail.json", in: .module)).isEmpty)
     }
 
     @Test("RFC1918-only DoH answers fall back to getaddrinfo on public nets")
     func poisonedDoHFallsBack() async {
-        let fixture = try! vectorData("doh-rfc1918-only.json")
+        let fixture = try! Vectors.data("doh-rfc1918-only.json", in: .module)
         let fallback = PeerEndpoint(host: "8.8.8.8", port: 8333)
         let resolver = SeedResolver.live(
             fetchJSON: { _, _ in fixture },
@@ -44,7 +45,7 @@ struct SeedResolverTests {
 
     @Test("RFC1918-only DoH answers are kept on a custom signet")
     func customSignetKeepsPrivate() async {
-        let fixture = try! vectorData("doh-rfc1918-only.json")
+        let fixture = try! Vectors.data("doh-rfc1918-only.json", in: .module)
         let resolver = SeedResolver.live(
             fetchJSON: { _, _ in fixture },
             systemResolve: { _, _ in [] }

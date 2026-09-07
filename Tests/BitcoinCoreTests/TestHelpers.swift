@@ -1,50 +1,5 @@
 import Foundation
-
-enum VectorError: Error {
-    case missingFile(String)
-    case badHex(String)
-    case malformed(String)
-}
-
-func vectorData(_ name: String) throws -> Data {
-    guard let url = Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Vectors") else {
-        throw VectorError.missingFile(name)
-    }
-    return try Data(contentsOf: url)
-}
-
-func vectorString(_ name: String) throws -> String {
-    String(decoding: try vectorData(name), as: UTF8.self)
-}
-
-extension Data {
-    init?(hex: String) {
-        let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count % 2 == 0, !cleaned.isEmpty else { return nil }
-        var bytes = Data()
-        bytes.reserveCapacity(cleaned.count / 2)
-        var index = cleaned.startIndex
-        while index < cleaned.endIndex {
-            let next = cleaned.index(index, offsetBy: 2)
-            guard let byte = UInt8(cleaned[index ..< next], radix: 16) else { return nil }
-            bytes.append(byte)
-            index = next
-        }
-        self = bytes
-    }
-
-    var hex: String {
-        map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-/// Extracts the contents of every <tt>...</tt> tag in a line of a BIP mediawiki doc.
-func ttTags(in line: String) -> [String] {
-    line.components(separatedBy: "<tt>").dropFirst().compactMap { chunk in
-        guard let end = chunk.range(of: "</tt>") else { return nil }
-        return String(chunk[..<end.lowerBound])
-    }
-}
+import TestSupport
 
 /// Minimal raw-block parser: extracts output scriptPubKeys of every transaction.
 /// Handles legacy and segwit serialization; enough for BIP158 filter reconstruction.

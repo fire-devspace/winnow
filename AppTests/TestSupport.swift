@@ -1,18 +1,24 @@
+@testable import WinnowApp
 import BitcoinP2P
 import Foundation
+import TestSupport
 
-/// Fixtures shared across AppTests.
+/// Fixtures shared across AppTests. What conforms to an app protocol has to
+/// live here rather than in the package's TestSupport library.
+
+/// A device authenticator that always approves, so a model can be driven
+/// without a passcode prompt.
+final class SilentAuthenticator: DeviceAuthenticating {
+    func authenticate(reason: String) async throws {}
+}
+
+/// A fresh model on the silent authenticator.
+@MainActor
+func makeModel() -> AppModel {
+    AppModel(deviceAuthenticator: SilentAuthenticator())
+}
 
 /// A signed transaction the broadcaster will accept, so a real relay entry can
 /// be written and then damaged, confirmed or rolled back. Shaped like a signed
 /// transaction rather than being one: nothing on this side checks a witness.
-let signedTransactionBytes: Data = {
-    var input = Transaction.Input(
-        previousOutput: Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32), vout: 0),
-        scriptSig: Data(), sequence: 0xFFFF_FFFD)
-    input.witness = [Data([0x30, 0x44, 0x02, 0x20]), Data(repeating: 0x02, count: 33)]
-    let output = Transaction.Output(
-        value: 50_000, scriptPubKey: Data([0x51, 0x20] + repeatElement(0x77, count: 32)))
-    return Transaction(version: 2, inputs: [input], outputs: [output], locktime: 0)
-        .serialized(includeWitness: true)
-}()
+let signedTransactionBytes: Data = makeFakeSegwitTx().serialized(includeWitness: true)

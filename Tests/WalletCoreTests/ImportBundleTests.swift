@@ -3,6 +3,7 @@ import BitcoinP2P
 import Foundation
 import P256K
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// Import bundle (docs/read-side.md §2.7.5): parsing, seeding, and the verify
@@ -12,8 +13,7 @@ struct ImportBundleTests {
     /// A bundle for the test mnemonic with two claimed UTXOs (receive 0,
     /// receive 1) as of height 500.
     private func makeBundle() async throws -> ImportBundle {
-        let wallet = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
-                                             entropy: testEntropy, creationHeight: 400)
+        let wallet = try makeTestWallet(creationHeight: 400)
         func utxoJSON(_ index: UInt32, _ amount: Int64) async throws -> ImportBundle.UTXO {
             try await ImportBundle.UTXO(txid: Data(repeating: UInt8(0x50 + index), count: 32).displayHex,
                                         vout: 0, amount: amount,
@@ -191,14 +191,8 @@ struct ImportBundleTests {
 
     /// Funds a wallet at receive index 0 so export has a live UTXO + history.
     private func fundedWallet(keyStore: KeyStore = InMemoryKeyStore()) async throws -> Wallet {
-        let wallet = try await Wallet.create(network: .signet, keyStore: keyStore,
-                                             entropy: testEntropy, creationHeight: 100)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 200_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
-        return wallet
+        try await TestSupport.fundedWallet(keyStore: keyStore, coins: [(.receive, 0, 200_000, 100)],
+                                           mature: false).wallet
     }
 
     @Test("export → import round trip carries balance, history and scan frontier")
@@ -291,14 +285,8 @@ struct ImportBundleTests {
         let keyStore = InMemoryKeyStore()
         // App path: apply(match:) + independent FilterSync progress, never
         // Wallet.scan. Persist must land on disk so a reopen sees it.
-        let wallet = try Wallet.create(network: .signet, keyStore: keyStore,
-                                       storageURL: storage, entropy: testEntropy,
-                                       creationHeight: 100)
-        let script = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let funding = Transaction(version: 2, inputs: [coinbaseInput()], outputs: [
-            Transaction.Output(value: 200_000, scriptPubKey: script),
-        ], locktime: 0)
-        try await wallet.apply(match: fakeMatch(height: 100, transactions: [funding]))
+        let wallet = try makeTestWallet(storageURL: storage, keyStore: keyStore)
+        try await fund(wallet, amount: 200_000, height: 100)
 
         #expect(await wallet.nextScanHeight == 100)
         let stale = try await wallet.exportBundle()
@@ -396,7 +384,7 @@ struct ImportBundleTests {
         #expect(matureBundle.utxos.first?.isCoinbase == true)
         let restored = try Wallet.importing(matureBundle, keyStore: InMemoryKeyStore())
         #expect(await restored.utxos.first?.isCoinbase == true)
-        let destination = Data([0x51, 0x20] + repeatElement(0x99, count: 32))
+        let destination = TestScripts.p2trDestination
         let built = try await wallet.send(
             payments: [Payment(amount: 50_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
@@ -415,8 +403,7 @@ struct ImportBundleTests {
 
     @Test("export carries derivation indices so a spent-out restore does not reuse addresses")
     func exportPreservesDerivationIndices() async throws {
-        let original = try await Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
-                                               entropy: testEntropy, creationHeight: 100)
+        let original = try makeTestWallet()
         _ = try await original.freshReceiveAddress()
         _ = try await original.freshReceiveAddress()
         #expect(await original.nextReceiveIndex == 2)
