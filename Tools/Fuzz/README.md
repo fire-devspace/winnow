@@ -63,7 +63,7 @@ swift run --configuration release WinnowFuzz \
 
 An invariant failure saves its input as `<target>-<seed>-<iteration>.bin` in
 the artifact directory and prints where it went. Copy that file to
-`Tests/FuzzRegressions/Cases/<target>/` (any name, `.bin` extension), and
+`Tests/ToolsTests/Cases/<target>/` (any name, `.bin` extension), and
 `swift test --filter FuzzRegressionTests` replays it under the same per-target
 invariant on every run; a trap there fails the test process, which is the
 point. The invariants live in `WinnowFuzzCore`, so the harness and the

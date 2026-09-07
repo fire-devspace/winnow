@@ -177,7 +177,7 @@ private func saveFailure(_ data: Data, target: FuzzTarget, seed: UInt64, iterati
     let url = directory.appendingPathComponent("\(target.rawValue)-\(String(seed, radix: 16))-\(iteration).bin")
     FileManager.default.createFile(atPath: url.path, contents: data,
                                    attributes: [.posixPermissions: 0o600])
-    emit("saved \(url.path); add this file under Tests/FuzzRegressions/Cases/\(target.rawValue)/ to keep it as a regression")
+    emit("saved \(url.path); add this file under Tests/ToolsTests/Cases/\(target.rawValue)/ to keep it as a regression")
 }
 
 @main

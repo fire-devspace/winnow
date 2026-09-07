@@ -41,4 +41,4 @@ remains release-time only.
 The default output path is found from `#filePath`, so it lands in the
 checkout the tool was built from whatever the working directory. Selection,
 filtering and rendering are pure functions; `swift test` covers them offline
-in `WinnowGenerateTests` alongside the library suites.
+in `Tests/ToolsTests/GenerateTests.swift` alongside the library suites.

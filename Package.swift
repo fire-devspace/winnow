@@ -76,16 +76,6 @@ let package = Package(
             exclude: ["README.md"]
         ),
         .testTarget(
-            name: "WinnowStoryCLITests",
-            dependencies: ["WinnowStoryCLI"],
-            path: "Tools/Story/Tests/WinnowStoryCLITests"
-        ),
-        .testTarget(
-            name: "WinnowGenerateTests",
-            dependencies: ["WinnowGenerate"],
-            path: "Tools/Generate/Tests/WinnowGenerateTests"
-        ),
-        .testTarget(
             name: "BitcoinCoreTests",
             // BitcoinP2P only for its public `Data(hex:)` / `.hex` helpers.
             dependencies: ["BitcoinCore", "BitcoinP2P", "TestSupport"],
@@ -96,9 +86,15 @@ let package = Package(
             dependencies: ["BitcoinP2P", "BitcoinCore", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
+        // The esplora client and what it discloses belong to BlockchainBackend;
+        // they were only ever `@testable import`ed from the WalletCore suite.
+        .testTarget(
+            name: "BlockchainBackendTests",
+            dependencies: ["BlockchainBackend"]
+        ),
         .testTarget(
             name: "WalletCoreTests",
-            dependencies: ["WalletCore", "BitcoinP2P", "BlockchainBackend", "TestSupport"],
+            dependencies: ["WalletCore", "BitcoinP2P", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
@@ -106,10 +102,13 @@ let package = Package(
             dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore", "TestSupport"],
             path: "Tests/DifferentialTests"
         ),
+        // The development tools, tested together: the story runner, the
+        // release-path generators, and the fuzz crash corpus replayed out of
+        // `Cases`. One target, so a tool suite costs no more manifest than a
+        // library one and `swift test` links the tools once.
         .testTarget(
-            name: "FuzzRegressionTests",
-            dependencies: ["WinnowFuzzCore"],
-            path: "Tests/FuzzRegressions",
+            name: "ToolsTests",
+            dependencies: ["WinnowStoryCLI", "WinnowGenerate", "WinnowFuzzCore"],
             resources: [.copy("Cases")]
         ),
     ]

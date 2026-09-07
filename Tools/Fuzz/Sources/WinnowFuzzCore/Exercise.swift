@@ -4,7 +4,7 @@ import Foundation
 import WalletCore
 
 /// The parsing surfaces the harness mutates inputs for. The raw values are
-/// the `--target` names and the `Tests/FuzzRegressions/Cases/` directories.
+/// the `--target` names and the `Tests/ToolsTests/Cases/` directories.
 public enum FuzzTarget: String, CaseIterable, Sendable {
     case psbt
     case descriptor

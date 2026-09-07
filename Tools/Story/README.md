@@ -20,8 +20,9 @@ and `.build/winnow-story/runs/` state rooted in the app checkout even when
 invoked from another working directory.
 
 The target belongs to the root Winnow package. `swift test` runs its offline
-tests alongside the library suites. `scripts/ci-story` verifies the wrapper's
-environment checks from outside the checkout.
+tests, `Tests/ToolsTests/StoryCLITests.swift`, alongside the library suites.
+`scripts/ci-story` verifies the wrapper's environment checks from outside the
+checkout.
 These checks do not start a story, launch a wallet, fund transactions or publish
 evidence. The public-signet journey and human media review remain manual.
 
