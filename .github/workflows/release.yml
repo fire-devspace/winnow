@@ -1,7 +1,7 @@
 name: Release
 
-# One-time recovery of the validated v0.6.0 tag. The original export failed
-# during argument parsing, before an upload. Never move the released tag.
+# Publish the validated v0.6.0 tag as build 26. Build 25 is already waiting
+# for beta review; prepare internal testing and release evidence first.
 on:
   workflow_dispatch:
 
@@ -61,7 +61,7 @@ jobs:
       - name: Set version from tag
         run: |
           VERSION="0.6.0"
-          BUILD_NUMBER="18"
+          BUILD_NUMBER="26"
           sed -i '' "s/MARKETING_VERSION: \"0.1.0\"/MARKETING_VERSION: \"$VERSION\"/" project.yml
           sed -i '' "s/CURRENT_PROJECT_VERSION: \"1\"/CURRENT_PROJECT_VERSION: \"$BUILD_NUMBER\"/" project.yml
           grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" project.yml
@@ -126,6 +126,22 @@ jobs:
       - name: Verify archive dependency resolution
         run: scripts/check-dependencies --xcode build/DerivedData
 
+      - name: Generate SBOM and app build provenance
+        run: >-
+          scripts/generate-supply-chain-metadata
+          --output-dir build/supply-chain
+          --subject build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
+          --subject-name WinnowApp.app
+          --builder-id https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.workflow_sha }}
+
+      - name: Upload supply-chain metadata for release publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-supply-chain-${{ github.run_id }}
+          path: build/supply-chain/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload to App Store Connect
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -158,7 +174,7 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             -skipPackagePluginValidation -skipMacroValidation
 
-      - name: TestFlight groups (internal + external)
+      - name: TestFlight processing and internal testing
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -168,23 +184,7 @@ jobs:
           scripts/testflight.sh wait-processing
           scripts/testflight.sh notes
           scripts/testflight.sh internal
-          scripts/testflight.sh external
-
-      - name: Generate SBOM and app build provenance
-        run: >-
-          scripts/generate-supply-chain-metadata
-          --output-dir build/supply-chain
-          --subject build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
-          --subject-name WinnowApp.app
-          --builder-id https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.workflow_sha }}
-
-      - name: Upload supply-chain metadata for release publication
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-supply-chain-${{ github.run_id }}
-          path: build/supply-chain/
-          if-no-files-found: error
-          retention-days: 30
+          echo "External beta review is pending the decision on the earlier build 25 submission."
 
       - name: Remove App Store Connect key
         if: always()
@@ -211,6 +211,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v0.6.0
+          body: "TestFlight 0.6.0 build 26 is available internally. External distribution is pending the earlier build 25 beta review."
           generate_release_notes: true
           files: |
             supply-chain/winnow.spdx.json
