@@ -31,21 +31,14 @@ jobs:
       - name: Prepare signing credentials
         run: scripts/ci-sign.sh
 
-      - name: TestFlight groups (internal + external)
+      - name: Read the beta-review queue without changing builds
         env:
           ASC_KEY_PATH: ${{ runner.temp }}/winnow-signing/AuthKey.p8
           TESTFLIGHT_MARKETING_VERSION: ${{ inputs.marketing_version }}
           TESTFLIGHT_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           chmod +x scripts/testflight.sh
-          scripts/testflight.sh wait-processing
-          scripts/testflight.sh notes
-          scripts/testflight.sh internal
-          # Report Apple's current states before attempting review. The final
-          # external and status commands below still have to succeed.
-          scripts/testflight.sh status || true
-          scripts/testflight.sh external
-          scripts/testflight.sh status
+          scripts/testflight.sh review-queue
 
       - name: Remove App Store Connect key
         if: always()

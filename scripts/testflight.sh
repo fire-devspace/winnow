@@ -264,6 +264,28 @@ step_external() {
   return 1
 }
 
+step_review_queue() {
+  asc GET "/builds?filter[app]=$(app_id)&sort=-uploadedDate&limit=200&include=preReleaseVersion,buildBetaDetail,betaAppReviewSubmission" | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+included = {(row["type"], row["id"]): row for row in payload.get("included", [])}
+for build in payload["data"]:
+    def related(name):
+        link = build.get("relationships", {}).get(name, {}).get("data") or {}
+        return included.get((link.get("type"), link.get("id")), {}).get("attributes", {})
+    version = related("preReleaseVersion").get("version")
+    review = related("betaAppReviewSubmission")
+    if review.get("betaReviewState") in ("WAITING_FOR_REVIEW", "IN_REVIEW") or version == sys.argv[1]:
+        attrs = build["attributes"]
+        print(json.dumps({"id": build["id"], "version": version, "build": attrs.get("version"),
+                          "uploaded": attrs.get("uploadedDate"), "expired": attrs.get("expired"),
+                          "processing": attrs.get("processingState"), "beta": related("buildBetaDetail"),
+                          "review": review}, sort_keys=True))
+if payload.get("links", {}).get("next"):
+    raise SystemExit("More than 200 builds exist; continue the read before concluding the queue is complete")
+' "$EXPECTED_MARKETING_VERSION"
+}
+
 step_status() {
   local bid gid processing internal external review grouped
   bid=$(build_id)
@@ -590,6 +612,7 @@ case "${1:-all}" in
   internal) step_internal ;;
   external) step_external ;;
   status) step_status ;;
+  review-queue) step_review_queue ;;
   appstore-status) step_appstore_status ;;
   appstore-attach) step_appstore_attach ;;
   appstore-notes) step_appstore_notes ;;
