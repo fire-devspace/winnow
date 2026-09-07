@@ -4,13 +4,13 @@
 
 If you believe you've found a security issue in Winnow — especially anything
 touching key handling, transaction signing, or the P2P trust model — please
-report it privately:
+[open a public GitHub issue](https://github.com/winnowwallet/winnow/issues/new).
+Public reports are welcome, including security vulnerabilities.
 
-- **Email:** a@wuli.nu
-- **GitHub:** use [private vulnerability reporting](https://github.com/winnowwallet/winnow/security/advisories/new)
+If you prefer to report privately, you can email a@wuli.nu or use
+[private vulnerability reporting](https://github.com/winnowwallet/winnow/security/advisories/new).
 
-Do **not** open a public issue for undisclosed vulnerabilities. We aim to
-acknowledge reports within 72 hours.
+We aim to acknowledge reports within 72 hours.
 
 ## Scope notes
 
@@ -22,9 +22,8 @@ acknowledge reports within 72 hours.
   [read-side](https://winnowwallet.com/read-side) §2.7 and §2.9. Keys and the device
   floor are [mobile](https://winnowwallet.com/mobile) §5; broadcast leakage is
   [write-side](https://winnowwallet.com/write-side) §8; import-bundle residual lies
-  are [import](https://winnowwallet.com/import) §4. Reports about the *design* belong
-  on those papers as issues; reports about the *implementation* not matching
-  that design are security reports.
+  are [import](https://winnowwallet.com/import) §4. Reports about both the design
+  and its implementation are welcome through the channels above.
 
 ## Supported versions
 
