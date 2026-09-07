@@ -61,17 +61,36 @@
   {
     "id": "savings",
     "section": "everyday",
-    "title": "Hold savings together",
-    "description": "Choose co-owners and an approval threshold. Share the savings policy and ask the other owners to approve a proposed payment.",
+    "title": "Share control with other people",
+    "description": "Choose a threshold such as 2 of 3: any two keys can approve a payment while one is unavailable. Start from Savings on the Wallet screen.",
     "journey": [
-      "Create shared savings from people’s signer keys.",
-      "Fund it, prepare a spend, and export an approval request."
+      "Create shared savings from the Wallet screen and choose the co-owners and threshold.",
+      "Fund the savings, review a request, and complete two approvals while the third signer stays absent."
     ],
     "tests": [
-      "test12SharedSavingsCreateAndAsk"
+      "test12SharedSavingsCreateAndAsk",
+      "test07ApproveRequest"
     ],
     "image": "27-ask-approval",
-    "limitations": "Co-owners must preserve their own keys and the shared policy. The approval threshold determines who must participate."
+    "limitations": "The threshold counts keys, not verified people. A 1-of-n policy allows one key to spend. Taproot hides the threshold until a script-path spend reveals it; key separation is not protection against every coercion scenario.",
+    "guide": "/vaults"
+  },
+  {
+    "id": "second-device",
+    "section": "advanced",
+    "title": "Require another signing device",
+    "description": "Add an independent signing key to your phone wallet. In a 2-of-2 MuSig2 account, both keys must participate in every payment; the final Taproot signature does not reveal the signer count.",
+    "journey": [
+      "Open the extra-device flow from Wallet in Advanced mode and verify the 2-of-2 policy.",
+      "Fund it, create a payment, and confirm that one signer cannot broadcast.",
+      "Abandon a nonce session and verify that reopening cannot resume it.",
+      "Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend."
+    ],
+    "tests": [
+      "test16MuSig2RequiresSecondDevice"
+    ],
+    "guide": "/vaults",
+    "limitations": "The second signer in this journey is a software fixture, not a hardware wallet. Desktop and hardware-wallet integrations remain unverified. Every required key needs a backup; this policy has no alternate recovery branch."
   },
   {
     "id": "recovery",
@@ -105,7 +124,7 @@
   {
     "id": "vaults",
     "section": "advanced",
-    "title": "Descriptors, vaults, and approvals",
+    "title": "Inspect and import signing policies",
     "description": "Create a Taproot vault from public signer keys and coordinate approvals using PSBT text. Inspect the policy and reviewed transaction explicitly.",
     "journey": [
       "Create a vault through the advanced form.",
@@ -117,7 +136,7 @@
     ],
     "image": "11-vault-list",
     "guide": "/core-cosigner",
-    "limitations": "Bitcoin Core interoperability is separately tested for script-path vaults. MuSig2 exchanges with Core have a documented round-two compatibility gap; do not assume every external signer can complete them."
+    "limitations": "Raw policy tools are Advanced features. Script-path interoperability is tested with Bitcoin Core. A successful MuSig2 exchange with the test fixture does not resolve the separately documented Core round-two compatibility gap."
   },
   {
     "id": "groups",

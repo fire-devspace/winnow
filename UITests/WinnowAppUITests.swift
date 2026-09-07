@@ -351,6 +351,16 @@ final class WinnowAppUITests: XCTestCase {
             app.typeInto("cosignerField", try Self.fixtureCosigner(byte))
             app.buttons["addPastedKeyButton"].tap()
         }
+        let threshold = app.steppers["vaultThresholdStepper"]
+        XCTAssertTrue(scrollUntilExists(app, threshold, up: true))
+        threshold.buttons["Decrement"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["buildDescriptorButton"]))
+        app.buttons["buildDescriptorButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
+        XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key can spend these funds.")
+        XCTAssertTrue(scrollUntilExists(app, threshold, up: true))
+        threshold.buttons["Increment"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["buildDescriptorButton"]))
         app.buttons["buildDescriptorButton"].tap()
         // The descriptor preview is a CopyableTextBlock whose Text starts
         // with "tr(" — below the fold, and SwiftUI Forms materialize rows
@@ -774,6 +784,8 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["balanceText"].waitForExistence(timeout: 60), "home did not appear")
 
         XCTAssertTrue(app.tabBars.buttons["People"].exists)
+        XCTAssertTrue(app.buttons["walletSharedSavingsButton"].exists)
+        XCTAssertFalse(app.buttons["walletExtraDeviceButton"].exists)
         XCTAssertFalse(app.tabBars.buttons["Vaults"].exists, "beginners never see a Vaults tab")
         // The one-liner is a ProgressView, a Label or a Text depending on the
         // phase, so match the identifier across every element type.
@@ -781,7 +793,7 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(syncSummary.waitForExistence(timeout: 10) || app.buttons["retryPeersButton"].exists,
                       "no one-line sync status")
         XCTAssertFalse(app.staticTexts["Filter scan"].exists, "filter scan detail shown to a beginner")
-        XCTAssertTrue(app.buttons["syncNowButton"].exists)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["syncNowButton"]))
 
         app.tabBars.buttons["Settings"].tap()
         let toggle = app.switches["advancedModeToggle"]
@@ -798,6 +810,8 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, toggle, up: true))
         app.flipSwitch(toggle)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["refreshPeersButton"]), "Advanced mode did not reveal the peers")
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["walletExtraDeviceButton"], up: true))
         app.tabBars.buttons["People"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["newVaultButton"]), "Advanced mode did not reveal the Vaults section")
         app.tabBars.buttons["Settings"].tap()
@@ -849,7 +863,9 @@ final class WinnowAppUITests: XCTestCase {
         let creationHeight = UInt32(try BitcoinCLI.blockCount())
         if !app.staticTexts[savingsName].exists {
             let createStart = Date()
-            app.buttons["newSharedSavingsButton"].tap()
+            app.tabBars.buttons["Wallet"].tap()
+            XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSharedSavingsButton"], up: true))
+            app.buttons["walletSharedSavingsButton"].tap()
             XCTAssertTrue(app.buttons["coOwnerToggle-Alice"].waitForExistence(timeout: 20), "no co-owner picker")
             app.buttons["coOwnerToggle-Alice"].tap()
             app.buttons["coOwnerToggle-Bob"].tap()
@@ -1394,7 +1410,7 @@ final class WinnowAppUITests: XCTestCase {
 
         app.tabBars.buttons["Wallet"].tap()
         let bump = app.buttons["bumpFeeButton"].firstMatch
-        XCTAssertTrue(bump.waitForExistence(timeout: 30))
+        XCTAssertTrue(scrollUntilExists(app, bump, maxSwipes: 8))
         bump.tap()
         let rate = app.textFields["bumpFeeRateField"]
         XCTAssertTrue(rate.waitForExistence(timeout: 30))
@@ -1427,4 +1443,138 @@ final class WinnowAppUITests: XCTestCase {
         })
     }
 
+
+    // A phone wallet plus an independent software signer. This proves the
+    // MuSig2 app exchange, not compatibility with any hardware-wallet model.
+    func test16MuSig2RequiresSecondDevice() async throws {
+        let external = try HDKey(seed: Data(UUID().uuidString.utf8))
+        let externalKey = try TestVaults.bareKeyExpression(master: external)
+        let ownKey = String(try Self.deviceKeyExpression().dropLast("/<0;1>/*".count))
+        let vault = try Vault("tr(musig(\(ownKey),\(externalKey))/<0;1>/*)", network: .signet)
+        let name = "Extra device \(UUID().uuidString.prefix(6))"
+        var app = launchApp(advanced: true)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["walletExtraDeviceButton"]))
+        app.buttons["walletExtraDeviceButton"].tap()
+        XCTAssertTrue(app.staticTexts["vaultPurpose"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["vaultPurpose"].label.contains("Every key is needed"))
+        app.typeInto("vaultNameField", name)
+        app.buttons["addDeviceKeyButton"].tap()
+        app.typeInto("cosignerField", externalKey)
+        app.buttons["addPastedKeyButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["buildDescriptorButton"]))
+        app.buttons["buildDescriptorButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultRequiredKeys"]))
+        XCTAssertEqual(app.staticTexts["vaultRequiredKeys"].label, "2 of 2 signing keys required")
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["saveVaultButton"]))
+        app.buttons["saveVaultButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"], up: true))
+
+        let script = try vault.scriptPubKey(index: 0)
+        let block = try await SignetMiner.mineOntoTip(payingTo: script)
+        let fundingTxid = try BitcoinCLI.coinbaseTxid(blockHash: block)
+        try await SignetMiner.ensureChainHeight(
+            atLeast: (try BitcoinCLI.blockHeight(of: block)) + Int(Wallet.coinbaseMaturity) - 1)
+        let coin = try XCTUnwrap(BitcoinCLI.unspents(scriptHex: script.hex).first { $0.txid == fundingTxid })
+        let utxo = WalletUTXO(txid: Data(Data(hex: coin.txid)!.reversed()), vout: coin.vout,
+                              amount: coin.amount, scriptPubKey: script, chain: .receive,
+                              index: 0, height: coin.height, isCoinbase: true)
+        let tip = UInt32(try BitcoinCLI.blockCount())
+        let coordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
+        app = launchApp(advanced: true)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"]))
+        app.buttons["walletSavings-\(name)"].tap()
+        XCTAssertTrue(poll(timeout: 240, interval: 5, "extra-device balance scanned") {
+            if self.scrollUntilExists(app, app.staticTexts["vaultBalance"]),
+               app.staticTexts["vaultBalance"].label != "0 sats" { return true }
+            app.navigationBars.buttons["Winnow"].tap()
+            self.nudgeSync(app)
+            _ = self.scrollUntilExists(app, app.buttons["walletSavings-\(name)"], up: true)
+            app.buttons["walletSavings-\(name)"].tap()
+            return false
+        })
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
+        XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key cannot spend these funds.")
+        Screenshots.capture(app, "35-extra-device-policy", testCase: self)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT…"]))
+        app.buttons["Create spend PSBT…"].tap()
+        app.typeInto("Destination address", try Self.fixtureAddress(0xE5))
+        app.typeInto("Amount (sats)", "1000000")
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT"]))
+        app.buttons["Create spend PSBT"].tap()
+        let psbtOutput = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'cHNidP'")).firstMatch
+        XCTAssertTrue(scrollUntilExists(app, psbtOutput))
+        let unsigned = psbtOutput.label
+        app.buttons["Done"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Sign / combine PSBTs…"]))
+        app.buttons["Sign / combine PSBTs…"].tap()
+
+        func combine(_ text: String) {
+            XCTAssertTrue(scrollUntilExists(app, app.textFields["psbtField"], up: true))
+            app.typeInto("psbtField", text)
+            app.buttons["addPSBTButton"].tap()
+        }
+        combine(unsigned)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
+        XCTAssertFalse(app.buttons["musigSignButton"].isEnabled, "round two needs both nonces")
+        XCTAssertFalse(app.buttons["musigBroadcastButton"].isEnabled)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigNonceButton"], up: true))
+        app.buttons["musigNonceButton"].tap()
+        XCTAssertTrue(poll(timeout: 30, interval: 1, "first nonce session") {
+            self.scrollUntilExists(app, psbtOutput)
+                && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PubNonces.count) == 1
+        })
+        let abandoned = psbtOutput.label
+        app.buttons["Done"].tap()
+        app.buttons["Sign / combine PSBTs…"].tap()
+        combine(abandoned)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
+        XCTAssertFalse(app.buttons["musigSignButton"].isEnabled, "reopening must not restore secret nonces")
+        app.buttons["Done"].tap()
+        app.buttons["Sign / combine PSBTs…"].tap()
+        combine(unsigned)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigNonceButton"]))
+        app.buttons["musigNonceButton"].tap()
+        XCTAssertTrue(poll(timeout: 30, interval: 1, "fresh nonce after abandoning session") {
+            self.scrollUntilExists(app, psbtOutput) && psbtOutput.label != abandoned
+                && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PubNonces.count) == 1
+        })
+
+        let context = try vault.muSig2Context(choice: 0, index: 0)
+        var bothNonces = try PSBT(base64: psbtOutput.label)
+        var externalNonces = try vault.muSig2AttachNonce(
+            &bothNonces, input: 0, context: context, master: external,
+            knownUTXOs: [utxo], ownedOutputCoordinates: coordinates, chainTip: tip)
+        combine(bothNonces.base64)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
+        XCTAssertTrue(app.buttons["musigSignButton"].isEnabled)
+        app.buttons["musigSignButton"].tap()
+        XCTAssertTrue(poll(timeout: 30, interval: 1, "phone partial signature") {
+            self.scrollUntilExists(app, psbtOutput)
+                && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PartialSigs.count) == 1
+        })
+        var signed = try PSBT(base64: psbtOutput.label)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigBroadcastButton"], up: true))
+        XCTAssertFalse(app.buttons["musigBroadcastButton"].isEnabled, "phone alone must not spend")
+        try vault.muSig2Sign(&signed, input: 0, context: context, master: external,
+                            secretNonces: &externalNonces, knownUTXOs: [utxo],
+                            ownedOutputCoordinates: coordinates, chainTip: tip)
+        combine(signed.base64)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigBroadcastButton"]))
+        XCTAssertTrue(app.buttons["musigBroadcastButton"].isEnabled)
+        let before = Set(try BitcoinCLI.mempoolTxids())
+        app.buttons["musigBroadcastButton"].tap()
+        XCTAssertTrue(poll(timeout: 60, interval: 1, "MuSig2 spend accepted by Core") {
+            ((try? Set(BitcoinCLI.mempoolTxids()).subtracting(before).isEmpty) ?? true) == false
+        })
+        let txid = try XCTUnwrap(Set(BitcoinCLI.mempoolTxids()).subtracting(before).first)
+        let tx = try BitcoinCLI.runObject(["getrawtransaction", txid, "true"])
+        let inputs = try XCTUnwrap(tx["vin"] as? [[String: Any]])
+        let witness = try XCTUnwrap(inputs.first?["txinwitness"] as? [String])
+        XCTAssertEqual(witness.count, 1, "key-path spend exposed a script")
+        XCTAssertEqual(witness.first?.count, 128, "expected one 64-byte signature")
+        _ = try await SignetMiner.mineOntoTip(payingTo: AddressDecoder.scriptPubKey(
+            for: Self.fixtureAddress(0xD4), network: .signet))
+        let spent = try BitcoinCLI.runJSON(["gettxout", fundingTxid, String(coin.vout)])
+        XCTAssertTrue(spent == nil || spent is NSNull, "the funded output was not spent")
+    }
 }

@@ -6,8 +6,8 @@ A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one depend
 
 - **Pure P2P by default.** The read side is BIP157/158 compact block filters served by full-node peers — no server ever learns your addresses. Bounded **mempool windows** (short full-relay subscriptions while the Receive or Send screen is open) give 0-conf payment detection and propagation tracking without any server. Read [how it works](docs/architecture.html).
 - **Taproot today.** Current receiving uses P2TR (BIP86), with no ECDSA signing path. The planned 0.7 P2WSH Safe is a separate, opt-in addition.
-- **People and shared savings.** An address book of people, each with a public account key so every payment to them gets a fresh address, and savings held together as a Taproot k-of-n that no single key can spend: pick co-owners, choose how many must approve, ask for and give approvals as text. Cards carry public keys only.
-- **Two modern multisig flavors.** MuSig2 (BIP327) n-of-n vaults and script-path k-of-n (`multi_a`, BIP387/388), coordinated over PSBTv2 (BIP370/371/373). Shared savings are the k-of-n form in plain words; Advanced mode shows the descriptors and PSBTs.
+- **Pay people and share control.** Save a public payment card or Bitcoin address. From Wallet, create shared savings with a threshold such as 2-of-3: any two keys can spend while one is unavailable. A 1-of-n policy permits one key to spend. Cards carry public keys only.
+- **Require another signing device.** Advanced mode offers MuSig2 accounts where every key must participate. The app journey uses an independent software signer and produces one Taproot key-path signature; desktop/hardware-wallet compatibility remains unverified. Compare the [two signing journeys and their limits](docs/vaults.html).
 - **One runtime dependency:** [`swift-secp256k1`](https://github.com/21-DOT-DEV/swift-secp256k1) (Bitcoin Core's libsecp256k1), pinned.
 - **Warned explorer links** — choose mempool.space or a custom Esplora website; Winnow opens it only after a tap and privacy warning, never as a wallet backend.
 

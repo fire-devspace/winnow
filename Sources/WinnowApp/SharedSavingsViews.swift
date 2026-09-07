@@ -104,7 +104,7 @@ struct SharedSavingsCreateView: View {
                     .accessibilityIdentifier("savingsNameField")
                     .onChange(of: name) { _, _ in nameEdited = true }
             } footer: {
-                Text("Money in shared savings moves only when this many co-owners approve. Winnow builds a Taproot \(threshold)-of-\(signerCount) that no single key can spend.")
+                Text("Any \(threshold) of these \(signerCount) keys can approve a payment. \(threshold == 1 ? "One key is enough to spend." : "One key alone is not enough to spend.") Names do not prove that the keys are held by different people.")
             }
 
             if let error {
@@ -288,6 +288,8 @@ struct SharedSavingsDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                VaultPolicySection(vault: vault)
 
                 Section {
                     if let savings {

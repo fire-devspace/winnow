@@ -40,7 +40,10 @@ struct VaultDetailView: View {
                 }
 
                 Section("Balance · confirmed") {
-                    LabeledContent("Total", value: satsText(record.balance))
+                    LabeledContent("Total") {
+                        Text(satsText(record.balance))
+                            .accessibilityIdentifier("vaultBalance")
+                    }
                     ForEach(Array(record.utxos.enumerated()), id: \.offset) { _, utxo in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(satsText(utxo.amount))
@@ -55,6 +58,8 @@ struct VaultDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                VaultPolicySection(vault: vault)
 
                 Section {
                     Button("Create spend PSBT…") { showSpend = true }
@@ -74,6 +79,33 @@ struct VaultDetailView: View {
         }
         .sheet(isPresented: $showSign) {
             VaultSignView(recordID: recordID)
+        }
+    }
+}
+
+/// Read from the spending descriptor, never from a label or imported claim.
+struct VaultPolicySection: View {
+    let vault: Vault
+
+    var body: some View {
+        Section {
+            Text("\(vault.threshold) of \(vault.signerCount) signing keys required")
+                .accessibilityIdentifier("vaultRequiredKeys")
+            Text(vault.isScriptPath ? "Shared control" : "Every signing device")
+                .accessibilityIdentifier("vaultPolicyPurpose")
+            Text(vault.threshold == 1
+                 ? "One signing key can spend these funds."
+                 : "One signing key cannot spend these funds.")
+                .accessibilityIdentifier("vaultSingleKeyRule")
+            DisclosureGroup("What this policy proves") {
+                Text(vault.isScriptPath
+                     ? "The spending script enforces the threshold, with no secret key that bypasses it. A spend reveals the script and threshold on chain; the receiving address alone does not."
+                     : "MuSig2 requires every participating key and produces one Taproot key-path signature. The signature itself does not reveal how many devices participated. There is no recovery path if a required key and its backups are lost.")
+                Text("Names and cards do not enforce protection. The policy cannot prove who has key copies, where they are kept, or safety from physical coercion.")
+            }
+            .font(.footnote)
+        } header: {
+            Text("Signing policy")
         }
     }
 }
