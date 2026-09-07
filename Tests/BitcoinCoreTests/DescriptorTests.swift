@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinCore
+@testable import WalletCore
 
 /// Descriptor engine round-trips (parse/serialize with recomputed checksum),
 /// BIP389 multipath expansion, and a BIP388 policy-expanded descriptor sanity check.

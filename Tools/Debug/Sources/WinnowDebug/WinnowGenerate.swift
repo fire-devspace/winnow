@@ -6,8 +6,7 @@ import Foundation
 ///
 /// Both need something `swift test` never has — the live network, or a 77 MB
 /// genesis-validated header file — so as env-gated test suites they never ran.
-/// `btc-swift` promises no network, so they do not belong there either. This is
-/// a development tool outside the shipping app, like the story and fuzz drivers.
+/// These explicit development commands use WalletCore outside the shipping app.
 ///
 ///   winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
 ///   winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]

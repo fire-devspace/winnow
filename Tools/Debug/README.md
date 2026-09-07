@@ -2,13 +2,17 @@
 
 # GUI and network debugging
 
-`winnow-debug` contains only environment checks, local simulator diagnostics,
-release-data generators, and the sustained network-read soak. The offline
-`btc-swift` CLI and `WinnowFuzz` sanitizer harness remain separate.
+`winnow-debug` is the single debugging executable: offline transaction, PSBT,
+and descriptor inspection, environment checks, simulator diagnostics, release-data
+generation, and network soaks. It uses the same WalletCore as the app.
+The `WinnowFuzz` sanitizer harness remains a separate test driver.
 
 Run from the checkout (the wrapper also works from another directory):
 
 ```sh
+scripts/winnow-debug inspect tx <hex>
+scripts/winnow-debug inspect psbt <base64>
+scripts/winnow-debug inspect descriptor '<descriptor>' mainnet
 scripts/winnow-debug doctor
 scripts/winnow-debug diagnostics --simulator booted --out /tmp/winnow-diagnostics
 scripts/winnow-debug diagnostics --simulator DEVICE_UUID --out /tmp/winnow-diagnostics --run E2E_RUN_ID
@@ -16,6 +20,12 @@ scripts/winnow-debug generate --help
 scripts/winnow-debug soak --help
 scripts/winnow-debug soak --network signet --minutes 30 --out /tmp/signet-soak.jsonl
 ```
+
+`inspect` is offline and read-only. Descriptor inspection derives index zero
+for each multipath choice; omit the network argument to use signet. The old
+standalone CLI's signing, combination, finalization, filter matching, and key
+aggregation commands are removed. The app's signing and filter paths retain
+their own primitive, adversarial, and GUI tests.
 
 `doctor` checks the app project, Swift, Xcode, simulator tooling and Git.
 `diagnostics` saves a screenshot and the last ten minutes of app logs. With an

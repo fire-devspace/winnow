@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 import Testing
 import TestSupport

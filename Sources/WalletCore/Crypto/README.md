@@ -9,7 +9,7 @@ rules in the app and debugging tools.
 Consumers include [key derivation](../Keys/README.md),
 [Taproot scripts](../Script/README.md), and
 [filter scanning](../../WalletCore/Network/Filters/README.md).
-This is a source grouping inside BitcoinCore, not a separate service.
+This is a source grouping inside WalletCore, not a separate service.
 
 [Crypto tests](../../../Tests/BitcoinCoreTests/CryptoTests.swift),
 [Bech32 tests](../../../Tests/BitcoinCoreTests/Bech32Tests.swift), and

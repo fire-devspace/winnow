@@ -1,4 +1,3 @@
-import BitcoinCore
 import WalletCore
 import CryptoKit
 import Foundation
@@ -102,6 +101,7 @@ public actor LoopbackNode {
     private var serving: Bool
     /// Connections accepted while silent, cancelled on `stop()`.
     private var heldWhileSilent: [NWConnection] = []
+    public var silentConnectionCount: Int { heldWhileSilent.count }
 
     public var endpoint: PeerEndpoint { PeerEndpoint(host: "127.0.0.1", port: port) }
 

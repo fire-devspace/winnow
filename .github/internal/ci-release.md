@@ -9,7 +9,7 @@ swift-secp256k1 is remote. Xcode resolution must match that root lockfile.
 
 | Workflow | When | Responsibility |
 | --- | --- | --- |
-| CI | PR, main push, manual, release caller | Complexity, package and debugging tests, app/Keychain tests, release warning and E2E exclusion gates, CLI smoke, provenance, fixed fuzz corpus |
+| CI | PR, main push, manual, release caller | Complexity, package and debugging tests, app/Keychain tests, release warning and E2E exclusion gates, inspection smoke, provenance, fixed fuzz corpus |
 | LOC | Every PR, main push and manual run | cloc 2.10, committed paths, matching JSON/CSV/Markdown and merge-base deltas; 90-day artifacts subject to org limits |
 | Fuzz sanitizers | Weekly or manual seed replay | Sustained address/thread sanitizer coverage; does not repeat normal suites |
 | Node integration | Differential and UI: same-repo PRs touching code, main pushes, nightly, release, confirmed manual run | Core differential tests and app UI tests, each on a fresh fixture owned by that job |
@@ -57,7 +57,7 @@ attached to the GitHub release.
 
 The CI workflow is reused directly, so release definitions cannot drift into a
 second copy of package/app/fuzz checks. Debug app tests already build the app;
-there is no extra debug build. Native CLI smoke and provenance use the same
+there is no extra debug build. Native inspection smoke and provenance use the same
 warning-checked release binary. Fuzz smoke reuses its compiled modules, while
 `swift test` runs the library and debugging-tool suites together once per
 architecture. The iOS Release build separately checks shipping compiler settings

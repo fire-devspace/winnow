@@ -1,4 +1,3 @@
-import BitcoinCore
 import WalletCore
 import CryptoKit
 import Foundation

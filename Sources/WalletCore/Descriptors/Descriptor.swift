@@ -589,7 +589,7 @@ struct Parser {
     mutating func parseKeyBase() throws -> Descriptor.KeyBase {
         let token = takeWhile(\.isHexLetterOrDigit)
         guard !token.isEmpty else { throw DescriptorError.invalidKey }
-        if let data = hexData(token), [32, 33, 65].contains(data.count) {
+        if let data = Data(hex: token), [32, 33, 65].contains(data.count) {
             return try Self.rawPublicKey(data)
         }
         if token.hasPrefix("xpub") || token.hasPrefix("xprv") || token.hasPrefix("tpub") || token.hasPrefix("tprv") {
@@ -625,19 +625,6 @@ struct Parser {
         return .privateKey(Data(secret), compressed: false, network: wifNetwork)
     }
 
-    private func hexData(_ token: String) -> Data? {
-        guard token.count % 2 == 0, token.allSatisfy(\.isHexDigit) else { return nil }
-        var data = Data()
-        data.reserveCapacity(token.count / 2)
-        var index = token.startIndex
-        while index < token.endIndex {
-            let next = token.index(index, offsetBy: 2)
-            guard let byte = UInt8(token[index ..< next], radix: 16) else { return nil }
-            data.append(byte)
-            index = next
-        }
-        return data
-    }
 }
 
 private extension Character {

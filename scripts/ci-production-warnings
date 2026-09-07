@@ -15,10 +15,9 @@ SCRATCH_PATH="${1:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/winnow-production-build}"
 LOG_PATH="${2:-$SCRATCH_PATH/production-build.log}"
 mkdir -p "$(dirname "$LOG_PATH")"
 
-# Build the offline CLI and operator tool; the warning gate follows the
+# Build the debugging tool and its shared wallet core; the warning gate follows the
 # production Sources/ tree and the relocated soak driver.
-swift build --configuration release --product btc-swift --scratch-path "$SCRATCH_PATH" 2>&1 | tee "$LOG_PATH"
-swift build --configuration release --product winnow-debug --scratch-path "$SCRATCH_PATH" 2>&1 | tee -a "$LOG_PATH"
+swift build --configuration release --product winnow-debug --scratch-path "$SCRATCH_PATH" 2>&1 | tee "$LOG_PATH"
 git -C "$ROOT" diff --exit-code -- Package.resolved
 
 "$ROOT/scripts/check-swift-warnings" "$LOG_PATH"

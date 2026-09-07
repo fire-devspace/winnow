@@ -1,17 +1,19 @@
 [Back to main README](../../../README.md)
 
-# Wallet secret storage
+# Wallet keys and secret storage
 
-KeyStore defines the wallet's secret-storage interface, and KeychainStore supplies
-its Apple Keychain implementation. Recovery and signing need durable secrets
-with access rules that are distinct from ordinary wallet metadata.
+BIP39 recovery words, BIP32 derivation, BIP86 addresses, and the Apple Keychain
+implementation live together. Receiving, recovery, and signing use the same
+keys; durable secrets retain access rules distinct from ordinary wallet metadata.
 
-The [wallet](../Wallet/README.md) and
-[app](../../WinnowApp/README.md) consume this code.
-The in-memory implementation used by tests lives in
+The [wallet](../Wallet/README.md), [signer](../Transactions/README.md), and
+[app](../../WinnowApp/README.md) use this code. The in-memory keystore stays in
 [TestSupport](../../../Tests/Support/README.md), outside production sources.
 
-[KeyStore tests](../../../Tests/WalletCoreTests/KeyStoreTests.swift) check the interface,
-while [Keychain attribute tests](../../../AppTests/KeychainAttributeTests.swift) and
-[device authentication tests](../../../AppTests/DeviceAuthenticationTests.swift) check
-app integration. Device-lock enforcement still needs physical-device evidence.
+[BIP39](../../../Tests/BitcoinCoreTests/BIP39Tests.swift),
+[BIP32](../../../Tests/BitcoinCoreTests/BIP32Tests.swift), and
+[BIP86](../../../Tests/BitcoinCoreTests/BIP86Tests.swift) check independent vectors.
+[KeyStore tests](../../../Tests/WalletCoreTests/KeyStoreTests.swift),
+[Keychain attributes](../../../AppTests/KeychainAttributeTests.swift), and
+[device authentication](../../../AppTests/DeviceAuthenticationTests.swift) check
+storage and app integration. Device-lock enforcement needs physical-device evidence.

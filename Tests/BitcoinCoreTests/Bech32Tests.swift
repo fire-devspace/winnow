@@ -1,8 +1,7 @@
-import WalletCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinCore
+@testable import WalletCore
 
 /// BIP350 (and BIP173 segwit address) test vectors parsed from bip-0350.mediawiki.
 @Suite("Bech32/BIP350")

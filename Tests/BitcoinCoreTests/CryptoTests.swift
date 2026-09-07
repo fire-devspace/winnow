@@ -1,7 +1,6 @@
-import WalletCore
 import Foundation
 import Testing
-@testable import BitcoinCore
+@testable import WalletCore
 
 @Suite("Crypto primitives")
 struct CryptoTests {

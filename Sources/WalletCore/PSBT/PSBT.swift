@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 
 public enum PSBTError: Error, Equatable, LocalizedError {

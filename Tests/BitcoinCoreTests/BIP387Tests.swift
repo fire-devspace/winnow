@@ -1,8 +1,7 @@
-import WalletCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinCore
+@testable import WalletCore
 
 /// BIP387 multi_a/sortedmulti_a vectors parsed from bip-0387.mediawiki.
 /// (The task brief calls these "BIP388 vectors"; the descriptor fragments live in BIP387.)

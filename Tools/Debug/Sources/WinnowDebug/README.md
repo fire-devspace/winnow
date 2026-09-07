@@ -2,7 +2,7 @@
 
 # Debugging implementation
 
-This executable implements environment checks, simulator diagnostics, network
+This executable implements offline transaction/PSBT/descriptor inspection, environment checks, simulator diagnostics, network
 soaks, and generation of the app's fallback peers and header checkpoint.
 It helps investigate the actual GUI and networking code while staying outside
 the shipping app.
@@ -12,6 +12,6 @@ the shipping app.
 Both the wrapper and `swift run winnow-debug` use this implementation.
 
 [ToolsTests](../../../../Tests/ToolsTests/README.md) checks command dispatch, subprocesses,
-generator policy, and soak options. [ci-debug](../../../../scripts/ci-debug) exercises the
+generator policy, inspection results and invalid inputs, and soak options. [ci-debug](../../../../scripts/ci-debug) exercises the
 wrapper from outside the checkout. A soak log records observations, not a blanket
 readiness verdict; diagnostics do not publish or upload their captures.

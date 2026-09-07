@@ -1,4 +1,3 @@
-import BitcoinCore
 @testable import WalletCore
 import Foundation
 import Testing

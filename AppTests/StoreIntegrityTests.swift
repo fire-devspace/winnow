@@ -1,5 +1,4 @@
 @testable import WinnowApp
-import BitcoinCore
 import WalletCore
 import Foundation
 import TestSupport

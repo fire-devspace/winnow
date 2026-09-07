@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 
 public enum FilterSyncError: LocalizedError, Equatable, Sendable {

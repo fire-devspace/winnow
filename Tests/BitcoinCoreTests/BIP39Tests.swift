@@ -1,8 +1,7 @@
-import WalletCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinCore
+@testable import WalletCore
 
 /// BIP39 vectors from trezor/python-mnemonic (passphrase "TREZOR").
 @Suite("BIP39")

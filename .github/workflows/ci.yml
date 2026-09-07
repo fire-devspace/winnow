@@ -61,29 +61,23 @@ jobs:
           "$RUNNER_TEMP/winnow-production-build"
           "$RUNNER_TEMP/winnow-production-build.log"
 
-      - name: Exercise the release CLI
+      - name: Exercise release debugging commands
         run: |
-          "$RUNNER_TEMP/winnow-production-build/release/btc-swift" musig-xpub \
-            0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798 \
-            02C6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
-          "$RUNNER_TEMP/winnow-production-build/release/btc-swift" derive \
-            "tr([00000000/86'/1'/0']tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp/0/*)" \
-            --network signet --count 3
-          swift run --scratch-path "$RUNNER_TEMP/winnow-production-build" \
-            --configuration release winnow-debug generate --help
+          "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" inspect --help
+          "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" generate --help
           "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" soak --help
 
       - name: Generate deterministic SBOM and build provenance
         run: |
           scripts/generate-supply-chain-metadata \
             --output-dir "$RUNNER_TEMP/supply-chain" \
-            --subject "$RUNNER_TEMP/winnow-production-build/release/btc-swift" \
-            --subject-name btc-swift \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" \
+            --subject-name winnow-debug \
             --builder-id "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.workflow_sha }}"
           scripts/generate-supply-chain-metadata \
             --output-dir "$RUNNER_TEMP/supply-chain-replay" \
-            --subject "$RUNNER_TEMP/winnow-production-build/release/btc-swift" \
-            --subject-name btc-swift \
+            --subject "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" \
+            --subject-name winnow-debug \
             --builder-id "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.workflow_sha }}"
           diff -ru "$RUNNER_TEMP/supply-chain" "$RUNNER_TEMP/supply-chain-replay"
 

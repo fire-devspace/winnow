@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 
 public enum TxBuildError: Error, Equatable {

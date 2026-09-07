@@ -40,8 +40,6 @@ targets:
     dependencies:
       - package: Winnow
         product: WalletCore
-      - package: Winnow
-        product: BitcoinCore
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -108,8 +106,6 @@ targets:
       - target: WinnowApp
       - package: Winnow
         product: TestSupport
-      - package: Winnow
-        product: BitcoinCore
       - package: Winnow
         product: WalletCore
       - package: swift-secp256k1

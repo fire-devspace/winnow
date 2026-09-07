@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 import Network
 import Testing

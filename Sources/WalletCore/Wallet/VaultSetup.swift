@@ -1,4 +1,3 @@
-import BitcoinCore
 import Foundation
 
 /// The key-expression shape required by each vault policy.

@@ -1,8 +1,7 @@
-import WalletCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinCore
+@testable import WalletCore
 
 /// BIP390 musig() descriptor vectors (from bip-0390.mediawiki) and BIP328
 /// aggregate-key derivation vectors (from bip-0328.mediawiki).

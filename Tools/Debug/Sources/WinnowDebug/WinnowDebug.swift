@@ -19,6 +19,7 @@ enum WinnowDebug {
         guard let command = arguments.first else { return print(usageText) }
         switch command {
         case "help", "--help", "-h": print(usageText)
+        case "inspect": print(try InspectionCommand.render(Array(arguments.dropFirst())))
         case "generate": try await WinnowGenerate.execute(Array(arguments.dropFirst()))
         case "soak": try await SoakCommand.execute(Array(arguments.dropFirst()))
         case "doctor":
@@ -48,6 +49,7 @@ enum WinnowDebug {
     static let usageText = """
     Winnow GUI and network debugging
 
+      scripts/winnow-debug inspect --help
       scripts/winnow-debug doctor
       scripts/winnow-debug diagnostics --simulator UDID --out DIR [--run E2E_RUN_ID]
       scripts/winnow-debug generate --help

@@ -24,10 +24,9 @@ The app, Bitcoin implementation, CLI, fuzz harness, debugging tools and website
 live in this repository. The app and all development tools use one root
 Swift package and dependency lockfile. There is one release version and one source revision.
 
-The app owns the user flows. Wallet state and P2P networking share WalletCore;
-BitcoinCore holds the cryptographic and descriptor primitives. The offline
-btc-swift CLI, winnow-debug operator tool and fuzz harness use those same
-implementations. Explorer links open an external website after a warning.
+The app owns the user flows. WalletCore contains Bitcoin primitives, wallet
+state, and P2P networking in one target. The winnow-debug tool and fuzz harness
+use that same implementation. Explorer links open an external website after a warning.
 
 The [testing and feature policy](docs/testing.md) ties supported features to
 actual app journeys and names the lower-level invariants worth keeping.
@@ -45,9 +44,9 @@ asset catalogs are documented by their owner, outside the bundle.
 
 ### App and Bitcoin rules
 
-- App and inspection: [iPhone app](Sources/WinnowApp/README.md), [offline CLI](Sources/BtcSwiftCLI/README.md).
-- BitcoinCore: [crypto/encodings](Sources/BitcoinCore/Crypto/README.md), [descriptors](Sources/BitcoinCore/Descriptors/README.md), [key derivation](Sources/BitcoinCore/Keys/README.md), [scripts](Sources/BitcoinCore/Script/README.md).
-- WalletCore: [secret storage](Sources/WalletCore/Keys/README.md), [PSBTs](Sources/WalletCore/PSBT/README.md), [transactions](Sources/WalletCore/Transactions/README.md), [wallet policy](Sources/WalletCore/Wallet/README.md).
+- App and inspection: [iPhone app](Sources/WinnowApp/README.md), [debugging and offline inspection](Tools/Debug/README.md).
+- WalletCore primitives: [crypto/encodings](Sources/WalletCore/Crypto/README.md), [descriptors](Sources/WalletCore/Descriptors/README.md), [scripts](Sources/WalletCore/Script/README.md).
+- WalletCore: [keys and secret storage](Sources/WalletCore/Keys/README.md), [PSBTs](Sources/WalletCore/PSBT/README.md), [transactions](Sources/WalletCore/Transactions/README.md), [wallet policy](Sources/WalletCore/Wallet/README.md).
 - Network synchronization: [filters](Sources/WalletCore/Network/Filters/README.md), [headers](Sources/WalletCore/Network/Headers/README.md), [peer selection](Sources/WalletCore/Network/Peers/README.md).
 - Network communication: [relay](Sources/WalletCore/Network/Broadcast/README.md), [mempool](Sources/WalletCore/Network/Mempool/README.md), [wire formats](Sources/WalletCore/Network/Protocol/README.md), [transport](Sources/WalletCore/Network/Transport/README.md).
 
@@ -74,7 +73,7 @@ asset catalogs are documented by their owner, outside the bundle.
 
 ```sh
 swift test
-swift run btc-swift decode-tx <hex>
+swift run winnow-debug inspect tx <hex>
 xcodegen
 scripts/ci-app-tests /tmp/winnow-app-tests
 scripts/ci-debug

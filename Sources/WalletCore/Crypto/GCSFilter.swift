@@ -255,21 +255,3 @@ struct BitReader {
         readOptional() ?? false
     }
 }
-
-extension Data {
-    mutating func appendCompactSize(_ value: UInt64) {
-        switch value {
-        case ..<0xFD:
-            append(UInt8(value))
-        case ...0xFFFF:
-            append(0xFD)
-            Swift.withUnsafeBytes(of: UInt16(value).littleEndian) { append(contentsOf: $0) }
-        case ...0xFFFF_FFFF:
-            append(0xFE)
-            Swift.withUnsafeBytes(of: UInt32(value).littleEndian) { append(contentsOf: $0) }
-        default:
-            append(0xFF)
-            Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
-        }
-    }
-}

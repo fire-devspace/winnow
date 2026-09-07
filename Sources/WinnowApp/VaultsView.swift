@@ -1,4 +1,3 @@
-import BitcoinCore
 import SwiftUI
 import UIKit
 import WalletCore

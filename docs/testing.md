@@ -29,8 +29,10 @@ that a feature ships.
 WalletCore now owns wallet state, transaction construction, peer connections,
 headers, filters, and relay in one package target. The app directly orchestrates
 those parts; there is no extra wallet/network facade or parallel library-only
-send/scan workflow. BitcoinCore remains the pure cryptographic and descriptor
-implementation. Actors retain their existing ownership and lifetimes.
+send/scan workflow. Cryptography, descriptors, and wallet networking now share
+WalletCore too, including their byte encoders. Actors retain their existing
+ownership and lifetimes. Offline inspection is part of winnow-debug; there is no
+separate CLI or demo signing path.
 
 InMemoryKeyStore belongs to TestSupport, not the shipping wallet. The module
 version placeholders and duplicate binary serializers are removed. There is one

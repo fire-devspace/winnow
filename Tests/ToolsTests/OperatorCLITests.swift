@@ -7,13 +7,16 @@ import Testing
 struct OperatorCLITests {
     @Test("operator help needs no story run, simulator, network, or header file")
     func help() async throws {
-        for command in [["generate"], ["generate", "--help"], ["soak", "--help"], ["soak", "help"]] {
+        for command in [["inspect"], ["inspect", "--help"], ["generate"], ["generate", "--help"], ["soak", "--help"], ["soak", "help"]] {
             try await WinnowDebug.execute(command)
         }
     }
 
     @Test("operator errors come from their own parser without requiring a story run")
     func dispatch() async {
+        await #expect(throws: DebugError.self) {
+            try await WinnowDebug.execute(["musig-sign-psbt", "anything"])
+        }
         await #expect(throws: GenerateError.self) {
             try await WinnowDebug.execute(["generate", "nope"])
         }

@@ -40,7 +40,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Create a vault through the advanced form.</li>
 <li>Import an approval request, review it, and contribute the device’s signature.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L338">test04VaultCreate</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L512">test07ApproveRequest</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L337">test04VaultCreate</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L511">test07ApproveRequest</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="groups">
 <h2>Use a group as a vault cosigner</h2><p>Combine a group cosigner with a threshold vault, then complete the required approvals and broadcast the resulting spend.</p>
@@ -49,7 +49,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Build and fund a vault containing the group’s synthetic key.</li>
 <li>Complete its signing rounds and confirm the final spend through the app.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L937">test13GroupCosignerVault</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L936">test13GroupCosignerVault</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="fees">
 <h2>Replace a pending payment with a higher fee</h2><p>Review a replacement’s fee and change before authorizing it. The original remains visible as replaced.</p>
@@ -57,7 +57,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Send a payment and leave it in the node’s mempool.</li>
 <li>Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1382">test15ReviewAndReplacePendingPayment</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1381">test15ReviewAndReplacePendingPayment</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="network">
 <h2>Inspect peers and control external disclosure</h2><p>Inspect connected peers and network settings. Explorer links open only after an explicit warning about the information sent to that website.</p>
@@ -66,7 +66,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Open the real peer settings.</li>
 <li>Open an explorer warning and cancel before leaving the app.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L378">test05SettingsPeersAndExplorerWarning</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L377">test05SettingsPeersAndExplorerWarning</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section id="evidence"><h2>What the evidence means</h2>
 <p>Each journey above links to tests that drive the actual app against a disposable signet node. Images show test wallets. A screenshot or a test’s presence in the source is not a passing result: inspect the linked run for its revision, failures, and result bundle.</p>
