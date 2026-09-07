@@ -46,7 +46,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Abandon a nonce session and verify that reopening cannot resume it.</li>
 <li>Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1449">test16MuSig2RequiresSecondDevice</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1455">test16MuSig2RequiresSecondDevice</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="vaults">
 <h2>Inspect and import signing policies</h2><p>Create a Taproot vault from public signer keys and coordinate approvals using PSBT text. Inspect the policy and reviewed transaction explicitly.</p>
@@ -66,7 +66,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Build and fund a vault containing the group’s synthetic key.</li>
 <li>Complete its signing rounds and confirm the final spend through the app.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L952">test13GroupCosignerVault</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L958">test13GroupCosignerVault</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="fees">
 <h2>Replace a pending payment with a higher fee</h2><p>Review a replacement’s fee and change before authorizing it. The original remains visible as replaced.</p>
@@ -74,7 +74,7 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <li>Send a payment and leave it in the node’s mempool.</li>
 <li>Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1397">test15ReviewAndReplacePendingPayment</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1403">test15ReviewAndReplacePendingPayment</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
 <section class="journey" id="network">
 <h2>Inspect peers and control external disclosure</h2><p>Inspect connected peers and network settings. Explorer links open only after an explicit warning about the information sent to that website.</p>

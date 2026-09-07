@@ -16,6 +16,7 @@ struct SharedSavingsCreateView: View {
     @State private var error: String?
     @State private var creating = false
     @State private var created: VaultRecord?
+    @State private var showAddPerson = false
 
     private var chosen: [PersonRecord] {
         model.people.filter { selected.contains($0.id) }
@@ -42,6 +43,7 @@ struct SharedSavingsCreateView: View {
                 }
             }
             .navigationTitle(created == nil ? "New shared savings" : "Share the savings")
+            .sheet(isPresented: $showAddPerson) { AddPersonView() }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if created == nil {
@@ -62,10 +64,12 @@ struct SharedSavingsCreateView: View {
         Form {
             Section {
                 if model.people.isEmpty {
-                    Text("Add people first. Each co-owner needs a Winnow card, which carries their signer key.")
+                    Text("Add each co-owner’s Winnow card, then choose who will share control.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                Button("Add a co-owner") { showAddPerson = true }
+                    .accessibilityIdentifier("addSavingsCoOwnerButton")
                 ForEach(model.people) { person in
                     Button {
                         toggle(person)

@@ -91,7 +91,7 @@ struct VaultPolicySection: View {
         Section {
             Text("\(vault.threshold) of \(vault.signerCount) signing keys required")
                 .accessibilityIdentifier("vaultRequiredKeys")
-            Text(vault.isScriptPath ? "Shared control" : "Every signing device")
+            Text(vault.isScriptPath ? "Shared control" : "Every signing key")
                 .accessibilityIdentifier("vaultPolicyPurpose")
             Text(vault.threshold == 1
                  ? "One signing key can spend these funds."

@@ -786,6 +786,12 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["People"].exists)
         XCTAssertTrue(app.buttons["walletSharedSavingsButton"].exists)
         XCTAssertFalse(app.buttons["walletExtraDeviceButton"].exists)
+        app.buttons["walletSharedSavingsButton"].tap()
+        XCTAssertTrue(app.buttons["addSavingsCoOwnerButton"].waitForExistence(timeout: 20))
+        app.buttons["addSavingsCoOwnerButton"].tap()
+        XCTAssertTrue(app.textFields["personNameField"].waitForExistence(timeout: 20))
+        app.navigationBars["Add person"].buttons["Cancel"].tap()
+        app.navigationBars["New shared savings"].buttons["Cancel"].tap()
         XCTAssertFalse(app.tabBars.buttons["Vaults"].exists, "beginners never see a Vaults tab")
         // The one-liner is a ProgressView, a Label or a Text depending on the
         // phase, so match the identifier across every element type.
