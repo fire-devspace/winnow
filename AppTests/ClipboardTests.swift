@@ -1,6 +1,20 @@
 @testable import WinnowApp
+import Foundation
 import UIKit
 import XCTest
+
+/// Everything the app puts on a pasteboard.
+///
+/// The two classes stay separate on purpose, and the difference is the point
+/// of the file. ClipboardPolicyTests asserts the policies and writes only to a
+/// scratch pasteboard from `UIPasteboard.withUniqueName()`, so running the
+/// suite never touches the developer's own clipboard. CopyableIdentifierTests
+/// asserts what a *row* actually hands the user, which means going through
+/// `apply(_:)` and reading `UIPasteboard.general` back — so it owns a tearDown
+/// that empties the general pasteboard afterwards. Merging them would either
+/// put the general pasteboard under the policy tests or drop that tearDown.
+
+// MARK: - ClipboardPolicyTests
 
 /// Clipboard handoff policy (epic #100, invariant S1).
 ///
@@ -14,7 +28,7 @@ import XCTest
 /// so that a later change which "unifies" them has to argue with a test.
 @MainActor
 final class ClipboardPolicyTests: XCTestCase {
-    // MARK: - The policies themselves
+    // MARK: The policies themselves
 
     /// Recovery words have no legitimate reason to cross to another device.
     func testRecoveryPhraseNeverLeavesTheDevice() {
@@ -41,7 +55,7 @@ final class ClipboardPolicyTests: XCTestCase {
         XCTAssertFalse(ClipboardPolicy.interchange.localOnly)
     }
 
-    // MARK: - What reaches the pasteboard
+    // MARK: What reaches the pasteboard
 
     func testOptionsCarryLocalOnlyAndAnExpiryInTheFuture() throws {
         for policy in [ClipboardPolicy.recoveryPhrase, .interchange] {
@@ -76,5 +90,62 @@ final class ClipboardPolicyTests: XCTestCase {
         XCTAssertEqual(pasteboard.string, "second")
         XCTAssertEqual(pasteboard.numberOfItems, 1,
                        "a copy replaces the item rather than accumulating")
+    }
+}
+
+// MARK: - CopyableIdentifierTests
+
+/// Transactions have to be gettable out of the app.
+///
+/// A txid is 64 hex characters and does not fit a list row, so rows abbreviate
+/// it. Abbreviated text with only `textSelection` cannot be copied whole —
+/// selecting it yields the ellipsis, not the identifier — so the transaction
+/// list displayed a value that could not actually be obtained. What is shown
+/// is a summary; what is copied must always be the whole thing.
+///
+/// Unlike the policy tests above, these go through the general pasteboard,
+/// because the claim is about what the user really gets when they tap Copy.
+/// Hence the tearDown.
+@MainActor
+final class CopyableIdentifierTests: XCTestCase {
+    private let txid = String(repeating: "ab", count: 32)
+
+    override func tearDown() {
+        UIPasteboard.general.items = []
+        super.tearDown()
+    }
+
+    /// The abbreviation is presentation only.
+    func testAbbreviationNeverReachesTheClipboard() {
+        ClipboardPolicy.interchange.apply(txid)
+        XCTAssertEqual(UIPasteboard.general.string, txid)
+        XCTAssertEqual(txid.count, 64, "a full txid, not a preview of one")
+        XCTAssertFalse(try XCTUnwrap(UIPasteboard.general.string).contains("…"))
+    }
+
+    /// A txid is already public on the chain, so it travels under the
+    /// interchange policy rather than the recovery-phrase one — crossing to a
+    /// desktop is the entire point of copying it.
+    func testTransactionsUseTheInterchangePolicy() {
+        XCTAssertFalse(ClipboardPolicy.interchange.localOnly,
+                       "copying a txid to a desktop is the workflow")
+        XCTAssertGreaterThan(ClipboardPolicy.interchange.lifetime, 0,
+                            "it still expires rather than sitting there")
+    }
+
+    /// …and emphatically not the seed policy, which exists for material that
+    /// must never leave the device.
+    func testTransactionsDoNotBorrowTheRecoveryPhrasePolicy() {
+        XCTAssertNotEqual(ClipboardPolicy.interchange, ClipboardPolicy.recoveryPhrase)
+        XCTAssertTrue(ClipboardPolicy.recoveryPhrase.localOnly)
+    }
+
+    /// The raw transaction is hex and round-trips as text — the point being
+    /// that a user can paste it into a node or explorer that accepts one.
+    func testRawTransactionHexCopiesWhole() {
+        let raw = String(repeating: "0a", count: 250)
+        ClipboardPolicy.interchange.apply(raw)
+        XCTAssertEqual(UIPasteboard.general.string, raw)
+        XCTAssertEqual(UIPasteboard.general.string?.count, 500)
     }
 }

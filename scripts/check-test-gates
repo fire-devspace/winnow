@@ -12,7 +12,7 @@ SETTERS=(.github/workflows scripts)
 # Optional overrides a developer may set by hand; never a gate.
 ALLOW_UNSET="WINNOW_BITCOIN_CLI"
 # Conditional skips that are deliberate and documented.
-ALLOW_XCTSKIP="UITests/StorefrontCaptureTests.swift AppTests/JournalRedactionTests.swift"
+ALLOW_XCTSKIP="UITests/StorefrontCaptureTests.swift AppTests/E2EModeTests.swift"
 # Gates that hid suites nobody ran; folded into the node lane or a tool.
 DENY='WINNOW_SIGNET|WINNOW_HEADERS_BIN|WINNOW_GENERATE_FALLBACK_PEERS'
 

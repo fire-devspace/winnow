@@ -1,11 +1,37 @@
 @testable import WinnowApp
 import SwiftUI
+import Testing
 import UIKit
 import XCTest
 
+/// What the wallet shows when it is not the thing on screen.
+///
+/// Three declarations, because three different mechanisms answer that: the
+/// pure scene-phase policy, the UIKit window that acts on it, and the epoch
+/// token that decides whether a sensitive presentation's async result is still
+/// wanted. AppPrivacyTests is a swift-testing `@Suite` struct, PrivacyShieldTests
+/// is `@MainActor` and owns a tearDown that resets the shield, and
+/// SensitivePresentationEpochTests is a value test with no isolation and no
+/// fixture — so they cannot share one class. PrivacyShieldTests is cited by
+/// name in docs/security/findings.md (SEC-025).
+
+// MARK: - AppPrivacyTests
+
+@Suite("App privacy cover")
+struct AppPrivacyTests {
+    @Test("only an active scene may expose wallet content")
+    func scenePolicy() {
+        #expect(!shouldObscureWallet(for: .active))
+        #expect(shouldObscureWallet(for: .inactive))
+        #expect(shouldObscureWallet(for: .background))
+    }
+}
+
+// MARK: - PrivacyShieldTests
+
 /// The privacy cover as installed, not as intended (invariant S1).
 ///
-/// `AppPrivacyTests` pins `shouldObscureWallet(for:)`, which is a pure
+/// `AppPrivacyTests`, above, pins `shouldObscureWallet(for:)`, which is a pure
 /// function over `ScenePhase`. That the policy is right says nothing about
 /// whether anything acts on it, and the acting is the part with the
 /// interesting failure: `PrivacyShield` exists because a cover placed inside
@@ -126,5 +152,35 @@ final class PrivacyShieldTests: XCTestCase {
             XCTAssertEqual(visible, shouldObscureWallet(for: phase),
                            "phase \(phase) disagrees with the cover it produced")
         }
+    }
+}
+
+// MARK: - SensitivePresentationEpochTests
+
+final class SensitivePresentationEpochTests: XCTestCase {
+    func testCurrentTokenIsAcceptedOnlyWhileSceneIsActive() {
+        var epoch = SensitivePresentationEpoch()
+        let token = epoch.begin()
+
+        XCTAssertTrue(epoch.accepts(token, whilePresentationIsAllowed: true))
+        XCTAssertFalse(epoch.accepts(token, whilePresentationIsAllowed: false))
+    }
+
+    func testInvalidationRejectsAnAsyncResultFromTheOldPresentation() {
+        var epoch = SensitivePresentationEpoch()
+        let stale = epoch.begin()
+
+        epoch.invalidate()
+
+        XCTAssertFalse(epoch.accepts(stale, whilePresentationIsAllowed: true))
+    }
+
+    func testStartingAnotherOperationRejectsThePreviousResult() {
+        var epoch = SensitivePresentationEpoch()
+        let stale = epoch.begin()
+        let current = epoch.begin()
+
+        XCTAssertFalse(epoch.accepts(stale, whilePresentationIsAllowed: true))
+        XCTAssertTrue(epoch.accepts(current, whilePresentationIsAllowed: true))
     }
 }
