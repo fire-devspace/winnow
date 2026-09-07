@@ -1,3 +1,5 @@
+[Back to main README](../../README.md)
+
 # GUI and network debugging
 
 `winnow-debug` contains only environment checks, local simulator diagnostics,
@@ -44,3 +46,6 @@ commands neither read nor migrate it. Historical evidence remains historical.
 | `winnow-generate` | `winnow-debug generate` |
 | `WinnowSoak` | `winnow-debug soak` |
 | `winnow-story doctor` | `winnow-debug doctor` |
+
+The [implementation guide](Sources/WinnowDebug/README.md) links the command
+implementation to its consuming tests and CI checks.

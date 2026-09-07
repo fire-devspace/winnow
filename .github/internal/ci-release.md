@@ -23,6 +23,12 @@ additionally take pull requests from branches in this repository, never from
 forks. Node suites share the source in `Tests/Support/Node` and run serially on
 the single listener; they must never share a mining fixture with another
 concurrent run.
+
+Runner VM provisioning, registration, and machine inventory live in the separate
+private runner repository. Winnow requires a prepared macOS/Xcode seat with
+Bitcoin Core tools and the workflow's labels; it manages only its temporary
+node through `scripts/signet-fixture`.
+
 Each job owns fixture setup and teardown under its temporary directory; prior
 wallet state and difficulty retargets cannot affect the next run.
 The three Keychain attribute checks use the app's existing iOS test host.
@@ -53,8 +59,9 @@ The CI workflow is reused directly, so release definitions cannot drift into a
 second copy of package/app/fuzz checks. Debug app tests already build the app;
 there is no extra debug build. Native CLI smoke and provenance use the same
 warning-checked release binary. Fuzz smoke reuses its compiled modules, while
-`swift test` runs the library and story suites together once per architecture. The iOS Release build separately checks shipping
-compiler settings and bundled resources.
+`swift test` runs the library and debugging-tool suites together once per
+architecture. The iOS Release build separately checks shipping compiler settings
+and bundled resources.
 
 If App Store Connect processing outlasts a release, use **TestFlight recovery**
 with its exact marketing version and build number; do not upload that number
@@ -65,10 +72,11 @@ and tools change together and need no internal version bumps.
 
 ## Website
 
-`docs/` is hand-written static HTML with no build system. The app bundles the
-five design papers and `site.css` directly from that directory. Edit them once.
-Run `scripts/check-site` after `git lfs pull` to check local page/asset links and
-reject unresolved image pointers.
+`docs/` is static HTML. `scripts/build-site` generates home and Advanced from
+`docs/journeys.json` and app-test selectors; the other pages are authored directly.
+The app bundles the five design papers and `site.css` directly from that directory. Edit them once.
+Run `scripts/build-site` after changing journey inputs, then `scripts/check-site`
+after `git lfs pull` to check local page/asset links and reject unresolved image pointers.
 
 Website deploys to the existing Cloudflare Pages project `winnow`, using
 `CF_API_TOKEN` and `CF_ACCOUNT_ID`. Only `main` deploys production at
@@ -81,7 +89,7 @@ validate without deployment credentials. There is no second GitHub Pages site.
 Total source sums nonblank, noncomment lines in app/library/CLI source, tests,
 webpages and tooling. Other text has its own physical nonblank count. Fixtures,
 vectors, documentation and lockfiles are other text. Shared test helpers count
-once per tracked path. Story driver code is tooling; its test directory is tests.
+once per tracked path. Debugging driver code is tooling; its test directory is tests.
 Generated fallback peers, dependencies/build output, binaries, symlinks and LFS
 pointers are excluded with recorded reasons. Counting policy 4 and schema 1 are
 recorded alongside cloc 2.10's verified checksum and commit SHA.

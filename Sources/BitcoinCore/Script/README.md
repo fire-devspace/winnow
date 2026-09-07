@@ -1,0 +1,17 @@
+[Back to main README](../../../README.md)
+
+# Taproot spending scripts
+
+Script encoding, Taproot trees, and multisignature policy construction define
+which keys can spend a wallet or shared-savings output. The signer and other
+participants must agree on exactly the same script and commitment.
+
+[Descriptors](../Descriptors/README.md) and
+[vaults](../../WalletCore/Wallet/README.md) consume this BitcoinCore code.
+The directory is an organizational boundary, not another runtime layer.
+
+[BIP341 tests](../../../Tests/BitcoinCoreTests/BIP341Tests.swift) cover commitments
+and signatures; [BIP387](../../../Tests/BitcoinCoreTests/BIP387Tests.swift) and
+[BIP390 tests](../../../Tests/BitcoinCoreTests/BIP390Tests.swift) cover script policies.
+[Vault interop tests](../../../Tests/DifferentialTests/VaultInteropDiffTests.swift)
+exercise shared spending with Bitcoin Core.

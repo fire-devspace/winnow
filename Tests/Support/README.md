@@ -1,7 +1,9 @@
+[Back to main README](../../README.md)
+
 # TestSupport
 
 One fixture library for every test target: the SwiftPM suites
-(`BitcoinCoreTests`, `BitcoinP2PTests`, `WalletCoreTests`, `DifferentialTests`)
+(`BitcoinCoreTests`, `WalletCoreTests`, `DifferentialTests`)
 and the Xcode bundles (`WinnowAppTests`, `WinnowAppUITests`) all link the
 `TestSupport` product declared in `Package.swift`, so a helper is written once
 and imported with `import TestSupport`.
@@ -23,6 +25,7 @@ configuration and under Xcode.
 
 | File | Contents |
 | --- | --- |
+| `InMemoryKeyStore.swift` | Test-only secret storage, outside the production Keychain implementation |
 | `Vectors.swift` | `Vectors.data/string/json/decode` (each target passes its own `Bundle.module`), `VectorError`, `ttTags`, the shared BIP158 and BIP387/BIP390 vector loaders |
 | `TempFiles.swift` | `TempDir` (removed on deinit) and `tempFileURL(_:)` under one per-process root |
 | `SeededRandom.swift` | `SeededRandom` (SplitMix64) with the `int`/`count`/`below`/`pick`/`bytes` draws |
@@ -37,3 +40,7 @@ Helpers that only one target can use stay in that target: `blockOutputScripts`
 in `BitcoinCoreTests/TestHelpers.swift`, the PSBT v0 envelope conversion and
 `diffEnabled` in `DifferentialTests/TestSupport.swift`, and anything that
 conforms to an app protocol (`SilentAuthenticator`) in `AppTests/TestSupport.swift`.
+
+These helpers support [wallet tests](../WalletCoreTests/README.md),
+[Core comparisons](../DifferentialTests/README.md), and [GUI journeys](../../UITests/README.md).
+Run their consuming suites to validate changes; fixture code alone makes no assertions.

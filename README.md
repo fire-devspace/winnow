@@ -35,17 +35,40 @@ The homepage and [Advanced page](https://winnowwallet.com/advanced) are generate
 from docs/journeys.json and the app test source; run scripts/build-site after
 changing either. CI rejects missing or undocumented app scenarios.
 
-| Path | Purpose |
-| --- | --- |
-| `Sources/WinnowApp` | iOS app (SwiftUI, iOS 17+) |
-| Other `Sources/` targets | Bitcoin libraries and offline CLI |
-| `Tests/` | BIP vectors, unit, loopback and Core differential tests |
-| `Tests/Support` | `TestSupport`: fixtures, loopback harness, miner and RPC helpers shared by every test target |
-| `AppTests/` | App state, privacy, journal redaction and iOS Keychain attributes |
-| `UITests/` | Simulator journeys and their screenshots |
-| `Tools/Fuzz/`, `Tools/Generate/`, `Tools/Debug/` | Local development tools, outside the shipping app |
-| `docs/` | Website, design papers and security evidence |
-| `scripts/`, `infra/` | Build, release, reporting and dedicated test fixtures |
+## Directory guides
+
+Each guide explains what its directory owns, why the app or debugging needs it,
+and which consumers and tests support that purpose. Every guide links back here.
+When adding an owned directory with code, data, or documentation, add its README
+and index link together. Parent folders with their own files need a guide too;
+asset catalogs are documented by their owner, outside the bundle.
+
+### App and Bitcoin rules
+
+- App and inspection: [iPhone app](Sources/WinnowApp/README.md), [offline CLI](Sources/BtcSwiftCLI/README.md).
+- BitcoinCore: [crypto/encodings](Sources/BitcoinCore/Crypto/README.md), [descriptors](Sources/BitcoinCore/Descriptors/README.md), [key derivation](Sources/BitcoinCore/Keys/README.md), [scripts](Sources/BitcoinCore/Script/README.md).
+- WalletCore: [secret storage](Sources/WalletCore/Keys/README.md), [PSBTs](Sources/WalletCore/PSBT/README.md), [transactions](Sources/WalletCore/Transactions/README.md), [wallet policy](Sources/WalletCore/Wallet/README.md).
+- Network synchronization: [filters](Sources/WalletCore/Network/Filters/README.md), [headers](Sources/WalletCore/Network/Headers/README.md), [peer selection](Sources/WalletCore/Network/Peers/README.md).
+- Network communication: [relay](Sources/WalletCore/Network/Broadcast/README.md), [mempool](Sources/WalletCore/Network/Mempool/README.md), [wire formats](Sources/WalletCore/Network/Protocol/README.md), [transport](Sources/WalletCore/Network/Transport/README.md).
+
+### Tests and reference data
+
+- User experience: [app decisions](AppTests/README.md), [GUI journeys](UITests/README.md).
+- Rules and interoperability: [Bitcoin primitives](Tests/BitcoinCoreTests/README.md), [wallet rules](Tests/WalletCoreTests/README.md), [network cases](Tests/WalletCoreTests/Network/README.md), [Core comparisons](Tests/DifferentialTests/README.md).
+- Shared fixtures: [TestSupport](Tests/Support/README.md), [real nodes](Tests/Support/Node/README.md), [controlled peers](Tests/Support/P2P/README.md).
+- Reference data: [Bitcoin vectors](Tests/BitcoinCoreTests/Vectors/README.md), [MuSig2 vectors](Tests/BitcoinCoreTests/Vectors/bip327/README.md), [wallet/network vectors](Tests/WalletCoreTests/Vectors/README.md).
+- Development tools: [tool tests](Tests/ToolsTests/README.md), [filter regressions](Tests/ToolsTests/Cases/filter/README.md), [PSBT regressions](Tests/ToolsTests/Cases/psbt/README.md).
+
+### Debugging and fuzzing
+
+- GUI/network debugging: [runbook](Tools/Debug/README.md), [implementation](Tools/Debug/Sources/WinnowDebug/README.md), [release-data generators](Tools/Generate/README.md).
+- Fuzzing: [runbook](Tools/Fuzz/README.md), [executable](Tools/Fuzz/Sources/WinnowFuzz/README.md), [shared invariants](Tools/Fuzz/Sources/WinnowFuzzCore/README.md).
+
+### Website and repository operations
+
+- Website: [pages and generation](docs/README.md), [selected screenshots](docs/screenshots/README.md).
+- Security: [reports and claims](docs/security/README.md), [retained soak evidence](docs/security/evidence/README.md).
+- Operations: [public contributor runbooks](.github/internal/README.md), [workflows](.github/workflows/README.md), [scripts](scripts/README.md), [tooling regressions](scripts/tests/README.md).
 
 ## Build & test
 

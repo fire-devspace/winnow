@@ -1,0 +1,17 @@
+[Back to main README](../../../README.md)
+
+# Shared transaction signing
+
+PSBT parsing and signing roles carry partially signed transactions between the
+wallet and other signers. They support imported signing requests, shared savings,
+and the Advanced PSBT workflow without requiring a coordination server.
+
+[Transaction construction](../Transactions/README.md),
+[vault policy](../Wallet/README.md), and
+[app signing screens](../../WinnowApp/README.md) consume these types.
+
+[PSBT tests](../../../Tests/WalletCoreTests/PSBTTests.swift) cover parsing, combination,
+and finalization; [Core comparisons](../../../Tests/DifferentialTests/TransactionAndPSBTDiffTests.swift)
+check interoperability. [Fuzz regressions](../../../Tests/ToolsTests/Cases/psbt/README.md)
+keep a previously problematic encoding in the ordinary test run.
+Accepting a PSBT does not itself authorize its payment outputs; the app reviews those.

@@ -19,30 +19,48 @@ let package = Package(
     targets: [
         .target(
             name: "BitcoinCore",
-            dependencies: [.product(name: "P256K", package: "swift-secp256k1")]
+            dependencies: [.product(name: "P256K", package: "swift-secp256k1")],
+            exclude: ["Crypto/README.md", "Descriptors/README.md", "Keys/README.md", "Script/README.md"]
         ),
         .target(
             name: "WalletCore",
-            dependencies: ["BitcoinCore"]
+            dependencies: ["BitcoinCore"],
+            exclude: [
+                "Keys/README.md",
+                "Network/Broadcast/README.md",
+                "Network/Filters/README.md",
+                "Network/Headers/README.md",
+                "Network/Mempool/README.md",
+                "Network/Peers/README.md",
+                "Network/Protocol/README.md",
+                "Network/Transport/README.md",
+                "PSBT/README.md",
+                "Transactions/README.md",
+                "Wallet/README.md",
+            ]
         ),
         .executableTarget(
             name: "BtcSwiftCLI",
-            dependencies: ["BitcoinCore", "WalletCore"]
+            dependencies: ["BitcoinCore", "WalletCore"],
+            exclude: ["README.md"]
         ),
         .executableTarget(
             name: "WinnowDebug",
             dependencies: ["BitcoinCore", "WalletCore"],
-            path: "Tools/Debug/Sources/WinnowDebug"
+            path: "Tools/Debug/Sources/WinnowDebug",
+            exclude: ["README.md"]
         ),
         .target(
             name: "WinnowFuzzCore",
             dependencies: ["BitcoinCore", "WalletCore"],
-            path: "Tools/Fuzz/Sources/WinnowFuzzCore"
+            path: "Tools/Fuzz/Sources/WinnowFuzzCore",
+            exclude: ["README.md"]
         ),
         .executableTarget(
             name: "WinnowFuzz",
             dependencies: ["BitcoinCore", "WalletCore", "WinnowFuzzCore"],
-            path: "Tools/Fuzz/Sources/WinnowFuzz"
+            path: "Tools/Fuzz/Sources/WinnowFuzz",
+            exclude: ["README.md"]
         ),
         // Framework-agnostic fixtures (no Testing, no XCTest) so the
         // swift-testing targets below and the Xcode app test bundles share one
@@ -52,23 +70,26 @@ let package = Package(
             dependencies: ["BitcoinCore", "WalletCore",
                            .product(name: "P256K", package: "swift-secp256k1")],
             path: "Tests/Support",
-            exclude: ["README.md"]
+            exclude: ["Node/README.md", "P2P/README.md", "README.md"]
         ),
         .testTarget(
             name: "BitcoinCoreTests",
             // WalletCore supplies the shared wire/hex helpers.
             dependencies: ["BitcoinCore", "WalletCore", "TestSupport"],
+            exclude: ["README.md"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "WalletCoreTests",
             dependencies: ["WalletCore", "TestSupport"],
+            exclude: ["Network/README.md", "README.md"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "DifferentialTests",
             dependencies: ["BitcoinCore", "WalletCore", "TestSupport"],
-            path: "Tests/DifferentialTests"
+            path: "Tests/DifferentialTests",
+            exclude: ["README.md"]
         ),
         // The development tools, tested together: the debugging commands, the
         // release-path generators, and the fuzz crash corpus replayed out of
@@ -77,6 +98,7 @@ let package = Package(
         .testTarget(
             name: "ToolsTests",
             dependencies: ["WinnowDebug", "WinnowFuzzCore"],
+            exclude: ["README.md"],
             resources: [.copy("Cases")]
         ),
     ]

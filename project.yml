@@ -21,6 +21,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Sources/WinnowApp
+        excludes: ["README.md"]
       # Design papers, bundled so Settings can render them offline (the
       # esplora opt-in warning links the read-side paper). These are the same
       # files the website serves; site.css rides along so they keep their type.
@@ -74,6 +75,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: AppTests
+        excludes: ["README.md"]
     dependencies:
       - target: WinnowApp
       - package: Winnow
@@ -101,6 +103,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: UITests
+        excludes: ["README.md"]
     dependencies:
       - target: WinnowApp
       - package: Winnow
