@@ -22,7 +22,7 @@ same `PeerConnection` the app uses — whose handshake already refuses any peer
 not advertising NODE_COMPACT_FILTERS — keeps one peer per /16 (the pool's own
 `netblock` rule), drops peers more than `PeerPool.staleTipTolerance` behind
 the median reported tip, and rewrites
-`Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift`. The run fails
+`Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift`. The run fails
 rather than shipping fewer than `--floor` peers. Generation is deliberately
 not reproducible; keep the log as the release artifact.
 
@@ -34,7 +34,7 @@ claim in-process: a chain started from the derived checkpoint connects the
 next 2,000 real headers and must reach the same tip, height and cumulative
 work as the genesis-rooted chain; disagreement exits non-zero. `--vector-out`
 writes those 2,000 headers, one per line as hex, which is how
-`Tests/BitcoinP2PTests/Vectors/mainnet-headers-900001-902000.txt` is made and
+`Tests/WalletCoreTests/Vectors/mainnet-headers-900001-902000.txt` is made and
 how `HeaderChainTests` replays real headers past the checkpoint on every
 CI run. Deriving the chainwork itself still needs the full file, so that part
 remains release-time only.

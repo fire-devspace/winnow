@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 import P256K
-import WalletCore
 
 /// The library's scriptable face: offline primitives over the same public
 /// API the wallet uses, one subcommand per question. No network, no keys

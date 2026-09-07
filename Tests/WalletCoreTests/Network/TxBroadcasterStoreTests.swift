@@ -2,7 +2,7 @@ import BitcoinCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// The TxBroadcaster pending store: what is written, what is refused, what a
 /// failed write must not leave behind, and the confirmation tombstones a reorg

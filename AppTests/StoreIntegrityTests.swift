@@ -1,9 +1,8 @@
 @testable import WinnowApp
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 import TestSupport
-import WalletCore
 import XCTest
 
 /// What the app's persisted stores promise about their files.

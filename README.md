@@ -2,7 +2,7 @@
 
 A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one dependency.
 
-**[Early access on TestFlight](https://testflight.apple.com/join/83djpNE7)** — mainnet by default; signet is one Advanced-mode toggle away. The official beta is planned for 0.9; see the [release roadmap](https://winnowwallet.com/#roadmap).
+**[Early access on TestFlight](https://testflight.apple.com/join/83djpNE7)** — mainnet by default; signet is one Advanced-mode toggle away. The official beta is planned for 0.9; see the [release roadmap](https://winnowwallet.com/roadmap).
 
 - **Pure P2P by default.** The read side is BIP157/158 compact block filters served by full-node peers — no server ever learns your addresses. Bounded **mempool windows** (short full-relay subscriptions while the Receive or Send screen is open) give 0-conf payment detection and propagation tracking without any server. Design papers, framed around the phone: [design-paper index](.github/internal/design-papers.md).
 - **Taproot today.** Current receiving uses P2TR (BIP86), with no ECDSA signing path. The planned 0.7 P2WSH Safe is a separate, opt-in addition.
@@ -13,19 +13,10 @@ A private, opinionated, modern Bitcoin wallet for iOS — 100% Swift, one depend
 
 ## Release roadmap
 
-These are planned milestones, not shipped features or promised dates. Release readiness sets the schedule. The [website roadmap](https://winnowwallet.com/#roadmap) follows the same sequence.
-
-| Version | Milestone | Release scope |
-| --- | --- | --- |
-| **0.7** | **P2WSH Safe** | Add opt-in storage with fresh hidden public keys, private backup and restore, fresh change, exposure tracking, and a complete receive-and-withdraw flow using existing Bitcoin rules. |
-| **0.8** | **Stabilization** | Exercise interrupted sync, stale backups, withdrawals, fee bumps and reorgs; fix regressions and measure bandwidth, memory and battery use on supported iPhones. |
-| **0.9** | **Official beta** | Open a defined beta with documented recovery steps and known limitations, then validate everyday use through broader testing and feedback. |
-| **1.0** | **Release after security review** | Address release-blocking findings, recheck fixes, and publish the review scope, results and remaining limitations. Security review determines readiness. |
-| **2.0** | **Work on the next BIP options** | Begin research and prototypes for P2MR migration. Production use depends on the relevant activation, implementation and deployment work. |
-
-The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. Hiding a fresh public key protects parked coins against slow quantum key recovery while that key stays private. Withdrawal reveals the key and still needs to confirm before an attacker can recover it; this is not full post-quantum signing. Discovery reuses ordinary BIP157/158 filters.
-
-**P2MR ([BIP360](https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki))** is a draft consensus proposal. Mainnet use requires activation and wallet readiness; existing P2WSH Safes would migrate through an explicit, opt-in transaction. Merging a proposal does not activate it or upgrade existing outputs.
+The [public roadmap](https://winnowwallet.com/roadmap) keeps planned work
+separate from current features. Each milestone describes the user outcome,
+the journeys that must pass, and unresolved work. Milestones are targets,
+not shipped capabilities or promised dates.
 
 ## Layout
 
@@ -33,11 +24,16 @@ The app, Bitcoin implementation, CLI, fuzz harness, debugging tools and website
 live in this repository. The app and all development tools use one root
 Swift package and dependency lockfile. There is one release version and one source revision.
 
-Wallet, protocol and cryptographic logic stays in the library modules; the
-SwiftUI app remains a thin shell. The root `Winnow` package groups
-`BitcoinCore`, `BitcoinP2P`, and `WalletCore`, plus the offline `btc-swift` CLI,
-the `winnow-debug` operator tool, and the fuzz harness. Explorer links open an
-external website after a warning; there is no HTTP wallet backend.
+The app owns the user flows. Wallet state and P2P networking share WalletCore;
+BitcoinCore holds the cryptographic and descriptor primitives. The offline
+btc-swift CLI, winnow-debug operator tool and fuzz harness use those same
+implementations. Explorer links open an external website after a warning.
+
+The [testing and feature policy](docs/testing.md) ties supported features to
+actual app journeys and names the lower-level invariants worth keeping.
+The homepage and [Advanced page](https://winnowwallet.com/advanced) are generated
+from docs/journeys.json and the app test source; run scripts/build-site after
+changing either. CI rejects missing or undocumented app scenarios.
 
 | Path | Purpose |
 | --- | --- |
@@ -46,7 +42,7 @@ external website after a warning; there is no HTTP wallet backend.
 | `Tests/` | BIP vectors, unit, loopback and Core differential tests |
 | `Tests/Support` | `TestSupport`: fixtures, loopback harness, miner and RPC helpers shared by every test target |
 | `AppTests/` | App state, privacy, journal redaction and iOS Keychain attributes |
-| `UITests/` | Simulator journeys and storefront capture |
+| `UITests/` | Simulator journeys and their screenshots |
 | `Tools/Fuzz/`, `Tools/Generate/`, `Tools/Debug/` | Local development tools, outside the shipping app |
 | `docs/` | Website, design papers and security evidence |
 | `scripts/`, `infra/` | Build, release, reporting and dedicated test fixtures |
@@ -104,8 +100,9 @@ git lfs pull
 ```
 
 The website workflow fetches LFS objects before publishing. The node workflow
-writes new screenshots into its run artifacts. Capture tools continue writing PNGs
-to the same paths; Git stores pointers when the files are added.
+writes new screenshots into its run artifacts. Local test runs use fresh temporary
+directories. Select public images deliberately from a successful run; Git stores
+LFS pointers when those selected PNGs are added.
 
 ## License
 

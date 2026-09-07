@@ -8,7 +8,7 @@ import re
 tag = os.environ.get('RELEASE_TAG', '')
 if tag and not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
     raise SystemExit('expected a stable vMAJOR.MINOR.PATCH tag')
-text = pathlib.Path('Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift').read_text()
+text = pathlib.Path('Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift').read_text()
 match = re.search(r'^// Generation: ([^,]+),', text, re.M)
 if not match:
     raise SystemExit('fallback peers have no recorded generation date')

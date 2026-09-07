@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// Network constants against Bitcoin Core chainparams (v28.0), compact-target
 /// math against known values, and the genesis chainwork known-answer.

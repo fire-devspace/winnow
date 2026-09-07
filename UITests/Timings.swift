@@ -78,22 +78,14 @@ enum Timings {
         return environment["SIMULATOR_DEVICE_NAME"] ?? "iOS Simulator"
     }
 
-    /// Rewrites timings.json: this run's scenarios overlaid on the existing
-    /// file (partial runs keep the previous run's other scenarios), totals
-    /// recomputed.
+    /// Write only this process's observations. A partial run must never
+    /// relabel a previous run's scenarios with today's timestamp.
     private static func save() {
         lock.lock()
         let fresh = stepsByScenario
         lock.unlock()
 
-        var byName: [String: Scenario] = [:]
-        if let data = try? Data(contentsOf: reportURL),
-           let existing = try? JSONDecoder().decode(Report.self, from: data) {
-            for scenario in existing.scenarios { byName[scenario.name] = scenario }
-        }
-        for (name, steps) in fresh { byName[name] = Scenario(name: name, steps: steps) }
-
-        let scenarios = byName.values.sorted {
+        let scenarios = fresh.map { Scenario(name: $0.key, steps: $0.value) }.sorted {
             let order = scenarioOrder
             switch (order.firstIndex(of: $0.name), order.firstIndex(of: $1.name)) {
             case let (a?, b?): return a < b

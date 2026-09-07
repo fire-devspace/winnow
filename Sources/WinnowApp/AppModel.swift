@@ -1,10 +1,9 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 import LocalAuthentication
 import SwiftUI
 import UIKit
-import WalletCore
 
 @MainActor
 protocol DeviceAuthenticating {
@@ -849,6 +848,30 @@ final class AppModel {
         await refresh()
     }
 
+    /// Keep replaced originals beside the payment that superseded them.
+    /// The whole group follows its final transaction from pending to confirmed.
+    static func historyForDisplay(_ history: [HistoryEntry]) -> [HistoryEntry] {
+        let positions = Dictionary(history.enumerated().map { ($0.element.txid, $0.offset) },
+                                   uniquingKeysWith: { _, last in last })
+        let ranked = history.enumerated().map { index, entry in
+            var current = index
+            var visited = Set<Int>()
+            while let replacement = history[current].replacedBy,
+                  let next = positions[replacement],
+                  visited.insert(current).inserted {
+                current = next
+            }
+            let final = history[current]
+            let block = final.height == 0 && final.replacedBy == nil ? UInt32.max : final.height
+            return (entry: entry, block: block, group: current, distance: visited.count)
+        }
+        return ranked.sorted {
+            if $0.block != $1.block { return $0.block > $1.block }
+            if $0.group != $1.group { return $0.group > $1.group }
+            return $0.distance < $1.distance
+        }.map(\.entry)
+    }
+
     /// Rebuilds the UI-facing snapshot from the actors.
     func refresh() async {
         var snapshot = Status()
@@ -856,14 +879,7 @@ final class AppModel {
             snapshot.balance = await wallet.balance
             let utxos = await wallet.utxos
             snapshot.utxoCount = utxos.count
-            // Active pending entries first, then newest blocks, with replaced
-            // height-0 originals last instead of pinning them as pending.
-            snapshot.history = await wallet.history.sorted {
-                let lhsPending = $0.height == 0 && $0.replacedBy == nil
-                let rhsPending = $1.height == 0 && $1.replacedBy == nil
-                if lhsPending != rhsPending { return lhsPending }
-                return $0.height > $1.height
-            }
+            snapshot.history = Self.historyForDisplay(await wallet.history)
             snapshot.feeBumpableTxids = await wallet.feeBumpableTxids
             snapshot.observedFeeRates = await wallet.observedFeeRates
             snapshot.nextScanHeight = await wallet.nextScanHeight

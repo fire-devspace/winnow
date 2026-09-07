@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// Signer/combiner/finalizer roles for vault spends (BIP370/371/373).
 ///

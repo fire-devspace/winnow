@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 
 public enum WalletError: Error, Equatable, LocalizedError {
@@ -770,21 +769,9 @@ public actor Wallet {
 
     // MARK: - Scanning
 
-    /// Forward-only filter scan (docs/read-side.md §2.5): matched blocks are
-    /// applied to the UTXO set and history; the scan position mirrors into the
-    /// persisted state afterwards.
-    public func scan(using sync: FilterSync) async throws {
-        let scripts = try watchScripts()
-        try await sync.sync(watchScripts: scripts) { match in
-            try await self.apply(match: match)
-        }
-        try recordScanHeight(await sync.nextScanHeight)
-    }
-
     /// Mirrors FilterSync's frontier into persisted wallet state.
     ///
-    /// `apply(match:)` does not move `nextScanHeight` — only this call (or
-    /// `scan(using:)`, which ends in it) does. The live app drives FilterSync
+    /// `apply(match:)` does not move `nextScanHeight` — only this call does. The live app drives FilterSync
     /// directly and must record after each pass, or `exportBundle()` will
     /// emit the creation/import height while the UI shows the filter actor.
     public func recordScanHeight(_ nextScanHeight: UInt32) throws {
@@ -1208,20 +1195,6 @@ public actor Wallet {
             changeOutputIndex: prepared.changeOutputIndex, fee: prepared.fee))
         try persist(updated)
         state = updated
-    }
-
-    /// Convenience: build, sign and immediately commit, with no external
-    /// broadcast step in between. Prefer `buildSend` → broadcast → `commit`
-    /// wherever a broadcaster exists, so a failed broadcast rolls back cleanly.
-    @discardableResult
-    public func send(payments: [Payment], feeRateSatPerVByte: Double,
-                     chainTip: UInt32,
-                     randomness: @Sendable () -> Double = { Double.random(in: 0 ..< 1) }
-    ) throws -> BuiltTransaction {
-        let prepared = try buildSend(payments: payments, feeRateSatPerVByte: feeRateSatPerVByte,
-                                     chainTip: chainTip, randomness: randomness)
-        try commit(prepared)
-        return prepared.built
     }
 
     // MARK: - Fee bumping

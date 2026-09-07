@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roadmap — Winnow</title>
+<meta name="description" content="Winnow's planned milestones, the user journeys each must complete, and the evidence required before release.">
+<link rel="canonical" href="https://winnowwallet.com/roadmap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="topbar"><div class="bar">
+  <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
+  <nav class="links" aria-label="Main"><a href="/">The wallet</a><a href="/architecture">How it works</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
+</div></header>
+<main>
+  <h1>Roadmap</h1>
+  <p class="lede">What we want to make possible, and what must work before we call it ready.</p>
+  <p>These are planned milestones, not shipped features or promised dates. The <a href="/">wallet page</a> describes current behavior. <a href="https://testflight.apple.com/join/83djpNE7">Early access</a> is available while this work continues.</p>
+
+  <section id="now">
+    <h2>Now · A smaller, testable product</h2>
+    <p><strong>What you gain:</strong> the same supported wallet journeys with fewer alternate paths and clearer documentation.</p>
+    <p><strong>Must pass:</strong> the real app creates a wallet, receives a payment, reviews and sends it, restores a backup, pays a person, and coordinates shared savings. Advanced features have their own documented journeys. Public feature descriptions and screenshots point to those tests.</p>
+    <p><strong>Still to resolve:</strong> which boundaries, convenience APIs, duplicate tests, and undocumented features can be removed. Keep focused checks for cryptography, hostile inputs, and recovery failures that a successful screen flow cannot establish.</p>
+  </section>
+
+  <section id="safe">
+    <h2>0.7 · An optional P2WSH Safe</h2>
+    <p><strong>What you gain:</strong> a separate, opt-in storage choice, explained under Advanced.</p>
+    <p><strong>Must pass:</strong> create → receive → back up → restore on another installation → review and withdraw. The journey must exercise fresh change, exposure tracking, and refusal of damaged or incomplete backups.</p>
+    <p><strong>Still to resolve:</strong> implementation and review of the <a href="https://github.com/winnowwallet/winnow/issues/6">Safe design and release criteria</a>. Its limitations must be visible before funding. This milestone does not promise full post-quantum signing.</p>
+  </section>
+
+  <section id="reliability">
+    <h2>0.8 · Reliability through interruptions</h2>
+    <p><strong>What you gain:</strong> understandable recovery when the connection, app, or device interrupts a payment or sync.</p>
+    <p><strong>Must pass:</strong> restart during sync, disconnect during sending, reopen a pending payment, increase its fee, restore a stale backup, switch networks, and recover after a chain reorganization. The screen, persisted wallet, and peer-observed transaction must agree.</p>
+    <p><strong>Still to resolve:</strong> regressions found by those journeys and measured bandwidth, memory, and battery use on supported iPhones.</p>
+  </section>
+
+  <section id="beta">
+    <h2>0.9 · A broader beta</h2>
+    <p><strong>What you gain:</strong> a defined feature set with usable recovery instructions and clearly stated limitations.</p>
+    <p><strong>Must pass:</strong> new users complete everyday journeys and recovery using the published instructions. Feedback has a reproducible app scenario; critical regressions become tests of that scenario.</p>
+    <p><strong>Still to resolve:</strong> the beta's supported devices, release blockers, and findings from broader use.</p>
+  </section>
+
+  <section id="review">
+    <h2>1.0 · A reviewed release</h2>
+    <p><strong>What you gain:</strong> a release whose review scope, evidence, and remaining limitations you can inspect.</p>
+    <p><strong>Must pass:</strong> an independent security review, resolution of release-blocking findings, and verification of fixes against the intended release. Publish the exact reviewed revision and the journeys exercised.</p>
+    <p><strong>Still to resolve:</strong> review findings and release readiness. A version target is not a security conclusion.</p>
+  </section>
+
+  <section id="research">
+    <h2>2.0 direction · Research</h2>
+    <p><strong>Potential user outcome:</strong> an explicit, opt-in migration path when future Bitcoin capabilities are ready.</p>
+    <p><strong>Before this becomes a release plan:</strong> establish the relevant network rules, interoperability, recovery behavior, and a complete migration journey. Research and prototypes do not count as shipping support.</p>
+    <p><strong>Open work:</strong> the <a href="https://github.com/winnowwallet/winnow/issues/10">P2MR investigation</a> and other <a href="https://github.com/winnowwallet/winnow/issues/7">roadmap proposals</a>. No deployment date or automatic upgrade is implied.</p>
+  </section>
+</main>
+<footer><div class="bar"><a href="/">Winnow</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/winnowwallet/winnow">Source and issues</a></div></footer>
+</body>
+</html>

@@ -1,9 +1,8 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 import Testing
 import TestSupport
-import WalletCore
 
 /// The whole pipeline against the dev node over real P2P with custom-signet
 /// params: mine a funding block to a Winnow address → bury it under 100
@@ -70,7 +69,13 @@ struct FullLoopDiffTests {
         let sync = try FilterSync(pool: pool, chain: chain, startHeight: startTip,
                                   storageURL: tempFileURL("filters.json"),
                                   requiredCheckpointPeers: 1)
-        try await wallet.scan(using: sync)
+        func scanWallet() async throws {
+            try await sync.sync(watchScripts: wallet.watchScripts()) { match in
+                _ = try await wallet.apply(match: match)
+            }
+            try await wallet.recordScanHeight(sync.nextScanHeight)
+        }
+        try await scanWallet()
         trace("first scan done")
         let fundingUTXO = try await #require(wallet.utxos.first, "filter match found no funding UTXO")
         // A coinbase pays the subsidy plus that block's fees, and this fixture
@@ -96,9 +101,10 @@ struct FullLoopDiffTests {
         // anti-fee-sniping locktime is acceptable to Core's mempool policy
         // rather than merely to our builder (#139): step 5 below puts this very
         // transaction through `testmempoolaccept`.
-        let original = try await wallet.send(
+        let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 100_000, address: throwaway, network: .signet)],
             feeRateSatPerVByte: 1, chainTip: tip, randomness: { 0.5 })
+        let original = prepared.built
         #expect(original.transaction.locktime == tip, "the send is stamped with the node's tip")
         let rawHex = original.transaction.serialized(includeWitness: true).hex
         trace("spend signed")
@@ -115,6 +121,7 @@ struct FullLoopDiffTests {
         // 6. Relay via our TxBroadcaster (inv → node's getdata → tx).
         let broadcaster = try TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(5))
         let originalTxid = try await broadcaster.broadcast(Data(hex: rawHex)!)
+        try await wallet.commit(prepared)
         var inMempool = false
         for _ in 0 ..< 15 {
             if (try? BitcoinCLI.runObject(["getmempoolentry", originalTxid.displayHex])) != nil {
@@ -165,7 +172,7 @@ struct FullLoopDiffTests {
         var confirmed = false
         for _ in 0 ..< 6 {
             _ = try await SignetMiner.mineBlock(payingTo: burnScript)
-            try await wallet.scan(using: sync)
+            try await scanWallet()
             if await wallet.history.first(where: {
                 $0.txid == replacementTxid && $0.height > 0
             }) != nil {

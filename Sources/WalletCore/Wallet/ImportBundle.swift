@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 
 /// Collects MatchEffects from FilterSync's @Sendable callback.

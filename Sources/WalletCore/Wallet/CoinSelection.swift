@@ -1,4 +1,3 @@
-import BitcoinP2P
 import Foundation
 
 public enum CoinSelectionError: Error, Equatable {

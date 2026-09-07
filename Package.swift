@@ -6,7 +6,6 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "BitcoinCore", targets: ["BitcoinCore"]),
-        .library(name: "BitcoinP2P", targets: ["BitcoinP2P"]),
         .library(name: "WalletCore", targets: ["WalletCore"]),
         // Test fixtures shared by every test target, SwiftPM and Xcode alike.
         .library(name: "TestSupport", targets: ["TestSupport"]),
@@ -23,30 +22,26 @@ let package = Package(
             dependencies: [.product(name: "P256K", package: "swift-secp256k1")]
         ),
         .target(
-            name: "BitcoinP2P",
-            dependencies: ["BitcoinCore"]
-        ),
-        .target(
             name: "WalletCore",
-            dependencies: ["BitcoinCore", "BitcoinP2P"]
+            dependencies: ["BitcoinCore"]
         ),
         .executableTarget(
             name: "BtcSwiftCLI",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"]
+            dependencies: ["BitcoinCore", "WalletCore"]
         ),
         .executableTarget(
             name: "WinnowDebug",
-            dependencies: ["BitcoinCore", "BitcoinP2P"],
+            dependencies: ["BitcoinCore", "WalletCore"],
             path: "Tools/Debug/Sources/WinnowDebug"
         ),
         .target(
             name: "WinnowFuzzCore",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"],
+            dependencies: ["BitcoinCore", "WalletCore"],
             path: "Tools/Fuzz/Sources/WinnowFuzzCore"
         ),
         .executableTarget(
             name: "WinnowFuzz",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WinnowFuzzCore"],
+            dependencies: ["BitcoinCore", "WalletCore", "WinnowFuzzCore"],
             path: "Tools/Fuzz/Sources/WinnowFuzz"
         ),
         // Framework-agnostic fixtures (no Testing, no XCTest) so the
@@ -54,30 +49,25 @@ let package = Package(
         // implementation. P256K: the signet miner signs block challenges.
         .target(
             name: "TestSupport",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore",
+            dependencies: ["BitcoinCore", "WalletCore",
                            .product(name: "P256K", package: "swift-secp256k1")],
             path: "Tests/Support",
             exclude: ["README.md"]
         ),
         .testTarget(
             name: "BitcoinCoreTests",
-            // BitcoinP2P only for its public `Data(hex:)` / `.hex` helpers.
-            dependencies: ["BitcoinCore", "BitcoinP2P", "TestSupport"],
-            resources: [.copy("Vectors")]
-        ),
-        .testTarget(
-            name: "BitcoinP2PTests",
-            dependencies: ["BitcoinP2P", "BitcoinCore", "TestSupport"],
+            // WalletCore supplies the shared wire/hex helpers.
+            dependencies: ["BitcoinCore", "WalletCore", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "WalletCoreTests",
-            dependencies: ["WalletCore", "BitcoinP2P", "TestSupport"],
+            dependencies: ["WalletCore", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
         .testTarget(
             name: "DifferentialTests",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore", "TestSupport"],
+            dependencies: ["BitcoinCore", "WalletCore", "TestSupport"],
             path: "Tests/DifferentialTests"
         ),
         // The development tools, tested together: the debugging commands, the

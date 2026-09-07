@@ -1,0 +1,163 @@
+[
+  {
+    "id": "setup",
+    "section": "everyday",
+    "title": "Create a wallet and finish its backup",
+    "description": "Create keys on the phone, write down the recovery phrase, and resume an unfinished backup after reopening the app.",
+    "journey": [
+      "Create the wallet before network sync finishes.",
+      "Complete the backup; reopen and reveal it only through the protected flow."
+    ],
+    "tests": [
+      "test01OnboardingCreateWallet",
+      "test09BackupResumeAndReveal"
+    ],
+    "image": "01-onboarding",
+    "limitations": "A recovery phrase alone does not reconstruct this wallet’s historical scan. Keep the history-carrying backup too."
+  },
+  {
+    "id": "receive",
+    "section": "everyday",
+    "title": "Receive and recognize a payment",
+    "description": "Show a fresh address and QR code. While Receive is open, peer-relayed payments appear as unconfirmed; confirmed payments enter the wallet’s history.",
+    "journey": [
+      "Mine a payment and find it through compact filters.",
+      "Receive a normal transaction before mining it, then observe its confirmation in the app."
+    ],
+    "tests": [
+      "test02ReceiveAndFunding",
+      "test14IncomingPaymentBeforeConfirmation"
+    ],
+    "image": "03-receive"
+  },
+  {
+    "id": "send",
+    "section": "everyday",
+    "title": "Review, send, and follow confirmation",
+    "description": "Enter a destination and amount, review the fee and change, then authorize the payment. Follow it from relay to confirmation.",
+    "journey": [
+      "Fill the actual send form and review the transaction.",
+      "Check that the node received the payment and the app later shows it confirmed."
+    ],
+    "tests": [
+      "test03Send"
+    ],
+    "image": "06-send-review"
+  },
+  {
+    "id": "people",
+    "section": "everyday",
+    "title": "Pay a person",
+    "description": "Add a person’s public card and pay them using a fresh address derived from their account key.",
+    "journey": [
+      "Import a card and choose the person from the app.",
+      "Review and send the payment; verify the destination and next-address behavior."
+    ],
+    "tests": [
+      "test10PeopleAddAndPay"
+    ],
+    "image": "24-people"
+  },
+  {
+    "id": "savings",
+    "section": "everyday",
+    "title": "Hold savings together",
+    "description": "Choose co-owners and an approval threshold. Share the savings policy and ask the other owners to approve a proposed payment.",
+    "journey": [
+      "Create shared savings from people’s signer keys.",
+      "Fund it, prepare a spend, and export an approval request."
+    ],
+    "tests": [
+      "test12SharedSavingsCreateAndAsk"
+    ],
+    "image": "27-ask-approval",
+    "limitations": "Co-owners must preserve their own keys and the shared policy. The approval threshold determines who must participate."
+  },
+  {
+    "id": "recovery",
+    "section": "everyday",
+    "title": "Export and restore a wallet",
+    "description": "Export a history-carrying bundle and verify it when importing. Secret-bearing exports require an explicit protected action.",
+    "journey": [
+      "Export watch-only and secret-bearing bundles through their distinct controls.",
+      "Import a funded bundle and check its verification report and wallet state."
+    ],
+    "tests": [
+      "test06ImportBundleVerification",
+      "test08ExportBundle"
+    ],
+    "limitations": "Recovery is forward verification from the bundle’s saved history, not a historical rescan from twelve words."
+  },
+  {
+    "id": "controls",
+    "section": "everyday",
+    "title": "Keep everyday controls simple",
+    "description": "Use Wallet, Send, People, and Settings without protocol controls crowding the normal flow. Turn on Advanced mode when those controls are useful.",
+    "journey": [
+      "Check the beginner navigation and hidden advanced controls.",
+      "Turn Advanced mode on and verify the controls become available."
+    ],
+    "tests": [
+      "test11BeginnerShellHidesAdvancedControls"
+    ],
+    "image": "23-settings-beginner"
+  },
+  {
+    "id": "vaults",
+    "section": "advanced",
+    "title": "Descriptors, vaults, and approvals",
+    "description": "Create a Taproot vault from public signer keys and coordinate approvals using PSBT text. Inspect the policy and reviewed transaction explicitly.",
+    "journey": [
+      "Create a vault through the advanced form.",
+      "Import an approval request, review it, and contribute the device’s signature."
+    ],
+    "tests": [
+      "test04VaultCreate",
+      "test07ApproveRequest"
+    ],
+    "image": "11-vault-list",
+    "guide": "/core-cosigner",
+    "limitations": "Bitcoin Core interoperability is separately tested for script-path vaults. MuSig2 exchanges with Core have a documented round-two compatibility gap; do not assume every external signer can complete them."
+  },
+  {
+    "id": "groups",
+    "section": "advanced",
+    "title": "Use a group as a vault cosigner",
+    "description": "Combine a group cosigner with a threshold vault, then complete the required approvals and broadcast the resulting spend.",
+    "journey": [
+      "Build and fund a vault containing the group’s synthetic key.",
+      "Complete its signing rounds and confirm the final spend through the app."
+    ],
+    "tests": [
+      "test13GroupCosignerVault"
+    ],
+    "limitations": "This requires the full group signing ceremony and its other vault approvals. Losing required participants can prevent spending."
+  },
+  {
+    "id": "fees",
+    "section": "advanced",
+    "title": "Replace a pending payment with a higher fee",
+    "description": "Review a replacement’s fee and change before authorizing it. The original remains visible as replaced.",
+    "journey": [
+      "Send a payment and leave it in the node’s mempool.",
+      "Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history."
+    ],
+    "tests": [
+      "test15ReviewAndReplacePendingPayment"
+    ]
+  },
+  {
+    "id": "network",
+    "section": "advanced",
+    "title": "Inspect peers and control external disclosure",
+    "description": "Inspect connected peers and network settings. Explorer links open only after an explicit warning about the information sent to that website.",
+    "journey": [
+      "Open the real peer settings.",
+      "Open an explorer warning and cancel before leaving the app."
+    ],
+    "tests": [
+      "test05SettingsPeersAndExplorerWarning"
+    ],
+    "limitations": "Explorer websites are not wallet backends. A single or coordinated set of peers can still withhold information; multiple connections are not proof of independent operators."
+  }
+]

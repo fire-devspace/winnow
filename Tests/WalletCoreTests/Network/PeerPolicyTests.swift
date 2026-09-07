@@ -2,7 +2,7 @@ import BitcoinCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// How the pool decides *which* peers to reach for, before any of them are
 /// dialled: the diversity ceilings, where seed addresses come from and which

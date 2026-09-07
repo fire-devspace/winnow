@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 import P256K
 import Testing
@@ -152,54 +151,6 @@ struct WalletTests {
         #expect(effect2.received.count == 1)
         #expect(await wallet.nextReceiveIndex == 4)
         #expect(await wallet.balance == 7_000)
-    }
-
-    @Test("send: coin selection → PSBT → signed tx whose witnesses verify")
-    func send() async throws {
-        // Two funding outputs: receive 0 and change 0 (received as change).
-        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100), (.change, 0, 80_000, 100)],
-                                                mature: false)
-        #expect(await wallet.balance == 230_000)
-        #expect(await wallet.nextChangeIndex == 1) // funding to change 0 advanced it
-        try await matureCoinbase(wallet, height: 101)
-
-        let destination = TestScripts.p2trDestination
-        let built = try await wallet.send(payments: [Payment(amount: 100_000, scriptPubKey: destination)],
-                                          feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
-        let tx = built.transaction
-        #expect(tx.isSegwit)
-        #expect(built.changeAmount != nil) // largest-first picks the 150k UTXO
-        #expect(tx.inputs.count == 1)
-        #expect(built.fee == 150_000 - 100_000 - built.changeAmount!)
-
-        // Every witness verifies cryptographically against the spent scriptPubKey.
-        let spentScript = try await wallet.scriptPubKey(chain: .receive, index: 0)
-        let spent = [SighashBIP341.SpentOutput(amount: 150_000, scriptPubKey: spentScript)]
-        for index in tx.inputs.indices {
-            let sighash = try SighashBIP341.sighash(tx: tx, inputIndex: index, spentOutputs: spent)
-            let outputKey = P256K.Schnorr.XonlyKey(dataRepresentation: spentScript.suffix(32))
-            let signature = try P256K.Schnorr.SchnorrSignature(dataRepresentation: tx.inputs[index].witness[0])
-            var message = [UInt8](sighash)
-            #expect(outputKey.isValid(signature, for: &message), "input \(index) must verify")
-        }
-
-        // The selection is committed locally: the spent UTXO is gone, the
-        // change output is pending (height 0), the send is in history.
-        let changeScript = try await wallet.scriptPubKey(chain: .change, index: 1)
-        #expect(tx.outputs.contains { $0.scriptPubKey == changeScript })
-        #expect(await wallet.utxos.count == 2) // 80k untouched + pending change
-        #expect(await wallet.balance == 80_000 + built.changeAmount!)
-        let sendEntry = try await #require(wallet.history.first { $0.txid == tx.txid })
-        #expect(sendEntry.fee == built.fee)
-        #expect(sendEntry.height == 0) // unconfirmed
-
-        // When the send confirms in a matched block, heights update in place.
-        let confirmation = try await wallet.apply(match: fakeMatch(height: 150, transactions: [tx]))
-        #expect(confirmation.received.isEmpty) // change was already counted
-        let history = await wallet.history
-        #expect(history.count == 3) // two funding entries + the send
-        #expect(history.first { $0.txid == tx.txid }?.height == 150)
-        #expect(await wallet.utxos.allSatisfy { $0.height > 0 })
     }
 
     @Test("coinbase outputs are credited immediately but not spendable until 100 confirmations")

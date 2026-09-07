@@ -110,7 +110,7 @@ final class WinnowAppUITests: XCTestCase {
     }
 
     // balanceText, nudgeSync and scrollUntilExists live in TestHelpers.swift,
-    // shared with the storefront capture.
+    // shared across the app journeys.
 
     // MARK: - 01 Onboarding
 
@@ -1347,4 +1347,85 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, exportButton, up: true),
                       "seed export sheet did not dismiss to Settings")
     }
+    func test14IncomingPaymentBeforeConfirmation() async throws {
+        let payer = "ui-incoming"
+        try BitcoinCLI.ensureWallet(payer)
+        let payout = try AddressDecoder.scriptPubKey(
+            for: BitcoinCLI.newAddress(wallet: payer), network: .signet)
+        for _ in 0 ..< 101 { try await SignetMiner.mineOntoTip(payingTo: payout) }
+
+        let app = launchApp()
+        app.buttons["receiveButton"].tap()
+        let field = app.staticTexts["receiveAddress"]
+        XCTAssertTrue(field.waitForExistence(timeout: 30))
+        let address = try XCTUnwrap(field.value as? String)
+        let txid = try BitcoinCLI.sendToAddress(
+            wallet: payer, address: address, sats: 50_000, feeRate: 2)
+        let pending = app.staticTexts["unconfirmedPayment"]
+        XCTAssertTrue(pending.waitForExistence(timeout: 120),
+                      "Receive did not show the peer-relayed payment before confirmation")
+        XCTAssertEqual(pending.label.filter(\.isNumber), "50000")
+        Screenshots.capture(app, "33-receive-unconfirmed", testCase: self)
+
+        try await SignetMiner.mineOntoTip(payingTo: payout)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(poll(timeout: 180, interval: 5, "receipt confirmed in the app") {
+            self.nudgeSync(app)
+            return app.staticTexts["transactionConfirmation-\(txid)"].exists
+        })
+        app.buttons["receiveButton"].tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 30))
+        XCTAssertFalse(pending.exists, "confirmed payment still shown as unconfirmed")
+        app.buttons["Done"].tap()
+    }
+
+    func test15ReviewAndReplacePendingPayment() async throws {
+        let app = launchApp(advanced: true)
+        app.tabBars.buttons["Send"].tap()
+        app.typeInto("amountField", "20000")
+        app.typeInto("destinationField", try Self.fixtureAddress(0xD5))
+        app.buttons["reviewButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["sendButton"], maxSwipes: 5))
+        let before = Set(try BitcoinCLI.mempoolTxids())
+        app.buttons["sendButton"].tap()
+        XCTAssertTrue(poll(timeout: 60, interval: 1, "original payment in Core mempool") {
+            ((try? Set(BitcoinCLI.mempoolTxids()).subtracting(before).isEmpty) ?? true) == false
+        })
+        let original = try XCTUnwrap(Set(try BitcoinCLI.mempoolTxids()).subtracting(before).first)
+
+        app.tabBars.buttons["Wallet"].tap()
+        let bump = app.buttons["bumpFeeButton"].firstMatch
+        XCTAssertTrue(bump.waitForExistence(timeout: 30))
+        bump.tap()
+        let rate = app.textFields["bumpFeeRateField"]
+        XCTAssertTrue(rate.waitForExistence(timeout: 30))
+        XCTAssertTrue(poll(timeout: 30, interval: 0.2, "suggested replacement fee loaded") {
+            Double((rate.value as? String) ?? "") != nil
+        })
+        app.buttons["reviewFeeBumpButton"].tap()
+        let confirm = app.buttons["confirmFeeBumpButton"]
+        XCTAssertTrue(scrollUntilExists(app, confirm, maxSwipes: 5))
+        Screenshots.capture(app, "34-fee-replacement-review", testCase: self)
+        confirm.tap()
+        XCTAssertTrue(app.buttons["copyReplacementTransactionIDButton"].waitForExistence(timeout: 60))
+        XCTAssertTrue(poll(timeout: 60, interval: 1, "replacement in Core mempool") {
+            guard let current = try? Set(BitcoinCLI.mempoolTxids()) else { return false }
+            return !current.contains(original) && !current.subtracting(before).isEmpty
+        })
+        let replacement = try XCTUnwrap(Set(try BitcoinCLI.mempoolTxids()).subtracting(before).first)
+        XCTAssertNotEqual(original, replacement)
+        app.buttons["Done"].tap()
+        let replaced = app.staticTexts["transactionReplaced-\(original)"]
+        XCTAssertTrue(scrollUntilExists(app, replaced, maxSwipes: 5),
+                      "the original payment was not marked replaced in history")
+        XCTAssertTrue(replaced.label.contains(String(replacement.prefix(8))))
+        let payout = try AddressDecoder.scriptPubKey(for: Self.fixtureAddress(0xD4), network: .signet)
+        try await SignetMiner.mineOntoTip(payingTo: payout)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["syncNowButton"], maxSwipes: 5, up: true))
+        XCTAssertTrue(poll(timeout: 180, interval: 5, "replacement confirmed in the app") {
+            self.nudgeSync(app)
+            return app.staticTexts["transactionConfirmation-\(replacement)"].exists
+        })
+    }
+
 }

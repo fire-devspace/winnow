@@ -1,3 +1,4 @@
+import TestSupport
 @testable import WinnowApp
 import WalletCore
 import XCTest

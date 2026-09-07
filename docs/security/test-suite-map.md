@@ -38,3 +38,16 @@ Historical `WinnowSoak` runs used the standalone executable. The same driver
 now runs as `swift run winnow-debug soak`; `winnow-generate` commands now use
 `swift run winnow-debug generate`. Neither command migration rewrites the
 recorded dates, measurements, or scope of historical evidence.
+
+## Wallet/network consolidation
+
+The current WalletCore target contains the former BitcoinP2P target.
+Its protocol tests now live in Tests/WalletCoreTests/Network and use the
+WalletCoreTests target; their suite names and assertions remain. Shared vector
+resources are in Tests/WalletCoreTests/Vectors. Historical audit records above
+keep the module and path names of the revision they describe.
+
+See ../testing.md for the current user-journey ownership policy. The obsolete
+one-shot Wallet.send test and staged StorefrontCaptureTests were retired;
+actual app receipt and fee-replacement journeys take their place. The Core
+full-loop checks still exercise consensus and replacement policy.

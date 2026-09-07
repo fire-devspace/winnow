@@ -2,33 +2,33 @@
 
 Winnow is one repository and one release train. The root Swift package organizes
 internal modules and development executables. The app, fuzz harness
-and story driver share one `Package.swift` and one `Package.resolved`; only
+and debugging tool share one `Package.swift` and one `Package.resolved`; only
 swift-secp256k1 is remote. Xcode resolution must match that root lockfile.
 
 ## Checks and ownership
 
 | Workflow | When | Responsibility |
 | --- | --- | --- |
-| CI | PR, main push, manual, release caller | Complexity, package tests, story tests, app/Keychain tests, release warning and E2E exclusion gates, CLI smoke, provenance, fixed fuzz corpus |
+| CI | PR, main push, manual, release caller | Complexity, package and debugging tests, app/Keychain tests, release warning and E2E exclusion gates, CLI smoke, provenance, fixed fuzz corpus |
 | LOC | Every PR, main push and manual run | cloc 2.10, committed paths, matching JSON/CSV/Markdown and merge-base deltas; 90-day artifacts subject to org limits |
 | Fuzz sanitizers | Weekly or manual seed replay | Sustained address/thread sanitizer coverage; does not repeat normal suites |
-| Node integration | Differential: same-repo PRs touching code, main pushes, nightly, release, confirmed manual run. UI: nightly, release, confirmed manual run (optional storefront capture) | Core differential tests and app UI tests, each on a fresh fixture owned by that job |
+| Node integration | Differential and UI: same-repo PRs touching code, main pushes, nightly, release, confirmed manual run | Core differential tests and app UI tests, each on a fresh fixture owned by that job |
 | Release | New stable version tag or manual validation | Calls CI and Node integration, then signs/uploads and publishes only for tag pushes |
 | TestFlight recovery | Manual, exact version and build number | Finish notes/group assignment for an existing upload |
 | App Store submission | Manual | Attach a processed build and optionally submit for review |
-| Website | docs changes or manual | Validate links/LFS, then deploy the same static docs tree |
+| Website | docs changes or manual | Validate generated journey pages, links and LFS, then deploy the same static docs tree |
 
 Hosted runners carry every PR check; the persistent Intel and node runners
 additionally take pull requests from branches in this repository, never from
-forks. Node suites share the source in `Tests/NodeSupport` and run serially on
+forks. Node suites share the source in `Tests/Support/Node` and run serially on
 the single listener; they must never share a mining fixture with another
 concurrent run.
 Each job owns fixture setup and teardown under its temporary directory; prior
 wallet state and difficulty retargets cannot affect the next run.
 The three Keychain attribute checks use the app's existing iOS test host.
 They verify recorded attributes and round-trip storage; device-lock enforcement
-still needs real hardware. Public-signet story journeys and media review remain
-manual, outside ordinary CI.
+still needs real hardware. The retired story/media workflow has no CI role;
+app screenshots now come from the asserted UI journeys.
 
 ## Release
 

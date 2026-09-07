@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Release-path generators for two constants the app ships: the mainnet
@@ -57,7 +57,7 @@ enum WinnowGenerate {
       swift run winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
           Resolve the mainnet DNS seeds, dial candidates with the app's own
           PeerConnection, keep a /16-spread selection near the median tip and
-          rewrite Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift.
+          rewrite Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift.
 
       swift run winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
           Derive the mainnet checkpoint at H (default: the shipped height) from a

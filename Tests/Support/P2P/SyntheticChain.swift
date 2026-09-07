@@ -1,5 +1,5 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Regtest-style parameters: bits 0x207fffff gives a target near 2^255, so a

@@ -63,7 +63,7 @@ class ReportTests(unittest.TestCase):
             "docs/style.css": "body { color: black; }\n",
             "docs/app.js": "const value = 1;\n",
             "notes.unknown": "Unknown text\n\nMore text\n",
-            "Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift": "let generated = 1\n",
+            "Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift": "let generated = 1\n",
             "vendor/dependency.swift": "let dependency = 1\n",
             ".build/cache.swift": "let cache = 1\n",
             "docs/binary.png": b"\x89PNG\r\n\x1a\n\0binary",

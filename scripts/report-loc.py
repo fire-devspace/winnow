@@ -25,7 +25,7 @@ CATEGORIES = {
     "other": "Other text (nonblank lines)",
 }
 METRICS = ("files", "code", "comment", "blank", "nonblank", "lines", "source_loc")
-GENERATED = {"Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift"}
+GENERATED = {"Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift"}
 EXCLUDED_DIRS = {".build", ".swiftpm", "node_modules", "vendor", "vendored", "third_party", "build", "dist"}
 TEST_DIRS = {"Tests", "AppTests", "UITests", "PlatformTests", "Fuzz", "tests"}
 DATA_DIRS = {"vectors", "fixtures", "testdata", "corpus"}

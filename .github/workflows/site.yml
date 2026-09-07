@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['docs/**', 'scripts/check-site', '.github/workflows/site.yml']
+    paths: ['docs/**', 'scripts/check-site', 'scripts/build-site', 'UITests/**', '.github/workflows/site.yml']
   pull_request:
-    paths: ['docs/**', 'scripts/check-site', '.github/workflows/site.yml']
+    paths: ['docs/**', 'scripts/check-site', 'scripts/build-site', 'UITests/**', '.github/workflows/site.yml']
 
 permissions:
   contents: read
@@ -25,8 +25,10 @@ jobs:
         with:
           persist-credentials: false
           lfs: true
-      - name: Validate local links and LFS images
-        run: scripts/check-site
+      - name: Validate generated journeys, local links and LFS images
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_build_site.py
+          scripts/check-site
 
   deploy:
     needs: check

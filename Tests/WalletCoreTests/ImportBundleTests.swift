@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 import P256K
 import Testing
@@ -385,9 +384,11 @@ struct ImportBundleTests {
         let restored = try Wallet.importing(matureBundle, keyStore: InMemoryKeyStore())
         #expect(await restored.utxos.first?.isCoinbase == true)
         let destination = TestScripts.p2trDestination
-        let built = try await wallet.send(
+        let prepared = try await wallet.buildSend(
             payments: [Payment(amount: 50_000, scriptPubKey: destination)],
             feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        let built = prepared.built
         #expect(await wallet.utxos.contains(where: { $0.height == 0 }))
         do {
             _ = try await wallet.exportBundle()

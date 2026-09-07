@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Thread-safe sink for FilterSync matches, handed in as its `@Sendable`

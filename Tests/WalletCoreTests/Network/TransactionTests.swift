@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// Raw transaction and block parsing, incl. the genesis coinbase txid KAT.
 @Suite("Transactions & blocks")

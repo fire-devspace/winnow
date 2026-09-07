@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// The state of one shared-savings spend on this phone: the working PSBT,
 /// the review that says what it pays, who has approved so far, and the

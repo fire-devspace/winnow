@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 import P256K
 

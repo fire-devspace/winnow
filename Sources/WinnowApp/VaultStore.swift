@@ -1,7 +1,6 @@
 import BitcoinCore
-import BitcoinP2P
-import Foundation
 import WalletCore
+import Foundation
 
 /// Disambiguates the wire-format transaction from `SwiftUI.Transaction` in
 /// app files that import both SwiftUI and BitcoinP2P (the module name also

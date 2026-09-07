@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// The persisted header file, one suite for one file format.
 ///

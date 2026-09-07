@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
 

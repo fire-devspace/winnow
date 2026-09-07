@@ -1,7 +1,6 @@
-import BitcoinP2P
+import WalletCore
 import LocalAuthentication
 import SwiftUI
-import WalletCore
 
 /// Network, manual peers, warned external explorer links, chain-validation
 /// mode, and the live peer status list.
@@ -185,8 +184,6 @@ struct SettingsView: View {
                 Section("About") {
                     LabeledContent("Version", value: AppModel.appVersionText)
                     if model.advancedMode {
-                        LabeledContent("WalletCore", value: WalletCore.version)
-                        LabeledContent("BitcoinP2P", value: BitcoinP2P.version)
                         LabeledContent("Wallet ID", value: model.walletID ?? "—")
                     }
                     Button("Design papers") { showPapers = true }

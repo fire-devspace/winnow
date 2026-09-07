@@ -1,9 +1,8 @@
 @testable import WinnowApp
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import Foundation
 import Testing
-import WalletCore
 import XCTest
 
 /// The send review screen and the gate behind it.

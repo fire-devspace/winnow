@@ -2,8 +2,8 @@ name: Node integration
 
 # One disposable custom signet per run on the self-hosted seat. The Core
 # differential leg gates pull requests from branches in this repository and
-# runs on every push to main; the simulator UI leg runs nightly, on release,
-# and on confirmed manual dispatch. Forks never reach the seat. Mining suites
+# runs on every push to main; the same app journeys run on those revisions,
+# nightly, and on confirmed manual dispatch. Forks never reach the seat. Mining suites
 # stay serial: one listener per VM, one job at a time.
 on:
   pull_request:
@@ -18,20 +18,11 @@ on:
         required: true
         type: boolean
         default: false
-      capture_storefront:
-        description: Also capture the App Store screenshot set after the UI suite (adds ~20 min)
-        required: false
-        type: boolean
-        default: false
   workflow_call:
     inputs:
       confirm_dedicated_fixture:
         required: true
         type: boolean
-      capture_storefront:
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -144,8 +135,9 @@ jobs:
   ui:
     needs: changes
     if: >-
-      github.event_name == 'schedule'
-      || (inputs.confirm_dedicated_fixture && github.event_name != 'pull_request' && github.event_name != 'pull_request_target')
+      needs.changes.outputs.node == 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (contains('pull_request push schedule', github.event_name) || inputs.confirm_dedicated_fixture)
     runs-on: [self-hosted, macOS, btc-swift, node-e2e]
     timeout-minutes: 120
     steps:
@@ -193,8 +185,6 @@ jobs:
             echo "WINNOW_SCREENSHOT_DIR=$RUNNER_TEMP/node-screenshots"
           } > "$HOME/.winnow-node.env"
 
-      # The storefront capture class is excluded here so it is never a
-      # silent skip; the step below runs it on request.
       - name: App UI tests
         run: |
           set -o pipefail
@@ -203,16 +193,8 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/winnow-node-app" \
             -resultBundlePath "$RUNNER_TEMP/NodeUI.xcresult" \
             -only-testing:WinnowAppUITests \
-            -skip-testing:WinnowAppUITests/StorefrontCaptureTests \
             -skipPackagePluginValidation -skipMacroValidation \
             2>&1 | tee "$RUNNER_TEMP/node-ui.log"
-
-      - name: App Store screenshot capture
-        if: inputs.capture_storefront
-        run: |
-          set -o pipefail
-          WINNOW_DERIVED_DATA="$RUNNER_TEMP/winnow-node-app" scripts/storefront-capture \
-            2>&1 | tee "$RUNNER_TEMP/storefront.log"
 
       - name: Stop simulator miners and remove test configuration
         if: always()
@@ -235,7 +217,6 @@ jobs:
           name: node-ui-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/node-ui.log
-            ${{ runner.temp }}/storefront.log
             ${{ runner.temp }}/NodeUI.xcresult
             ${{ runner.temp }}/node-screenshots/
           if-no-files-found: error

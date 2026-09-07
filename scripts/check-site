@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Check static website links and require real screenshot data before publishing."""
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 root = Path(__file__).resolve().parent.parent / 'docs'
+subprocess.run([str(root.parent / 'scripts/build-site'), '--check'], check=True)
 errors = []
 
 class Page(HTMLParser):

@@ -1,7 +1,6 @@
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// Fresh BIP86 receive address with a QR. The address is peeked (not marked
 /// used) until a payment to it confirms or the user asks for a new one.

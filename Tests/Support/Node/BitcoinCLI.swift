@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Process-based `bitcoin-cli` runner for the dev custom-signet node

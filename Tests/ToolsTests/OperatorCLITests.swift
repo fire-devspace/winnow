@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 import Testing
 @testable import WinnowDebug

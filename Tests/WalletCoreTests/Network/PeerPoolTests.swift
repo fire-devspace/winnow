@@ -3,7 +3,7 @@ import Foundation
 import Network
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// The peer pool, by subject: which candidates it dials and how many it keeps,
 /// what a failing peer costs it, which seated peers it unseats, and the SOCKS

@@ -1,5 +1,5 @@
 @testable import WinnowApp
-import BitcoinP2P
+import WalletCore
 import Foundation
 import TestSupport
 

@@ -40,8 +40,6 @@ targets:
       - package: Winnow
         product: WalletCore
       - package: Winnow
-        product: BitcoinP2P
-      - package: Winnow
         product: BitcoinCore
     settings:
       base:
@@ -109,8 +107,6 @@ targets:
         product: TestSupport
       - package: Winnow
         product: BitcoinCore
-      - package: Winnow
-        product: BitcoinP2P
       - package: Winnow
         product: WalletCore
       - package: swift-secp256k1

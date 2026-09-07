@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 import Testing
 @testable import WinnowDebug
@@ -198,7 +198,7 @@ struct WinnowGenerateTests {
                                                   header: try BlockHeader.decode(shipped.header),
                                                   work: shipped.chainwork)
         let source = try String(
-            contentsOf: WinnowGenerate.packageRoot.appending(path: "Sources/BitcoinP2P/Protocol/NetworkParams.swift"),
+            contentsOf: WinnowGenerate.packageRoot.appending(path: "Sources/WalletCore/Network/Protocol/NetworkParams.swift"),
             encoding: .utf8)
         func trimmed(_ text: String) -> [String] {
             text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }

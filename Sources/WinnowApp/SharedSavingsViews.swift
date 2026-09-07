@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// Pick co-owners, choose how many must approve, name it, and then share
 /// the savings card before anything else: a co-owner's phone only notices

@@ -1,5 +1,5 @@
 import BitcoinCore
-@testable import BitcoinP2P
+@testable import WalletCore
 import Foundation
 import Testing
 import TestSupport

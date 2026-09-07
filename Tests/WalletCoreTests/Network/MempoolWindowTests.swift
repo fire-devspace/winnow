@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// MempoolWindow against loopback nodes (docs/read-side.md §2.8): the relay
 /// bit at connect time, inv dedupe across peers, watched-script matching,

@@ -1,8 +1,7 @@
 @testable import WinnowApp
-import BitcoinP2P
+import WalletCore
 import Foundation
 import TestSupport
-import WalletCore
 import XCTest
 
 /// The crash marker has to fail closed (#127).

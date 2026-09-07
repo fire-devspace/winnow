@@ -1,4 +1,3 @@
-import BitcoinP2P
 import Foundation
 
 /// Feerate resolution (docs/write-side.md §4; the read-side names the
@@ -56,4 +55,10 @@ extension PeerPool {
         guard let strictest = floors.max() else { return nil }
         return Double(strictest) / 1_000
     }
+}
+
+/// Consensus monetary range used at wallet authorization boundaries.
+public enum BitcoinAmount {
+    /// 21 million BTC in satoshis (`MAX_MONEY` in Bitcoin Core).
+    public static let maximum: Int64 = 2_100_000_000_000_000
 }

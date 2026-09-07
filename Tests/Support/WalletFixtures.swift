@@ -1,7 +1,6 @@
 import BitcoinCore
-import BitcoinP2P
-import Foundation
 import WalletCore
+import Foundation
 
 /// The well-known BIP39 all-"abandon" mnemonic's 16-byte entropy.
 public let testEntropy = Data(repeating: 0, count: 16)

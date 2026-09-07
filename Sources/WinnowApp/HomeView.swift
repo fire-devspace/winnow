@@ -1,7 +1,6 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 import SwiftUI
-import WalletCore
 
 /// Immutable identity of the fields that produced a fee-bump preview. A late
 /// async result is accepted only while this request still matches the form.
@@ -179,9 +178,10 @@ private struct HistoryRow: View {
                     Text("replaced by \(replacement.displayHex.prefix(8))…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("transactionReplaced")
+                        .accessibilityIdentifier("transactionReplaced-\(entry.txid.displayHex)")
                 } else if entry.height > 0 {
                     Text("block \(entry.height)")
+                        .accessibilityIdentifier("transactionConfirmation-\(entry.txid.displayHex)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

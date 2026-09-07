@@ -8,5 +8,5 @@ cd "$(git rev-parse --show-toplevel)"
 swift run --configuration release winnow-debug generate fallback-peers
 # The generator fails its own run on a thin list; this catches the other
 # silent failure, where nothing was written at all.
-git diff --stat -- Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift
+git diff --stat -- Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift
 swift test --filter PeerPolicyTests

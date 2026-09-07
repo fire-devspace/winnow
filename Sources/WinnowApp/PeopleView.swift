@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// The People tab: the address book, the savings shared with the people in
 /// it, and, in Advanced mode, the raw vault list behind those savings.

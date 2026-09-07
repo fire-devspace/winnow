@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// HeaderChain by subject: consensus and fork choice, the shipped mainnet
 /// checkpoint, starting somewhere other than block 0 and the policy that

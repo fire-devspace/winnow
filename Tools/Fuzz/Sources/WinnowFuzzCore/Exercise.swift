@@ -1,7 +1,6 @@
 import BitcoinCore
-import BitcoinP2P
-import Foundation
 import WalletCore
+import Foundation
 
 /// The parsing surfaces the harness mutates inputs for. The raw values are
 /// the `--target` names and the `Tests/ToolsTests/Cases/` directories.

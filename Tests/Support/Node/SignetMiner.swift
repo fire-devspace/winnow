@@ -1,5 +1,5 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import CryptoKit
 import Foundation
 import P256K

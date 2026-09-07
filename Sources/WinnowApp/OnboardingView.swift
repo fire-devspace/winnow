@@ -1,8 +1,7 @@
 import LocalAuthentication
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// Create a fresh wallet (mnemonic shown once) or import a bundle with its
 /// history (docs/import.md: there is no historical back-scan — the bundle

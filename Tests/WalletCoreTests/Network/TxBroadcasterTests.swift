@@ -2,7 +2,7 @@ import BitcoinCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// TxBroadcaster's relay behaviour, against loopback nodes: inv announcement
 /// and the getdata answer, the BIP133 fee filter, the backoff table, and the

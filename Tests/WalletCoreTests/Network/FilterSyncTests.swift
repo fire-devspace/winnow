@@ -3,7 +3,7 @@ import Foundation
 import Network
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// FilterSync end to end, by subject: the happy path over a real loopback
 /// transport, what the on-disk progress file may and may not say, how the

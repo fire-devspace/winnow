@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Why a bundled test vector could not be loaded or read.

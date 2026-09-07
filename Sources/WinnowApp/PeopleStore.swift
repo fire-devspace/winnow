@@ -1,7 +1,6 @@
 import BitcoinCore
-import BitcoinP2P
-import Foundation
 import WalletCore
+import Foundation
 
 /// A person in the address book, as persisted at `people.json`. Public keys
 /// only: nothing here can spend, so the file is not a wallet's and survives

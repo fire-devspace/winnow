@@ -1,4 +1,4 @@
-import BitcoinP2P
+import WalletCore
 import Foundation
 
 /// Release-path generator for the bundled mainnet fallback peers (#161), run
@@ -21,7 +21,7 @@ enum FallbackPeerGenerator {
     }
 
     struct Options {
-        static let defaultOutput = "Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift"
+        static let defaultOutput = "Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift"
 
         /// Past this the returns diminish; Core's contrib/seeds filters to the
         /// same order of magnitude.

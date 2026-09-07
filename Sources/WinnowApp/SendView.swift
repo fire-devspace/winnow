@@ -1,7 +1,6 @@
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// Immutable identity of the fields that produced a send preview. Equality is
 /// the authorization boundary for async preview results: a result created for

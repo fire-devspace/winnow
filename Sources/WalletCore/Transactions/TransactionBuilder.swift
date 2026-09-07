@@ -1,5 +1,4 @@
 import BitcoinCore
-import BitcoinP2P
 import Foundation
 
 public enum TxBuildError: Error, Equatable {

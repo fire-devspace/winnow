@@ -20,3 +20,6 @@ xcuserdata/
 *.p12
 *.cer
 *.certSigningRequest
+
+# Local Python checks
+__pycache__/

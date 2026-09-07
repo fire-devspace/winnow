@@ -1,9 +1,8 @@
 import BitcoinCore
-@testable import BitcoinP2P
+@testable import WalletCore
 import Foundation
 import Testing
 import TestSupport
-import WalletCore
 
 /// The BIP157 client path against the dev node over real P2P: header sync
 /// to the node's tip, then the cfcheckpt → cfheaders → cfilters flow with a
@@ -73,7 +72,10 @@ struct FilterSyncDiffTests {
         let sync = try FilterSync(pool: pool, chain: synced.chain, startHeight: creationHeight,
                                   storageURL: tempFileURL("filters.json"),
                                   requiredCheckpointPeers: 1)
-        try await wallet.scan(using: sync)
+        try await sync.sync(watchScripts: wallet.watchScripts()) { match in
+            _ = try await wallet.apply(match: match)
+        }
+        try await wallet.recordScanHeight(sync.nextScanHeight)
         #expect(await wallet.nextScanHeight == tip + 1, "scan frontier is one past the tip")
         #expect(await wallet.balance == 0, "a fresh key owns nothing")
         #expect(await sync.lastScannedHeight == tip, "filter frontier reached the tip")

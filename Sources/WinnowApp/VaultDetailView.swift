@@ -1,8 +1,7 @@
 import BitcoinCore
-import BitcoinP2P
+import WalletCore
 import SwiftUI
 import UIKit
-import WalletCore
 
 /// One vault: receive address, tracked UTXOs, and the spend flow entry
 /// points (creator role here, signer/combiner in `VaultSignView`).

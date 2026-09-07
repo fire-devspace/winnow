@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// The wire: varints and varstrings, network addresses and inv vectors, every
 /// message payload, and the framing that carries them over TCP.

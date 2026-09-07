@@ -2,7 +2,7 @@ import BitcoinCore
 import Foundation
 import Testing
 import TestSupport
-@testable import BitcoinP2P
+@testable import WalletCore
 
 /// What FilterSync does when a peer is not telling the truth (epic #100,
 /// invariant S5).

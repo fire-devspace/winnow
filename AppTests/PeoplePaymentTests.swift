@@ -1,8 +1,7 @@
 @testable import WinnowApp
 import BitcoinCore
-import BitcoinP2P
-import TestSupport
 import WalletCore
+import TestSupport
 import XCTest
 
 /// How people reach the send review and how vaults become shared savings.
