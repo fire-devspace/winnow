@@ -57,8 +57,8 @@ struct SendView: View {
     @State private var relayedPeers: Set<String> = []
     @State private var feeFloorNotice = false
     @State private var confirmedHeight: UInt32?
-    @FocusState private var amountFocused: Bool
-    @FocusState private var destinationFocused: Bool
+    private enum Field { case destination, amount, fee }
+    @FocusState private var focusedField: Field?
 
     private var selectedPerson: PersonRecord? {
         guard let selectedPersonID else { return nil }
@@ -110,6 +110,10 @@ struct SendView: View {
             .navigationTitle(sentTxid != nil ? "Payment" : preview != nil ? "Review payment" : "Send")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                }
                 if presentedAsSheet {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") { dismiss() }
@@ -154,7 +158,7 @@ struct SendView: View {
                         TextField("Bitcoin address", text: $destination)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
-                            .focused($destinationFocused)
+                            .focused($focusedField, equals: .destination)
                             .accessibilityIdentifier("destinationField")
                         Button("Paste") {
                             destination = UIPasteboard.general.string ?? ""
@@ -179,19 +183,10 @@ struct SendView: View {
                 HStack {
                     TextField("0", text: $amountText)
                         .keyboardType(.numberPad)
-                        .focused($amountFocused)
+                        .focused($focusedField, equals: .amount)
                         .accessibilityLabel("Amount in sats")
                         .accessibilityIdentifier("amountField")
                     Text("sats").foregroundStyle(.secondary)
-                }
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Done") {
-                            amountFocused = false
-                            destinationFocused = false
-                        }
-                    }
                 }
             } header: {
                 Text("Amount")
@@ -219,6 +214,7 @@ struct SendView: View {
             LabeledContent("Network floor", value: model.status.feeFloorSatPerVByte.map(feeRateText) ?? "unknown")
             TextField("Override (sat/vB, optional)", text: $overrideText)
                 .keyboardType(.decimalPad)
+                .focused($focusedField, equals: .fee)
                 .accessibilityIdentifier("feeOverrideField")
         } header: {
             Text("Fee")
@@ -367,8 +363,7 @@ struct SendView: View {
 
     private func review() {
         guard !reviewing else { return }
-        amountFocused = false
-        destinationFocused = false
+        focusedField = nil
         error = nil
         preview = nil
         let requested = reviewInputs

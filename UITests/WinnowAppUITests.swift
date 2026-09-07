@@ -275,6 +275,7 @@ final class WinnowAppUITests: XCTestCase {
         app.flipSwitch(advancedToggle)
         app.tabBars.buttons["Send"].tap()
         app.typeInto("feeOverrideField", "99")
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Done must dismiss the fee keypad")
         app.tabBars.buttons["Settings"].tap()
         XCTAssertTrue(scrollUntilExists(app, advancedToggle, up: true))
         app.flipSwitch(advancedToggle)
