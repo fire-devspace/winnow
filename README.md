@@ -29,24 +29,25 @@ The **P2WSH Safe** uses `wsh(pk(KEY))` and transaction-bound ECDSA signatures. H
 
 ## Layout
 
-The app, Bitcoin implementation, CLI, fuzz harness, story tooling and website
+The app, Bitcoin implementation, CLI, fuzz harness, debugging tools and website
 live in this repository. The app and all development tools use one root
 Swift package and dependency lockfile. There is one release version and one source revision.
 
 Wallet, protocol and cryptographic logic stays in the library modules; the
-SwiftUI app remains a thin shell. The root `Winnow` package groups `BitcoinCore`, `BitcoinP2P`, `WalletCore`
-and `BlockchainBackend` for local use, plus the `btc-swift` development CLI
-and `WinnowSoak`. The explorer backend is never instantiated by the wallet.
+SwiftUI app remains a thin shell. The root `Winnow` package groups
+`BitcoinCore`, `BitcoinP2P`, and `WalletCore`, plus the offline `btc-swift` CLI,
+the `winnow-debug` operator tool, and the fuzz harness. Explorer links open an
+external website after a warning; there is no HTTP wallet backend.
 
 | Path | Purpose |
 | --- | --- |
 | `Sources/WinnowApp` | iOS app (SwiftUI, iOS 17+) |
-| Other `Sources/` targets | Bitcoin libraries, offline CLI and soak driver |
+| Other `Sources/` targets | Bitcoin libraries and offline CLI |
 | `Tests/` | BIP vectors, unit, loopback and Core differential tests |
 | `Tests/Support` | `TestSupport`: fixtures, loopback harness, miner and RPC helpers shared by every test target |
 | `AppTests/` | App state, privacy, journal redaction and iOS Keychain attributes |
 | `UITests/` | Simulator journeys and storefront capture |
-| `Tools/Fuzz/`, `Tools/Generate/`, `Tools/Story/` | Local development tools, outside the shipping app |
+| `Tools/Fuzz/`, `Tools/Generate/`, `Tools/Debug/` | Local development tools, outside the shipping app |
 | `docs/` | Website, design papers and security evidence |
 | `scripts/`, `infra/` | Build, release, reporting and dedicated test fixtures |
 
@@ -57,7 +58,7 @@ swift test
 swift run btc-swift decode-tx <hex>
 xcodegen
 scripts/ci-app-tests /tmp/winnow-app-tests
-scripts/ci-story
+scripts/ci-debug
 ```
 
 Use XcodeGen 2.46.0. `scripts/install-xcodegen` downloads and verifies that
@@ -88,10 +89,11 @@ filter-serving node (Settings → Manual peers); the node needs
 
 ## Screenshots
 
-The resumable public-signet acceptance runner lives in [Tools/Story](Tools/Story/README.md).
-Use `scripts/winnow-story` from this checkout. Its offline tests run in app CI
-against the same local library as the app; the complete manual
-journey is documented in the [story runbook](.github/internal/story-run.md).
+GUI diagnostics live in [Tools/Debug](Tools/Debug/README.md). Use
+`scripts/winnow-debug doctor` for environment checks and
+`scripts/winnow-debug diagnostics` for local simulator logs and screenshots.
+The demo and publication workflow has been retired; functional GUI journeys
+remain in `UITests`.
 
 Screenshot PNGs in `docs/screenshots/` are stored in Git LFS. After cloning,
 install Git LFS and download the image objects before viewing or publishing them:

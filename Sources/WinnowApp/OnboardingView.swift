@@ -78,7 +78,7 @@ struct OnboardingView: View {
                         .accessibilityIdentifier("onboardingNetworkPicker")
                     } footer: {
                         Text(model.e2e?.forcedNetwork != nil
-                             ? "This reproducible story run is locked to public signet."
+                             ? "This debug session is locked to public signet."
                              : "Each network has its own wallet on this device. Switching opens that network's wallet, or this screen when it has none.")
                     }
                 }

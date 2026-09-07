@@ -1,5 +1,13 @@
 # Security invariant and evidence matrix
 
+For current selectors corresponding to historical evidence, see the
+[test-suite map](test-suite-map.md). Dated runs retain their original names.
+
+Current scope note (2026-09-07): the unused `BlockchainBackend` module and
+its four client-only tests have been removed. The S11 client/tweak-index
+references below describe earlier review evidence. Current explorer links
+use the warned browser handoff documented in the [egress inventory](audit-manifest.md#external-disclosure-inventory).
+
 This is an August 2026 audit record. References to Silent Payments and its tweak
 index describe the implementation reviewed then; those features have since been
 removed. Historical findings and their evidence are retained below.

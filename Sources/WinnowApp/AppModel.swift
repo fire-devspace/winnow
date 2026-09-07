@@ -522,7 +522,7 @@ final class AppModel {
         }
     }
 
-    /// The story runner uses this safe event to prove that preflight reached
+    /// GUI diagnostics use this safe event to show that sync reached
     /// multiple public peers. Endpoints and user agents are public connection
     /// metadata; wallet scripts, addresses, and keys are never included.
     private func journalPeerStatusIfChanged(_ connection: PeerPool.ConnectionStatus) async {
@@ -1950,7 +1950,7 @@ final class AppModel {
     }
 
     /// Safe, public automation facts emitted only in E2E mode. The complete
-    /// txid/height and vault UTXO summaries let the story runner compare an
+    /// txid/height and vault UTXO summaries let a debugging session compare an
     /// original and replacement phone and notice confirmations after resume.
     private func journalSnapshotIfChanged() {
         guard let e2e, wallet != nil else { return }

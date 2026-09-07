@@ -25,7 +25,7 @@ Winnow is a direct-P2P compact-filter client; neither the app nor normal develop
    genesis-validated `headers.bin`; it derives the constant through
    `HeaderChain`, proves a chain started from it agrees with the
    genesis-rooted chain 2,000 blocks on, and writes those headers as the
-   vector `CheckpointStartTests` replays. Paste the printed literal into
+   vector `HeaderChainTests` replays. Paste the printed literal into
    `NetworkParams.mainnet.checkpoint`, update its provenance note, and point
    the test at the new vector. The constant currently sits at block 900,000;
    every release it ages costs each fresh install the headers since.

@@ -50,20 +50,8 @@ struct VaultInteropDiffTests {
             }
             return text
         }
-        // tr(<key expression>/0/*)#checksum → the key expression itself.
-        func keyExpression(from descriptor: String) throws -> String {
-            guard let open = descriptor.firstIndex(of: "("),
-                  let close = descriptor.lastIndex(of: ")") else {
-                throw VaultInteropError.setup("unparsable descriptor \(descriptor)")
-            }
-            let inner = String(descriptor[descriptor.index(after: open) ..< close])
-            guard let range = inner.range(of: "/0/*", options: .backwards) else {
-                throw VaultInteropError.setup("unexpected key path in \(inner)")
-            }
-            return String(inner[inner.startIndex ..< range.lowerBound])
-        }
-        return CoreParticipant(publicExpression: try keyExpression(from: descriptor(private: false)),
-                               privateExpression: try keyExpression(from: descriptor(private: true)))
+        return CoreParticipant(publicExpression: try coreDescriptorKey(from: descriptor(private: false)),
+                               privateExpression: try coreDescriptorKey(from: descriptor(private: true)))
     }
 
     enum VaultInteropError: Error, CustomStringConvertible {
@@ -109,18 +97,10 @@ struct VaultInteropDiffTests {
         // 3. Core imports the same vault, holding exactly one of the three keys.
         let signerWallet = "interop-signer-\(UInt32.random(in: 0 ..< 1_000_000))"
         _ = try BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(signerWallet)", "blank=true"])
-        // Core writes hardened steps as `h`, we write them as `'`. Both are
-        // BIP380-legal and the vault normalises to the apostrophe form, so the
-        // substitution has to be made in our spelling or it silently matches
-        // nothing. (`VaultCosignerIdentityTests` already treats the two
-        // markers as the same key; this is the same fact seen from outside.)
         let body = String(ourText.split(separator: "#")[0])
-        let coreExpressionOurSpelling = coreExpression
-            .replacingOccurrences(of: "h/", with: "'/")
-            .replacingOccurrences(of: "h]", with: "']")
         let privateText = body.replacingOccurrences(
-            of: coreExpressionOurSpelling, with: core.privateExpression + "/<0;1>/*")
-        #expect(privateText != body, "Core's leg was not substituted")
+            of: coreExpression, with: core.privateExpression + "/<0;1>/*")
+        try #require(privateText != body, "Core's leg was not substituted")
         let privateChecksum = try BitcoinCLI.string(
             BitcoinCLI.runObject(["getdescriptorinfo", privateText]), "checksum")
         let imported = try BitcoinCLI.runJSON(
@@ -256,12 +236,9 @@ struct VaultInteropDiffTests {
             let wallet = "interop2-\(tag)-\(UInt32.random(in: 0 ..< 1_000_000))"
             _ = try BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(wallet)", "blank=true"])
             let body = String(ourText.split(separator: "#")[0])
-            let ourSpelling = expression
-                .replacingOccurrences(of: "h/", with: "'/")
-                .replacingOccurrences(of: "h]", with: "']")
             let privateText = body.replacingOccurrences(
-                of: ourSpelling, with: privateExpression + "/<0;1>/*")
-            #expect(privateText != body, "\(tag)'s leg was not substituted")
+                of: expression, with: privateExpression + "/<0;1>/*")
+            try #require(privateText != body, "\(tag)'s leg was not substituted")
             let checksum = try BitcoinCLI.string(
                 BitcoinCLI.runObject(["getdescriptorinfo", privateText]), "checksum")
             let imported = try BitcoinCLI.runJSON(
@@ -403,12 +380,9 @@ struct VaultInteropDiffTests {
         let signerWallet = "interop3-\(UInt32.random(in: 0 ..< 1_000_000))"
         _ = try BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(signerWallet)", "blank=true"])
         let body = String(ourText.split(separator: "#")[0])
-        let ourSpelling = coreExpression
-            .replacingOccurrences(of: "h/", with: "'/")
-            .replacingOccurrences(of: "h]", with: "']")
         let privateText = body.replacingOccurrences(
-            of: ourSpelling, with: core.privateExpression + "/<0;1>/*")
-        #expect(privateText != body)
+            of: coreExpression, with: core.privateExpression + "/<0;1>/*")
+        try #require(privateText != body)
         let checksum = try BitcoinCLI.string(
             BitcoinCLI.runObject(["getdescriptorinfo", privateText]), "checksum")
         let imported = try BitcoinCLI.runJSON(
@@ -564,11 +538,9 @@ struct VaultInteropDiffTests {
         let wallet = "musig-interop-\(UInt32.random(in: 0 ..< 1_000_000))"
         _ = try BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(wallet)", "blank=true"])
         let body = String(ourText.split(separator: "#")[0])
-        let corePublicOurSpelling = core.publicExpression
-            .replacingOccurrences(of: "h/", with: "'/").replacingOccurrences(of: "h]", with: "']")
-        let privateText = body.replacingOccurrences(of: corePublicOurSpelling,
+        let privateText = body.replacingOccurrences(of: core.publicExpression,
                                                     with: core.privateExpression)
-        #expect(privateText != body, "Core's participant key was not substituted")
+        try #require(privateText != body, "Core's participant key was not substituted")
         let checksum = try BitcoinCLI.string(
             BitcoinCLI.runObject(["getdescriptorinfo", privateText]), "checksum")
         let imported = try BitcoinCLI.runJSON(
@@ -643,4 +615,28 @@ struct VaultInteropDiffTests {
                 "the two now agree on the aggregate key: round 2 and an on-chain MuSig2 co-sign are worth building")
         trace("round 1 works on both sides; round 2 is blocked by the aggregate-key encoding")
     }
+}
+
+// Parse once at the fixture boundary. Replacing "h/" throughout an expression
+// also changes a base58 key ending in h immediately before its derivation path.
+private func coreDescriptorKey(from text: String) throws -> String {
+    let descriptor = try Descriptor(text).serialized()
+    guard let open = descriptor.firstIndex(of: "("),
+          let close = descriptor.lastIndex(of: ")") else {
+        throw VaultInteropDiffTests.VaultInteropError.setup("unparsable Core descriptor")
+    }
+    let inner = String(descriptor[descriptor.index(after: open) ..< close])
+    guard let range = inner.range(of: "/0/*", options: .backwards) else {
+        throw VaultInteropDiffTests.VaultInteropError.setup("unexpected Core key path")
+    }
+    return String(inner[..<range.lowerBound])
+}
+
+@Test("Core fixture preserves base58 keys ending in h", arguments: ["h", "'"])
+func coreDescriptorKeyPreservesBase58(hardened: String) throws {
+    let key = "tpubDDChux5N2nzqQBFzaBdidpdEGspdKEmRwi7gQdbqpnHvAviVZxikms3ZjaSQVLmnFaopeDnoBDdRdocHBBnw2K7AbiQLJLdnuQX1cbTPYFh"
+    let input = "tr([e11008c1/86\(hardened)/1\(hardened)/0\(hardened)]\(key)/0/*)"
+    let expression = try coreDescriptorKey(from: input) + "/<0;1>/*"
+    #expect(expression == "[e11008c1/86'/1'/0']\(key)/<0;1>/*")
+    #expect(try Descriptor("tr(\(expression))").serialized().contains(expression))
 }

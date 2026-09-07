@@ -18,7 +18,7 @@ import Foundation
 /// matched-block path is covered instead by the differential full-loop test,
 /// which can mine a match on demand; conflating the two would make this run
 /// slower without making it prove more.
-private struct Options {
+struct SoakOptions {
     var network: NetworkParams = .signet
     var samplePeriod: Duration = .seconds(60)
     var runFor: Duration?
@@ -71,7 +71,7 @@ private struct Options {
     }
 
     static let usageText = """
-    winnow-soak — sustained read-path soak against a live network
+    winnow-debug soak — sustained read-path soak against a live network
 
       --network signet|mainnet   default signet
       --minutes N                0 or omitted runs until interrupted
@@ -83,7 +83,7 @@ private struct Options {
     """
 }
 
-private enum SoakError: Error, CustomStringConvertible {
+enum SoakError: Error, CustomStringConvertible {
     case usage(String)
     var description: String {
         switch self { case let .usage(message): message }
@@ -132,25 +132,6 @@ private struct Sample: Encodable {
     var lastError: String?
 }
 
-private let options: Options
-do {
-    options = try Options(arguments: Array(CommandLine.arguments.dropFirst()))
-} catch {
-    FileHandle.standardError.write(Data("\(error)\n".utf8))
-    exit(2)
-}
-
-if let directory = options.stateDirectory {
-    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-}
-if let out = options.out {
-    try? FileManager.default.createDirectory(at: out.deletingLastPathComponent(),
-                                             withIntermediateDirectories: true)
-    if !FileManager.default.fileExists(atPath: out.path(percentEncoded: false)) {
-        FileManager.default.createFile(atPath: out.path(percentEncoded: false), contents: nil)
-    }
-}
-
 /// Counters shared between the scan task and the sampler.
 private actor Counters {
     var passes = 0
@@ -191,82 +172,117 @@ private actor Counters {
     }
 }
 
-private let counters = Counters()
-let scripts = syntheticWatchScripts(count: options.watchScriptCount)
-let headerStore = options.stateDirectory?.appendingPathComponent("headers.dat")
-let filterStore = options.stateDirectory?.appendingPathComponent("filters.json")
-let peersStore = options.stateDirectory?.appendingPathComponent("peers.json")
-
-let chain = try HeaderChain(params: options.network, storageURL: headerStore)
-let pool = PeerPool(params: options.network, peerCount: options.peerCount, peersFileURL: peersStore)
-let filters = try FilterSync(pool: pool, chain: chain,
-                             startHeight: options.startHeight, storageURL: filterStore)
-
-await pool.start()
-
-let started = ContinuousClock.now
-let formatter = ISO8601DateFormatter()
-
-/// The scan runs continuously; a throw is recorded and retried rather than
-/// ending the run. Transient peer failure is the normal case this is here to
-/// survive, not an outcome worth aborting on.
-let scan = Task {
-    while !Task.isCancelled {
-        do {
-            try await filters.sync(watchScripts: scripts,
-                                   onReorg: { forkHeight in await counters.reorg(to: forkHeight) },
-                                   onMatch: { _ in })
-            await counters.pass()
-        } catch {
-            await counters.failed(error)
-            try? await Task.sleep(for: .seconds(5))
+@MainActor
+enum SoakCommand {
+    static func execute(_ arguments: [String]) async throws {
+        if arguments.contains(where: { ["help", "--help", "-h"].contains($0) }) {
+            print(SoakOptions.usageText)
+            return
         }
-        try? await Task.sleep(for: .seconds(1))
+        let options = try SoakOptions(arguments: arguments)
+        prepareOutput(options)
+        try await run(options)
+    }
+
+    private static func prepareOutput(_ options: SoakOptions) {
+        if let directory = options.stateDirectory {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        if let out = options.out {
+            try? FileManager.default.createDirectory(at: out.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: out.path(percentEncoded: false)) {
+                FileManager.default.createFile(atPath: out.path(percentEncoded: false), contents: nil)
+            }
+        }
+    }
+
+    private static func run(_ options: SoakOptions) async throws {
+        let counters = Counters()
+        let scripts = syntheticWatchScripts(count: options.watchScriptCount)
+        let headerStore = options.stateDirectory?.appendingPathComponent("headers.dat")
+        let filterStore = options.stateDirectory?.appendingPathComponent("filters.json")
+        let peersStore = options.stateDirectory?.appendingPathComponent("peers.json")
+
+        let chain = try HeaderChain(params: options.network, storageURL: headerStore)
+        let pool = PeerPool(params: options.network, peerCount: options.peerCount, peersFileURL: peersStore)
+        let filters = try FilterSync(pool: pool, chain: chain,
+                                     startHeight: options.startHeight, storageURL: filterStore)
+
+        await pool.start()
+
+        let started = ContinuousClock.now
+        let formatter = ISO8601DateFormatter()
+
+        /// The scan runs continuously; a throw is recorded and retried rather than
+        /// ending the run. Transient peer failure is the normal case this is here to
+        /// survive, not an outcome worth aborting on.
+        let scan = Task {
+            while !Task.isCancelled {
+                do {
+                    try await filters.sync(watchScripts: scripts,
+                                           onReorg: { forkHeight in await counters.reorg(to: forkHeight) },
+                                           onMatch: { _ in })
+                    await counters.pass()
+                } catch {
+                    await counters.failed(error)
+                    try? await Task.sleep(for: .seconds(5))
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+
+        var handle: FileHandle?
+        if let out = options.out {
+            handle = try? FileHandle(forWritingTo: out)
+            _ = try? handle?.seekToEnd()
+        }
+
+        await sample(options, pool: pool, chain: chain, filters: filters,
+                     counters: counters, started: started, formatter: formatter, handle: handle)
+
+        scan.cancel()
+        await pool.stop()
+        try? handle?.close()
+    }
+
+    private static func sample(_ options: SoakOptions, pool: PeerPool, chain: HeaderChain,
+                               filters: FilterSync, counters: Counters, started: ContinuousClock.Instant,
+                               formatter: ISO8601DateFormatter, handle: FileHandle?) async {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        while true {
+            let elapsed = ContinuousClock.now - started
+            if let limit = options.runFor, elapsed >= limit { break }
+
+            let status = await pool.connectionStatus
+            let (passes, syncErrors, reorgs, deepest, regressions, lastError) = await counters.snapshot
+            let frontier = await filters.nextScanHeight
+            await counters.observe(frontier: frontier)
+
+            let sample = Sample(at: formatter.string(from: Date()),
+                                elapsedSeconds: Int(elapsed.components.seconds),
+                                residentBytes: residentBytes(),
+                                peersConnected: status.connected,
+                                peersTarget: status.target,
+                                poolExhausted: status.exhausted,
+                                chainHeight: await chain.height,
+                                scanFrontier: frontier,
+                                passes: passes,
+                                syncErrors: syncErrors,
+                                reorgs: reorgs,
+                                deepestReorgToHeight: deepest,
+                                frontierRegressions: regressions,
+                                lastError: lastError)
+
+            if let line = try? encoder.encode(sample) {
+                var payload = line
+                payload.append(0x0A)
+                handle?.write(payload)
+                FileHandle.standardOutput.write(payload)
+            }
+            try? await Task.sleep(for: options.samplePeriod)
+        }
     }
 }
-
-var handle: FileHandle?
-if let out = options.out {
-    handle = try? FileHandle(forWritingTo: out)
-    _ = try? handle?.seekToEnd()
-}
-
-let encoder = JSONEncoder()
-encoder.outputFormatting = [.sortedKeys]
-
-while true {
-    let elapsed = ContinuousClock.now - started
-    if let limit = options.runFor, elapsed >= limit { break }
-
-    let status = await pool.connectionStatus
-    let (passes, syncErrors, reorgs, deepest, regressions, lastError) = await counters.snapshot
-    let frontier = await filters.nextScanHeight
-    await counters.observe(frontier: frontier)
-
-    let sample = Sample(at: formatter.string(from: Date()),
-                        elapsedSeconds: Int(elapsed.components.seconds),
-                        residentBytes: residentBytes(),
-                        peersConnected: status.connected,
-                        peersTarget: status.target,
-                        poolExhausted: status.exhausted,
-                        chainHeight: await chain.height,
-                        scanFrontier: frontier,
-                        passes: passes,
-                        syncErrors: syncErrors,
-                        reorgs: reorgs,
-                        deepestReorgToHeight: deepest,
-                        frontierRegressions: regressions,
-                        lastError: lastError)
-
-    if let line = try? encoder.encode(sample) {
-        var payload = line
-        payload.append(0x0A)
-        handle?.write(payload)
-        FileHandle.standardOutput.write(payload)
-    }
-    try? await Task.sleep(for: options.samplePeriod)
-}
-
-scan.cancel()
-await pool.stop()
-try? handle?.close()

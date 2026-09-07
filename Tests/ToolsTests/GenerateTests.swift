@@ -1,7 +1,7 @@
 import BitcoinP2P
 import Foundation
 import Testing
-@testable import WinnowGenerate
+@testable import WinnowDebug
 
 /// The generators' decisions, offline: everything `winnow-generate` does
 /// between the network or the header file and the bytes it writes.
@@ -32,7 +32,7 @@ struct WinnowGenerateTests {
     }
 
     /// Block 900,001, the one after the shipped checkpoint — the same 80 bytes
-    /// `CheckpointStartTests` connects.
+    /// `HeaderChainTests` connects.
     private static let block900_001 = Data(hex:
         "00e000208a96960d6d1ca4ee4a283fd83da309b8d5d2bfed380501000000000000000000"
         + "371c9ffd63d75fb36c57d58eb842d23c0e7ec049daf16d94cc38805c346e9d52"

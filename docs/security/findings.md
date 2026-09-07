@@ -1,5 +1,8 @@
 # Security findings register
 
+For current selectors corresponding to historical evidence, see the
+[test-suite map](test-suite-map.md). Dated runs retain their original names.
+
 This is an August 2026 audit record. References to Silent Payments and its tweak
 index describe the implementation reviewed then; those features have since been
 removed. Historical findings and their evidence are retained below.

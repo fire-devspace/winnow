@@ -7,14 +7,11 @@ let package = Package(
     products: [
         .library(name: "BitcoinCore", targets: ["BitcoinCore"]),
         .library(name: "BitcoinP2P", targets: ["BitcoinP2P"]),
-        .library(name: "BlockchainBackend", targets: ["BlockchainBackend"]),
         .library(name: "WalletCore", targets: ["WalletCore"]),
         // Test fixtures shared by every test target, SwiftPM and Xcode alike.
         .library(name: "TestSupport", targets: ["TestSupport"]),
         .executable(name: "btc-swift", targets: ["BtcSwiftCLI"]),
-        .executable(name: "WinnowSoak", targets: ["WinnowSoak"]),
-        .executable(name: "winnow-story", targets: ["WinnowStoryCLI"]),
-        .executable(name: "winnow-generate", targets: ["WinnowGenerate"]),
+        .executable(name: "winnow-debug", targets: ["WinnowDebug"]),
         .executable(name: "WinnowFuzz", targets: ["WinnowFuzz"]),
     ],
     dependencies: [
@@ -30,35 +27,22 @@ let package = Package(
             dependencies: ["BitcoinCore"]
         ),
         .target(
-            name: "BlockchainBackend",
-            dependencies: ["BitcoinCore"]
-        ),
-        .target(
             name: "WalletCore",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "BlockchainBackend"]
+            dependencies: ["BitcoinCore", "BitcoinP2P"]
         ),
         .executableTarget(
             name: "BtcSwiftCLI",
             dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"]
         ),
         .executableTarget(
-            name: "WinnowSoak",
-            dependencies: ["BitcoinCore", "BitcoinP2P"]
-        ),
-        .executableTarget(
-            name: "WinnowStoryCLI",
-            dependencies: ["BitcoinCore", "BitcoinP2P", "BlockchainBackend", "WalletCore"],
-            path: "Tools/Story/Sources/WinnowStoryCLI"
+            name: "WinnowDebug",
+            dependencies: ["BitcoinCore", "BitcoinP2P"],
+            path: "Tools/Debug/Sources/WinnowDebug"
         ),
         .target(
             name: "WinnowFuzzCore",
             dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore"],
             path: "Tools/Fuzz/Sources/WinnowFuzzCore"
-        ),
-        .executableTarget(
-            name: "WinnowGenerate",
-            dependencies: ["BitcoinCore", "BitcoinP2P"],
-            path: "Tools/Generate/Sources/WinnowGenerate"
         ),
         .executableTarget(
             name: "WinnowFuzz",
@@ -86,12 +70,6 @@ let package = Package(
             dependencies: ["BitcoinP2P", "BitcoinCore", "TestSupport"],
             resources: [.copy("Vectors")]
         ),
-        // The esplora client and what it discloses belong to BlockchainBackend;
-        // they were only ever `@testable import`ed from the WalletCore suite.
-        .testTarget(
-            name: "BlockchainBackendTests",
-            dependencies: ["BlockchainBackend"]
-        ),
         .testTarget(
             name: "WalletCoreTests",
             dependencies: ["WalletCore", "BitcoinP2P", "TestSupport"],
@@ -102,13 +80,13 @@ let package = Package(
             dependencies: ["BitcoinCore", "BitcoinP2P", "WalletCore", "TestSupport"],
             path: "Tests/DifferentialTests"
         ),
-        // The development tools, tested together: the story runner, the
+        // The development tools, tested together: the debugging commands, the
         // release-path generators, and the fuzz crash corpus replayed out of
         // `Cases`. One target, so a tool suite costs no more manifest than a
         // library one and `swift test` links the tools once.
         .testTarget(
             name: "ToolsTests",
-            dependencies: ["WinnowStoryCLI", "WinnowGenerate", "WinnowFuzzCore"],
+            dependencies: ["WinnowDebug", "WinnowFuzzCore"],
             resources: [.copy("Cases")]
         ),
     ]

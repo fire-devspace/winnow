@@ -49,11 +49,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Package and story tests
+      - name: Package and debugging tool tests
         run: |
           scripts/check-dependencies
           swift test
-          scripts/ci-story
+          scripts/ci-debug
 
       - name: Release-build production package and reject first-party warnings
         run: >-
@@ -70,7 +70,8 @@ jobs:
             "tr([00000000/86'/1'/0']tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp/0/*)" \
             --network signet --count 3
           swift run --scratch-path "$RUNNER_TEMP/winnow-production-build" \
-            --configuration release winnow-generate --help
+            --configuration release winnow-debug generate --help
+          "$RUNNER_TEMP/winnow-production-build/release/winnow-debug" soak --help
 
       - name: Generate deterministic SBOM and build provenance
         run: |

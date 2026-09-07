@@ -1,7 +1,7 @@
 // GENERATED FILE — edit by regenerating, not by hand.
 //
 // scripts/generate-fallback-peers rewrites this file on the release path
-// (#161) with `winnow-generate fallback-peers` (Tools/Generate): it resolves
+// (#161) with `winnow-debug generate fallback-peers` (Tools/Debug): it resolves
 // the mainnet DNS seeds, dials candidates with the same PeerConnection the
 // app uses — whose handshake already refuses any peer not advertising
 // NODE_COMPACT_FILTERS — and keeps a /16-spread selection, checked by the
@@ -9,7 +9,7 @@
 //
 // The committed copy is the last verified generation and the build's fallback;
 // a release regenerates so freshness tracks releases rather than memory.
-// `FallbackPeerListTests` validates this file on every CI run.
+// `PeerPolicyTests` validates this file on every CI run.
 //
 // What this is not, recorded so it is not over-claimed: the list inherits
 // whatever the generating host could see, and generation is not reproducible —

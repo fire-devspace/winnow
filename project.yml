@@ -43,8 +43,6 @@ targets:
         product: BitcoinP2P
       - package: Winnow
         product: BitcoinCore
-      - package: Winnow
-        product: BlockchainBackend
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

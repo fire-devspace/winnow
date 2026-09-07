@@ -12,7 +12,7 @@ import Security
 /// - redirects Application Support storage to a throwaway `BTCSwiftE2E-<run>`
 ///   directory and the Keychain to a dedicated service, so a real wallet's
 ///   state is never touched;
-/// - can point protocol tests at a custom signet, while story runs omit those
+/// - can point protocol tests at a custom signet, while public-network debugging omits those
 ///   overrides and use Winnow's ordinary public-signet peers;
 /// - can fix the wallet entropy (or full mnemonic) so screenshots are
 ///   reproducible.
@@ -21,7 +21,6 @@ struct E2EMode {
         let version: Int
         let timestamp: Date
         let name: String
-        let persona: String?
         let fields: [String: String]
     }
 
@@ -40,15 +39,13 @@ struct E2EMode {
     /// buttons (send destination, import JSON) without cross-app paste
     /// consent prompts.
     let clipboard: String?
-    /// Story role used only in journal labels (Sofía, Elena, replacement).
-    let storyPersona: String?
-    /// Reproducible story runs are locked to public signet. Ordinary UI tests
+    /// Debug sessions can lock the network to public signet. Ordinary UI tests
     /// and production launches leave this nil and retain the normal picker.
     let forcedNetwork: BitcoinNetwork?
-    /// Optional initial shell tab for deterministic story-stage launches.
+    /// Optional initial shell tab for deterministic debug launches.
     /// This changes navigation only and is ignored outside E2E mode.
     let initialTab: String?
-    /// Manual story runs exercise Local Authentication on the simulator.
+    /// Manual debug runs exercise Local Authentication on the simulator.
     /// Ordinary XCUITests leave this false so they can run unattended.
     let requireDeviceAuthentication: Bool
     /// `WINNOW_E2E_ADVANCED=1`: launch with advanced mode on, so a UI test can
@@ -65,7 +62,7 @@ struct E2EMode {
     /// site. With no pinned entropy the app falls through to ordinary
     /// onboarding and generates a *real* seed, so a run that merely forgot the
     /// variable would publish live key material. Every launcher — both
-    /// XCUITest call sites and the story runner — passes it today, so this can
+    /// XCUITest call sites and manual debug launches — passes it today, so this can
     /// only be reached by a mistake, which is exactly when failing loudly is
     /// worth more than carrying on.
     enum Resolution {
@@ -96,7 +93,6 @@ struct E2EMode {
                        entropy: entropy,
                        reset: environment["WINNOW_E2E_RESET"] == "1",
                        clipboard: environment["WINNOW_E2E_CLIPBOARD"],
-                       storyPersona: environment["WINNOW_STORY_PERSONA"],
                        forcedNetwork: environment["WINNOW_E2E_NETWORK"]
                            .flatMap(BitcoinNetwork.init(rawValue:)),
                        initialTab: environment["WINNOW_E2E_TAB"],
@@ -171,7 +167,7 @@ struct E2EMode {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appending(path: "story-events.jsonl")
         let event = Event(version: 1, timestamp: Date(), name: name,
-                          persona: storyPersona, fields: fields)
+                          fields: fields)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard var data = try? encoder.encode(event) else { return }

@@ -57,7 +57,7 @@ def category(path: str) -> str:
         return "tests"
     if parts[0] in {"scripts", "infra", "libvirt"} or parts[:2] == (".github", "workflows"):
         return "tooling"
-    if parts[:2] in {("Tools", "Story"), ("Tools", "Generate")}:
+    if parts[:2] in {("Tools", "Debug"), ("Tools", "Generate")}:
         return "tooling"
     if item.suffix.lower() in SOURCE_EXTENSIONS:
         return "source"

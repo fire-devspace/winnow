@@ -41,7 +41,7 @@ Run Release manually first to validate the checkout without signing, uploading,
 assigning TestFlight groups or publishing. Release checks the generation date
 recorded inside `FallbackPeersGenerated.swift`, so copying or squashing history
 cannot make an old peer list appear fresh. If older than 30 days, run
-`scripts/generate-fallback-peers` (which runs `winnow-generate fallback-peers`
+`scripts/generate-fallback-peers` (which runs `winnow-debug generate fallback-peers`
 from [Tools/Generate](../../Tools/Generate/README.md)), retain its log and
 commit the result before tagging. Refreshing the header checkpoint is the same
 tool's other subcommand, via `scripts/refresh-checkpoint`, and needs a

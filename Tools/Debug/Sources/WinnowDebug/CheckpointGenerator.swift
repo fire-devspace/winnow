@@ -14,7 +14,7 @@ import Foundation
 /// and a chain started from the freshly derived checkpoint must agree on tip
 /// hash and total chainwork 2,000 blocks later. Same answer, different starting
 /// point. Those 2,000 headers are what `--vector-out` writes, so the always-on
-/// `CheckpointStartTests` replays the same blocks without the 77 MB file.
+/// `HeaderChainTests` replays the same blocks without the 77 MB file.
 enum CheckpointGenerator {
     /// How far past the checkpoint the agreement check connects real headers.
     static let agreementSpan: UInt32 = 2_000
@@ -229,7 +229,7 @@ enum CheckpointGenerator {
     }
 
     /// One 80-byte header per line as 160 lowercase hex characters, the
-    /// shape `CheckpointStartTests` reads back.
+    /// shape `HeaderChainTests` reads back.
     static func vectorText(_ headers: [BlockHeader]) -> String {
         headers.map { $0.serialized.hex + "\n" }.joined()
     }

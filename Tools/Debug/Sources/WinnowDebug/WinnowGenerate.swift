@@ -1,4 +1,3 @@
-import Darwin
 import BitcoinP2P
 import Foundation
 
@@ -10,19 +9,9 @@ import Foundation
 /// `btc-swift` promises no network, so they do not belong there either. This is
 /// a development tool outside the shipping app, like the story and fuzz drivers.
 ///
-///   winnow-generate fallback-peers [--out PATH] [--target 96] [--floor 24]
-///   winnow-generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
-@main
-public enum WinnowGenerate {
-    public static func main() async {
-        do {
-            try await execute(Array(CommandLine.arguments.dropFirst()))
-        } catch {
-            FileHandle.standardError.write(Data(("error: \(error.localizedDescription)\n").utf8))
-            exit(1)
-        }
-    }
-
+///   winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
+///   winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
+enum WinnowGenerate {
     static func execute(_ arguments: [String]) async throws {
         guard let command = arguments.first, !["help", "--help", "-h"].contains(command) else {
             return usage()
@@ -39,7 +28,7 @@ public enum WinnowGenerate {
         }
     }
 
-    /// Tools/Generate/Sources/WinnowGenerate/… → the package root is five
+    /// Tools/Debug/Sources/WinnowDebug/… → the package root is five
     /// levels up. Taken from `#filePath` at compile time, as the generator test
     /// this replaces did, so the default output lands in this checkout whatever
     /// directory the tool is run from.
@@ -65,17 +54,17 @@ public enum WinnowGenerate {
     static let usageText = """
     Winnow release-path generators
 
-      swift run winnow-generate fallback-peers [--out PATH] [--target 96] [--floor 24]
+      swift run winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
           Resolve the mainnet DNS seeds, dial candidates with the app's own
           PeerConnection, keep a /16-spread selection near the median tip and
           rewrite Sources/BitcoinP2P/Protocol/FallbackPeersGenerated.swift.
 
-      swift run winnow-generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
+      swift run winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
           Derive the mainnet checkpoint at H (default: the shipped height) from a
           genesis-rooted header file, through HeaderChain itself; print it as a
           paste-ready literal; then prove a chain started from it agrees with the
           genesis-rooted chain 2,000 blocks on. --vector-out writes those 2,000
-          headers, one per line as hex, for CheckpointStartTests.
+          headers, one per line as hex, for HeaderChainTests.
     """
 }
 

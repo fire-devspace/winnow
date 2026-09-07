@@ -31,8 +31,8 @@ checkpoint-generation environment. (At the frozen commit two further suites
 were gated by `WINNOW_SIGNET`, which no workflow set; their assertions now run
 on the node lane under `WINNOW_DIFF=1` as `FilterSyncDiffTests`. Since this
 baseline, checkpoint generation and the genesis-versus-checkpoint agreement
-check left the test tree for the `winnow-generate` tool, and the 2,000 headers
-past the checkpoint became a vector that `CheckpointStartTests` connects on
+check left the test tree for the `winnow-debug generate` subcommand, and the 2,000 headers
+past the checkpoint became a vector that `HeaderChainTests` connects on
 every CI run.) App/UI tests and an iOS release configuration were also outside
 this run. Those are open evidence items, not implied passes.
 
@@ -100,20 +100,13 @@ Re-derive with `grep -rn "URLSession\|NWConnection\|getaddrinfo" Sources/`.
 |---|---|---|---|
 | Peer connections | `NWConnection` (`BitcoinP2P/Transport/PeerConnection.swift`) | BIP157/158 filter and header requests, and transactions the user broadcasts | Always: this is how the wallet reads the chain |
 | DNS seeds | DoH over `URLSession`, falling back to `getaddrinfo` (`Peers/SeedResolver.swift`) | Seed hostnames only | At startup, to find peers |
-| Silent-payment tweak index | `URLSession` (`BlockchainBackend/TweakIndexHTTPClient.swift`) | A block height — `GET /tweaks/{height}` | Only when the user enables silent-payment receive and sets a server |
-| Block explorer | **none** | — | Never contacted. The setting builds a link the user may tap; `EsploraClient` is not instantiated anywhere in `Sources/` |
+| Block explorer | Browser handoff via `openURL` | The selected address or transaction and the browser connection’s IP address | Only after the user taps a link and confirms the privacy warning; responses are never used by wallet sync |
 
-Two things are worth stating plainly because they are easy to erode.
-
-The tweak index is told a height, never an address. A server that learned
-addresses would be a hidden wallet-read path wearing a privacy-preserving
-name, so the request is captured and inspected in
-`ExternalDisclosureTests` rather than argued for from the call site.
-
-`EsploraClient` exists and its API is address-based — `/address/{a}/utxo`.
-That is exactly why the app does not use it. Wiring it into sync to make
-scanning faster would, in one step, turn a wallet that tells no server
-anything into one that tells a server every address it owns.
+The unused `BlockchainBackend`/`EsploraClient` module was removed on
+2026-09-07. The current tree also contains no silent-payment tweak-index
+client. Historical references to those clients describe earlier revisions;
+they are not active wallet-read paths. Explorer URLs are built directly by
+`AppModel` and opened only by the warned `ExplorerLink` UI in `Components.swift`.
 
 ## Production source inventory
 
@@ -149,15 +142,6 @@ were gated by `WINNOW_SIGNET` now run on the node lane under `WINNOW_DIFF=1` as
 - `Protocol/Block.swift`, `Protocol/Framing.swift`, `Protocol/Inventory.swift`, `Protocol/Messages.swift`
 - `Protocol/NetworkParams.swift`, `Protocol/PeerAddress.swift`, `Protocol/Transaction.swift`, `Protocol/Wire.swift`
 - `Transport/PeerConnection.swift`
-
-### BlockchainBackend — owner: optional-service review
-
-Parsed input and trust boundary: HTTP status, payload sizes, and remote JSON.
-Secrets: none; queries can disclose wallet-linked information. Persistence:
-none directly. Primary test owners: `EsploraClientTests` and silent-payment
-pipeline tests.
-
-- `EsploraClient.swift`, `TweakIndexHTTPClient.swift`
 
 ### WalletCore — owner: wallet authorization review
 

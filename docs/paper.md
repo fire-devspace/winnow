@@ -381,10 +381,10 @@ software for those coins.
 
 ## 10. Reproducible evidence
 
-The app repository's `scripts/winnow-story` command creates an isolated simulator run,
-records scenario and tool versions, launches named roles, preserves protected
-state for resume, monitors public signet, and emits a safe event journal. It
-does not require Bitcoin Core, RPC credentials, or an owner-machine daemon.
+The historical story runner produced the August 2026 evidence below. Its demo
+and publication workflow was retired on 2026-09-07. Current GUI diagnostics
+and network-debugging commands are documented in `Tools/Debug/README.md`;
+they do not create or publish a story.
 
 The August 2026 story verified these confirmed transactions:
 

@@ -7,7 +7,7 @@
 # The tool derives the constant through HeaderChain itself, prints it as a
 # paste-ready literal for NetworkParams.swift, proves a chain started from it
 # agrees with the genesis-rooted chain 2,000 blocks on, and refreshes the
-# vector those 2,000 headers become for the always-on CheckpointStartTests.
+# vector those 2,000 headers become for the always-on HeaderChainTests.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 if [ $# -lt 1 ]; then
@@ -18,11 +18,11 @@ headers=$1
 shipped=$(grep -m1 -E '^\s+height: [0-9_]+,' Sources/BitcoinP2P/Protocol/NetworkParams.swift | tr -dc '0-9')
 height=${2:-$shipped}
 vector="Tests/BitcoinP2PTests/Vectors/mainnet-headers-$((height + 1))-$((height + 2000)).txt"
-swift run --configuration release winnow-generate checkpoint "$headers" \
+swift run --configuration release winnow-debug generate checkpoint "$headers" \
   --height "$height" --vector-out "$vector"
 if [ "$height" != "$shipped" ]; then
   echo "Paste the literal above into NetworkParams.swift, update its provenance note," >&2
-  echo "point CheckpointStartTests at $vector, remove the old vector, then rerun this." >&2
+  echo "point HeaderChainTests at $vector, remove the old vector, then rerun this." >&2
   exit 0
 fi
-swift test --filter "Mainnet checkpoint|Checkpoint start"
+swift test --filter HeaderChainTests

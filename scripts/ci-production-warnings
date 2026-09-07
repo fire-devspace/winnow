@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build only production SwiftPM products and reject warnings emitted by this
-# repository's Sources/. Dependency and test warnings remain visible in the
+# repository's Sources/ and relocated soak driver. Dependency/test warnings stay in the
 # log, but do not make this focused gate noisy.
 #
 # Locally, pass a fresh scratch path or delete the default one before trusting
@@ -15,9 +15,10 @@ SCRATCH_PATH="${1:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/winnow-production-build}"
 LOG_PATH="${2:-$SCRATCH_PATH/production-build.log}"
 mkdir -p "$(dirname "$LOG_PATH")"
 
-# These are production code targets. Development drivers stay outside this gate.
+# Build the offline CLI and operator tool; the warning gate follows the
+# production Sources/ tree and the relocated soak driver.
 swift build --configuration release --product btc-swift --scratch-path "$SCRATCH_PATH" 2>&1 | tee "$LOG_PATH"
-swift build --configuration release --product WinnowSoak --scratch-path "$SCRATCH_PATH" 2>&1 | tee -a "$LOG_PATH"
+swift build --configuration release --product winnow-debug --scratch-path "$SCRATCH_PATH" 2>&1 | tee -a "$LOG_PATH"
 git -C "$ROOT" diff --exit-code -- Package.resolved
 
 "$ROOT/scripts/check-swift-warnings" "$LOG_PATH"

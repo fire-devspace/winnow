@@ -179,11 +179,11 @@ public struct NetworkParams: Sendable, Equatable {
         // 000000000000000000016813353d83651497417cc705d1e2caf46a541e81deef.
         //
         // To reproduce, point `scripts/refresh-checkpoint` at a genesis-validated
-        // header file: `winnow-generate checkpoint` recomputes all three through
+        // header file: `winnow-debug generate checkpoint` recomputes all three through
         // the same loading path the app uses, prints the lines below ready to
         // paste, and proves a chain started from them agrees with the
         // genesis-rooted chain 2,000 blocks on (Tools/Generate/README.md).
-        // Those 2,000 headers are the vector `CheckpointStartTests` replays.
+        // Those 2,000 headers are the vector `HeaderChainTests` replays.
         //
         // Note the two hex spellings below are not interchangeable:
         // `Data(hex:)` keeps byte order, `Data(displayHex:)` reverses it. The
