@@ -113,6 +113,22 @@ jobs:
       - name: Verify archive dependency resolution
         run: scripts/check-dependencies --xcode build/DerivedData
 
+      - name: Generate SBOM and app build provenance
+        run: >-
+          scripts/generate-supply-chain-metadata
+          --output-dir build/supply-chain
+          --subject build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
+          --subject-name WinnowApp.app
+          --builder-id https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.workflow_sha }}
+
+      - name: Upload supply-chain metadata for release publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-supply-chain-${{ github.run_id }}
+          path: build/supply-chain/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload to App Store Connect
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -156,22 +172,6 @@ jobs:
           scripts/testflight.sh notes
           scripts/testflight.sh internal
           scripts/testflight.sh external
-
-      - name: Generate SBOM and app build provenance
-        run: >-
-          scripts/generate-supply-chain-metadata
-          --output-dir build/supply-chain
-          --subject build/WinnowApp.xcarchive/Products/Applications/WinnowApp.app
-          --subject-name WinnowApp.app
-          --builder-id https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.workflow_sha }}
-
-      - name: Upload supply-chain metadata for release publication
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-supply-chain-${{ github.run_id }}
-          path: build/supply-chain/
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Remove App Store Connect key
         if: always()
