@@ -310,6 +310,26 @@ struct FilterSyncTests {
         #expect(chunked.peakChunkBytes * 2 <= whole.peakChunkBytes)
     }
 
+    /// A chunk size that does not divide the batch, which is the ordinary case
+    /// on a real chain and the one the fixture above cannot reach: 6 blocks in
+    /// chunks of 2 is three whole chunks, so the `min(chunkStart + chunk - 1,
+    /// batchStop)` never takes its `batchStop` branch and the ragged last chunk
+    /// is unpinned by any assertion. Seven blocks in chunks of four take it:
+    /// 1 ... 4 is a whole chunk and 5 ... 7 is what is left, which the stop
+    /// hashes name. A chunk that ran past the batch would ask this node about a
+    /// block it does not have.
+    @Test("a chunk that does not divide the batch ends on the batch stop")
+    func raggedFinalChunkStopsAtTheBatch() async throws {
+        let synthetic = makeSyntheticChain(length: 7, watchHeight: 6)
+        let ragged = try await scanWholeChain(synthetic, filtersPerChunk: 4)
+
+        #expect(ragged.filterRequests.map(\.startHeight) == [1, 5])
+        #expect(ragged.filterRequests.map(\.stopHash)
+            == [4, 7].map { synthetic.blocks[$0].hash })
+        #expect(ragged.matches.map(\.height) == [6])
+        #expect(ragged.progress.nextScanHeight == 8)
+    }
+
     @Test("the scan ceiling counts from the frontier, stops at the tip, and never traps")
     func scanCeilingArithmetic() {
         #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 10, tip: 1_000) == 109)
@@ -745,9 +765,12 @@ struct FilterSyncTests {
             Issue.record("expected checkpointMismatch, got \(String(describing: thrown))")
             return
         }
-        // Height 1,000 names the boundary furthest below the kept run — the
-        // one a keep-the-last-N prune would have dropped, taking this refusal
-        // with it.
+        // Height 1,000 is the oldest height the prune kept — at frontier
+        // 2,002 it is `keepFrom` itself, not a boundary below it — and it is
+        // the one a keep-the-last-N prune would have dropped, taking this
+        // refusal with it. A boundary strictly below the kept run is covered
+        // purely, by "batch after batch, the kept headers stay contiguous and
+        // bounded".
         #expect(reason.contains("pinned header at 1000"))
         #expect(await resumed.nextScanHeight == 2_002, "nothing advanced")
     }

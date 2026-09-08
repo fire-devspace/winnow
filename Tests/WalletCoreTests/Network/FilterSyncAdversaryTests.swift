@@ -55,6 +55,12 @@ struct FilterSyncAdversaryTests {
         /// reproduces the header chain the peer sent, so only the comparison
         /// against cfcheckpt can catch it.
         case checkpointHeader(wrongAt: Int)
+        /// An honest cfheaders/cfilters chain announced with a cfcheckpt list
+        /// truncated to this many entries — zero for a peer that announces no
+        /// checkpoints at all. Every entry it does send is true, so nothing
+        /// the client compares can disagree with it; what is wrong is the
+        /// length.
+        case checkpointsTruncated(to: Int)
     }
 
     /// Everything one case needs: the started nodes, the pool seated on them,
@@ -96,6 +102,10 @@ struct FilterSyncAdversaryTests {
         case let .checkpointHeader(height):
             return LoopbackNode(params: params, chain: blocks,
                                 cfcheckptLieAtHeight: height,
+                                versionDelay: versionDelay)
+        case let .checkpointsTruncated(limit):
+            return LoopbackNode(params: params, chain: blocks,
+                                cfcheckptEntryLimit: limit,
                                 versionDelay: versionDelay)
         }
     }
@@ -518,6 +528,102 @@ struct FilterSyncAdversaryTests {
                 "the persisted progress is the frontier the sync reports, not a lagging copy")
         #expect(stored.filterHeaders["1000"] != nil,
                 "the boundary the comparison covered is pinned")
+
+        await fixture.pool.stop()
+    }
+
+    // MARK: The reference must speak for every boundary the tip has
+
+    /// Peers that announce *no* checkpoints for a chain that has one.
+    ///
+    /// Every comparison FilterSync makes against cfcheckpt reads the reference
+    /// list by index and compares only the heights it mentions, so an empty
+    /// list is not a weaker check — it is no check. All three went quiet at
+    /// once: the pre-loop comparison and the per-batch one iterate nothing,
+    /// and the final guard short-circuits because `filterHeaders.last` is nil.
+    /// The sync then reported success on a filter-commitment chain no
+    /// checkpoint had spoken for, and the harm is omission: filters crafted
+    /// not to match hide real payments while the frontier advances past them
+    /// for good.
+    ///
+    /// Unanimity is the point of asking three. This is not a minority peer to
+    /// be outvoted — every peer says the same true-but-incomplete thing, so
+    /// only comparing the length against our own tip can refuse it.
+    @Test("three peers unanimously announcing no checkpoints are refused before any batch runs")
+    func emptyCheckpointListIsRefused() async throws {
+        let fixture = try await Self.threePeerFixture(
+            liars: [.checkpointsTruncated(to: 0), .checkpointsTruncated(to: 0),
+                    .checkpointsTruncated(to: 0)])
+        defer { fixture.stopNodes() }
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            try await fixture.sync.sync(watchScripts: [fixture.synthetic.watchScript]) {
+                collector.add($0)
+            }
+        } catch {
+            thrown = error
+        }
+        guard case let .checkpointMismatch(reason)? = thrown as? FilterSyncError else {
+            Issue.record("expected checkpointMismatch, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("announced 0 checkpoints for tip 1001"))
+        #expect(reason.contains("expected 1"))
+
+        // Refused before the first batch, so there is nothing to undo: no
+        // match, no frontier movement, and no progress file at all.
+        #expect(collector.matches.isEmpty)
+        #expect(await fixture.sync.nextScanHeight == 1)
+        #expect(await fixture.sync.filterHeader(at: 1_000) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.progressFile.path),
+                "a sync that never ran a batch writes no progress")
+
+        await fixture.pool.stop()
+    }
+
+    /// A checkpoint list that stops one entry short of the tip's boundaries.
+    ///
+    /// Everything the peer announces is true; only the length is wrong, so
+    /// nothing the client computes contradicts it. The per-batch comparison
+    /// walks the list by index, so it passes every batch on the entry it does
+    /// have and says nothing about the boundary it does not — the batches
+    /// above 1,000 (including the one holding the watched output at 1,500)
+    /// used to commit and deliver their matches, and only then did the final
+    /// guard compare the pinned header at 2,000 against the announced entry
+    /// for 1,000 and throw. That is the commit-then-fail shape the per-batch
+    /// comparison exists to eliminate, and the per-batch comparison alone
+    /// cannot: it needs the length tied to the tip, which happens before any
+    /// batch runs.
+    @Test("a checkpoint list that stops short is refused before the batches it omits commit")
+    func shortCheckpointListIsRefusedBeforeAnyBatch() async throws {
+        let fixture = try await Self.threePeerFixture(liars: [.checkpointsTruncated(to: 1)],
+                                                      chainLength: 2_001,
+                                                      watchHeight: 1_500)
+        defer { fixture.stopNodes() }
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            try await fixture.sync.sync(watchScripts: [fixture.synthetic.watchScript]) {
+                collector.add($0)
+            }
+        } catch {
+            thrown = error
+        }
+        guard case let .checkpointMismatch(reason)? = thrown as? FilterSyncError else {
+            Issue.record("expected checkpointMismatch, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("announced 1 checkpoints for tip 2001"))
+        #expect(reason.contains("expected 2"))
+
+        #expect(collector.matches.isEmpty,
+                "the match at 1,500 sits in a batch no checkpoint spoke for")
+        #expect(await fixture.sync.nextScanHeight == 1,
+                "not even the batch below the announced boundary committed")
+        #expect(!FileManager.default.fileExists(atPath: fixture.progressFile.path))
 
         await fixture.pool.stop()
     }

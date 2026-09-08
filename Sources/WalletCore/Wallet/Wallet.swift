@@ -258,7 +258,10 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
     ///
     /// An output that was ours and not change -- a payment to one of our own
     /// receive addresses -- is in neither list. That is a coin, and coins are
-    /// kept in `allUtxos`.
+    /// kept in `allUtxos`. Nor is a zero-value output, which moved no money
+    /// and is not a coin either: `classifyOutputs` skips it with the same
+    /// `value > 0` test `applyOutputs` uses, so the breakdown never names an
+    /// output the coin set does not have.
     public struct Outputs: Equatable, Sendable, Codable {
         /// Outputs paying scripts that are not ours, in transaction order.
         public var external: [ExternalOutput]
@@ -268,6 +271,38 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
         public init(external: [ExternalOutput] = [], change: [UInt32] = []) {
             self.external = external
             self.change = change
+        }
+
+        private enum CodingKeys: String, CodingKey { case external, change }
+
+        /// Written by hand for the same reason `WalletUTXO`'s is: the
+        /// synthesized `init(from:)` ignores the defaults on `init`, so a
+        /// missing key was fatal here while `HistoryEntry` one level up was
+        /// treating a missing key as "not known". An absent list means an
+        /// empty one — a breakdown that names no external outputs is a send
+        /// that paid nothing out, which is exactly what `classifyOutputs`
+        /// writes for it.
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(
+                external: try container.decodeIfPresent([ExternalOutput].self,
+                                                        forKey: .external) ?? [],
+                change: try container.decodeIfPresent([UInt32].self, forKey: .change) ?? [])
+        }
+
+        /// Whether the two lists can describe one transaction: `change` is
+        /// strictly ascending, as the doc above promises, and no vout is
+        /// claimed as both ours and someone else's.
+        ///
+        /// Checked at decode because nothing else can. `classifyOutputs`
+        /// walks the outputs in order and puts each in exactly one list, so
+        /// only a hand-edited or corrupted state file can produce a breakdown
+        /// that contradicts itself — and the amounts beside it are already
+        /// bounded, so leaving the vouts alone made half the field validated
+        /// and half not.
+        var isSelfConsistent: Bool {
+            zip(change, change.dropFirst()).allSatisfy { $0 < $1 }
+                && Set(external.map(\.vout)).isDisjoint(with: change)
         }
     }
 
@@ -549,7 +584,7 @@ public struct WalletState: Codable, Equatable, Sendable {
                 && entry.outputs.map { outputs in
                     outputs.external.allSatisfy {
                         (0 ... BitcoinAmount.maximum).contains($0.amount)
-                    }
+                    } && outputs.isSelfConsistent
                 } ?? true
         }), observedFeeRates.allSatisfy({ $0.isFinite && $0 > 0 && $0 <= 10_000 }) else {
             throw DecodingError.dataCorruptedError(
@@ -1269,10 +1304,25 @@ public actor Wallet {
     /// matched block, rather than against the prepared change output alone:
     /// a payment to one of our own receive addresses is not money leaving,
     /// and the two answers must not disagree about the same transaction.
-    private func classifyOutputs(of transaction: Transaction) throws -> HistoryEntry.Outputs {
+    ///
+    /// Down to the zero-value rule, which is why the `value > 0` test is here
+    /// and not only in `applyOutputs`. A zero-value output is consensus-valid
+    /// and is not a coin, so `applyOutputs` skips it; without the same test a
+    /// 0-sat output paying a watched change script would be listed in
+    /// `change` while being absent from `allUtxos`, and the breakdown would
+    /// name an output the coin set says never existed. Nothing this wallet
+    /// builds can produce one — `TransactionBuilder.build` rejects an empty
+    /// script and selection applies the dust rule — so this keeps the two
+    /// paths literally the same predicate rather than fixing a live bug.
+    ///
+    /// Exposed to the test suite rather than private for the same reason:
+    /// a zero-value output cannot be reached through `buildSend`, so the only
+    /// way to pin the rule is to classify a transaction directly.
+    func classifyOutputs(of transaction: Transaction) throws -> HistoryEntry.Outputs {
         let map = try watchMap()
         var outputs = HistoryEntry.Outputs()
         for (vout, output) in transaction.outputs.enumerated() {
+            guard output.value > 0 else { continue }
             switch map[output.scriptPubKey]?.chain {
             case .change:
                 outputs.change.append(UInt32(vout))

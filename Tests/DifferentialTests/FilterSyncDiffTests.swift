@@ -40,8 +40,15 @@ struct FilterSyncDiffTests {
         let watchScript = try #require(firstFilterableScript(in: block),
                                        "block \(targetHeight) has no filterable output")
 
+        // `filtersPerChunk: 2` on purpose: this is the only test in the repo
+        // that talks to a real bitcoind, and chunking added an interop
+        // requirement nothing else can check — that Core answers a getcfilters
+        // for a sub-batch range with exactly that range and nothing outside
+        // it. Against LoopbackNode it is true by construction. At the default
+        // of 100 the scan here is ~2 blocks, so it is one chunk and the
+        // requirement is never exercised; at 2 it is several.
         let sync = try FilterSync(pool: pool, chain: synced.chain, startHeight: targetHeight,
-                                  requiredCheckpointPeers: 1)
+                                  requiredCheckpointPeers: 1, filtersPerChunk: 2)
         let collector = MatchCollector()
         try await sync.sync(watchScripts: [watchScript]) { match in
             collector.add(match)

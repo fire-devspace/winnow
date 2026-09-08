@@ -46,6 +46,13 @@ public actor LoopbackNode {
     /// reproduces the cfheaders it was sent — so the comparison against
     /// cfcheckpt is the only thing that can.
     public let cfcheckptLieAtHeight: Int?
+    /// Announces at most this many cfcheckpt entries while serving an honest
+    /// cfheaders/cfilters chain: a peer whose checkpoint list stops short of
+    /// the boundaries our tip has, or says nothing at all at zero. Core never
+    /// does this — it returns exactly `stopHeight / 1000` headers — and every
+    /// comparison in `FilterSync` reads the reference list by index, so a
+    /// short list retires the comparisons it omits rather than failing them.
+    public let cfcheckptEntryLimit: Int?
     /// Distinguishes one liar's fabricated commitment chain from another's.
     /// The lie is a byte-flip on every filter hash; with a fixed flip, two
     /// lying nodes fabricate *identical* chains and form a majority for the
@@ -82,6 +89,7 @@ public actor LoopbackNode {
          corruptFilterAtHeight: Int? = nil,
          lieAboutFilterCommitments: Bool = false, lieSalt: UInt8 = 0xFF,
          cfcheckptStopHashOverride: Data? = nil, cfcheckptLieAtHeight: Int? = nil,
+         cfcheckptEntryLimit: Int? = nil,
          disconnectOnUnknownStopHash: Bool = false, claimedStartHeight: Int32? = nil,
          autoRequestDelay: Duration? = nil, transactions: [Transaction] = [],
          startSilent: Bool = false, versionDelay: Duration = .zero) {
@@ -96,6 +104,7 @@ public actor LoopbackNode {
         self.lieSalt = lieSalt
         self.cfcheckptStopHashOverride = cfcheckptStopHashOverride
         self.cfcheckptLieAtHeight = cfcheckptLieAtHeight
+        self.cfcheckptEntryLimit = cfcheckptEntryLimit
         self.autoRequestDelay = autoRequestDelay
         self.transactions = Dictionary(uniqueKeysWithValues: transactions.map { ($0.txid, $0) })
         self.versionDelay = versionDelay
@@ -366,6 +375,7 @@ public actor LoopbackNode {
                 headers.append(header)
                 height += Int(FilterSync.checkpointInterval)
             }
+            if let limit = cfcheckptEntryLimit { headers = Array(headers.prefix(max(0, limit))) }
             try await send(.cfcheckpt(CFCheckptMessage(
                 stopHash: cfcheckptStopHashOverride ?? request.stopHash, filterHeaders: headers)))
 

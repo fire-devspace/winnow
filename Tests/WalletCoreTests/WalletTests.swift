@@ -814,4 +814,154 @@ struct WalletTests {
         #expect(await reopened.feeBumpableTxids == [prepared.built.transaction.txid])
     }
 
+    // MARK: Review follow-ups: the breakdown's own decoding and validation
+
+    /// `Outputs` had the one shape in this patch that did not follow the
+    /// file's `decodeIfPresent ?? default` idiom: the defaults lived on
+    /// `init` only, which Swift's synthesized `init(from:)` ignores, so an
+    /// entry carrying `external` and no `change` threw `keyNotFound` and
+    /// `Wallet.open` refused the whole file. No writer here produces that
+    /// shape, so nothing was bricked — but the argument one level up is that
+    /// a missing key means "not known", and one level down it meant fatal.
+    @Test("a recorded breakdown missing one of its two lists decodes as empty")
+    func outputsDecodeWithAMissingList() async throws {
+        let url = tempFileURL("partial-outputs-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        let good = try Data(contentsOf: url)
+
+        // Drop `change` from the recorded breakdown, keeping everything else.
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var without = outputs
+            without.removeValue(forKey: "change")
+            return without
+        }
+        let reopened = try Wallet.open(storageURL: url, keyStore: keyStore)
+        let entry = try #require(await reopened.history.first {
+            $0.txid == prepared.built.transaction.txid
+        })
+        let outputs = try #require(entry.outputs, "the breakdown still decodes")
+        #expect(outputs.change.isEmpty, "an absent list is an empty one")
+        #expect(outputs.external.count == 1, "the list that is present is unchanged")
+
+        // And the mirror: `external` absent rather than `change`, from the
+        // file as it was written rather than from the one just edited.
+        try good.write(to: url, options: .atomic)
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var without = outputs
+            without.removeValue(forKey: "external")
+            return without
+        }
+        let mirroredWallet = try Wallet.open(storageURL: url, keyStore: keyStore)
+        let mirrored = try #require(await mirroredWallet.history.first {
+            $0.txid == prepared.built.transaction.txid
+        }?.outputs)
+        #expect(mirrored.external.isEmpty)
+        #expect(mirrored.change.count == 1)
+    }
+
+    /// The hostile-input guard bounded every external amount and left the
+    /// vouts beside them unchecked, so a breakdown could claim one vout was
+    /// both ours and a stranger's, or list change out of the ascending order
+    /// its own doc promises. Nothing reads `outputs` for a money decision, so
+    /// this is a self-consistency rule rather than a spend hazard — but half a
+    /// field validated is not what the guard is for.
+    @Test("a self-contradictory recorded breakdown is refused at load")
+    func inconsistentOutputsAreRefused() async throws {
+        let url = tempFileURL("inconsistent-outputs-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        let good = try Data(contentsOf: url)
+
+        // Change claiming a vout the external list already claims: one output
+        // recorded as both ours and a stranger's.
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var contradictory = outputs
+            let external = (outputs["external"] as? [[String: Any]]) ?? []
+            contradictory["change"] = external.compactMap { $0["vout"] as? NSNumber }
+            return contradictory
+        }
+        #expect(throws: (any Error).self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+
+        // Change out of ascending order, which the doc promises and nothing
+        // enforced.
+        try good.write(to: url, options: .atomic)
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var descending = outputs
+            descending["change"] = [7, 3]
+            return descending
+        }
+        #expect(throws: (any Error).self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+
+        // A duplicate is not ascending either.
+        try good.write(to: url, options: .atomic)
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var duplicated = outputs
+            duplicated["change"] = [3, 3]
+            return duplicated
+        }
+        #expect(throws: (any Error).self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+
+        // The unmodified file is the control: it loads.
+        try good.write(to: url, options: .atomic)
+        #expect(throws: Never.self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+    }
+
+    /// `applyOutputs` skips a zero-value output because it is not a coin;
+    /// `classifyOutputs` used to record one anyway, so a 0-sat output paying a
+    /// watched change script would appear in `change` while being absent from
+    /// `allUtxos` — the two paths disagreeing about the same transaction,
+    /// which the doc comment says they must not. Unreachable through
+    /// `buildSend` (the builder refuses an empty script and selection applies
+    /// the dust rule), so the transaction is classified directly.
+    @Test("a zero-value output is in neither list, as it is in neither coin set")
+    func zeroValueOutputsAreNotClassified() async throws {
+        let (wallet, _) = try await fundedWallet(coins: [(.receive, 0, 150_000, 100)])
+        let ourChange = try await wallet.scriptPubKey(chain: .change, index: 0)
+        let stranger = TestScripts.p2trDestination
+        let transaction = Transaction(
+            version: 2,
+            inputs: [Transaction.Input(
+                previousOutput: Transaction.Outpoint(txid: Data(repeating: 9, count: 32), vout: 0),
+                scriptSig: Data(), sequence: 0xFFFF_FFFD)],
+            outputs: [Transaction.Output(value: 0, scriptPubKey: stranger),
+                      Transaction.Output(value: 0, scriptPubKey: ourChange),
+                      Transaction.Output(value: 50_000, scriptPubKey: stranger),
+                      Transaction.Output(value: 90_000, scriptPubKey: ourChange)],
+            locktime: 0)
+
+        let outputs = try await wallet.classifyOutputs(of: transaction)
+        #expect(outputs.external.map(\.vout) == [2], "the 0-sat payment out is not money leaving")
+        #expect(outputs.external.map(\.amount) == [50_000])
+        #expect(outputs.change == [3], "the 0-sat change output is not a coin, so it is not change")
+    }
+
+    /// Reads the last history entry's `outputs` object out of a state file,
+    /// hands it to `transform`, and writes the file back. The p10 tests each
+    /// rewrote the file inline; the follow-ups need several variations of one
+    /// edit, so the surgery is in one place.
+    private static func rewriteLastEntryOutputs(
+        in url: URL, _ transform: ([String: Any]) -> [String: Any]) throws {
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        var json = try #require(object as? [String: Any])
+        var entries = try #require(json["history"] as? [[String: Any]])
+        var last = try #require(entries.last)
+        last["outputs"] = transform(try #require(last["outputs"] as? [String: Any]))
+        entries[entries.count - 1] = last
+        json["history"] = entries
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+    }
+
 }

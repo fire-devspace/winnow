@@ -197,6 +197,15 @@ public actor FilterSync {
     /// is for a scheduler that must hand control back on a deadline — a
     /// foreground-only scan on a phone — rather than run to the tip once.
     ///
+    /// **Pass a multiple of `maxRangePerRequest`.** The ceiling shortens the
+    /// last batch, so a multiple costs nothing extra; a ceiling *below*
+    /// `maxRangePerRequest` makes every batch that short, and the batch is
+    /// what the 3-peer cfheaders cross-check covers and what the whole-file
+    /// `persist` is paid for. At `maxBlocks: 100` both happen ten times as
+    /// often per block scanned as at 1000 — the same cost chunking exists to
+    /// avoid, reinstated from the other end. Chunking is the knob for memory
+    /// (`filtersPerChunk`); this one is for how long a run may take.
+    ///
     /// `onReorg` is called with the fork height when the header sync replaced a
     /// branch, and is awaited **before** any filter work resumes.
     ///
@@ -252,6 +261,29 @@ public actor FilterSync {
         // to serve filters.
         let checkpoints = try await collectedCheckpoints(from: peers, tipHash: tipHash)
         let reference = try await majorityReference(of: checkpoints)
+        // The reference must speak for every boundary our tip has. Core's
+        // ProcessGetCFCheckPt returns exactly `stopHeight / 1000` headers, so
+        // a shorter list is not a terse peer — it is a list that says nothing
+        // about the boundaries it omits, and every comparison below reads the
+        // reference by index and compares only the heights it mentions. An
+        // empty list therefore retired all three of them at once (the
+        // pre-loop check below, the per-batch check inside the loop, and the
+        // final guard, which short-circuits on a nil `last`) and the sync
+        // reported success on a filter-commitment chain no checkpoint ever
+        // covered. Filters crafted not to match make real payments invisible
+        // while the frontier advances past them for good, so the failure is
+        // silent and durable.
+        //
+        // A sub-1000-block chain announcing nothing is honest, and this
+        // permits it: the expectation is the count our own tip implies, which
+        // is zero there. Bounding the length is also what makes the per-batch
+        // comparison complete rather than merely early — it fails closed here,
+        // before any batch has committed anything.
+        let expectedCheckpoints = Int(tip / Self.checkpointInterval)
+        guard reference.filterHeaders.count == expectedCheckpoints else {
+            throw FilterSyncError.checkpointMismatch(
+                "cfcheckpt announced \(reference.filterHeaders.count) checkpoints for tip \(tip), expected \(expectedCheckpoints)")
+        }
         // The list was captured before any eviction, and `misbehaving`
         // triggers `replenish`, so a plain re-read could hand back brand-new
         // peers that never went through this comparison. Intersect, never
@@ -313,10 +345,14 @@ public actor FilterSync {
         // that stopped below that height has not pinned it yet, so there is
         // nothing to compare and the run that reaches it does the comparing.
         //
-        // The per-batch comparison walks the reference by index, so it cannot
-        // notice a reference list that stops short of the boundaries we
-        // scanned. This one ties the last announced entry to the last
-        // boundary, which is the case that survives it.
+        // The per-batch comparison walks the reference by index, so on its own
+        // it says nothing about boundaries the reference does not mention: a
+        // short list would have let those batches commit first and an empty
+        // one would have said nothing at all. That case is closed above, where
+        // the announced count is tied to the tip before any batch runs. This
+        // guard is what is left over — a second reading of the same reference
+        // at the one height that matters most — kept because it is free and
+        // because it fails on a different comparison than the loop does.
         let lastCheckpoint = (tip / Self.checkpointInterval) * Self.checkpointInterval
         if lastCheckpoint > 0, let pinned = filterHeader(at: lastCheckpoint),
            let announced = reference.filterHeaders.last, pinned != announced {
@@ -745,6 +781,15 @@ public actor FilterSync {
     /// is now per request: at a flat 120 seconds a peer that answered every
     /// chunk just inside it could hold one batch ten times as long as it could
     /// before.
+    ///
+    /// The floor, not the share, is what binds at the default chunk size, and
+    /// the aggregate is worth saying out loud: only chunks of ≥250 filters get
+    /// more than 30 seconds, so a 1000-block batch at `filtersPerChunk = 100`
+    /// is ten chunks of 30 seconds — 300 seconds of slow-drip budget, up from
+    /// 120. That is deliberate: 12 seconds is too short for a round trip on a
+    /// bad link, and the per-filter allowance an honest slow peer actually
+    /// needs went the other way (0.30 s against 0.12 s). Lower the floor if
+    /// the aggregate ever matters more than the honest slow peer does.
     private static func chunkTimeout(filters: Int) -> Duration {
         .seconds(max(30, 120 * filters / Int(maxRangePerRequest)))
     }
