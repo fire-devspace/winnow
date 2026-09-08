@@ -11,8 +11,14 @@
 <style>
 main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 .app-shot{float:right;width:min(34%,220px);height:auto;margin:0 0 1.5rem 2rem;border:1px solid var(--rule);border-radius:1.4rem}
-.journey details{margin:1.2rem 0;color:var(--ink-2)} summary{cursor:pointer;color:var(--seed);font-weight:600}
-.journey ol{margin:1rem 0 1rem 1.3rem} .journey li{margin:.45rem 0} .journey details a{overflow-wrap:anywhere}
+.test-link,.dialog-close{font:inherit;cursor:pointer;color:var(--seed);background:none;border:0;min-height:44px}
+.test-link{margin:.5rem 0;font-size:.95rem;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.dialog-close{padding:.4rem .7rem;border:1px solid var(--rule-2);border-radius:.5rem}
+dialog{margin:auto;width:min(42rem,calc(100% - 2rem));max-height:calc(100% - 2rem);overflow:auto;padding:clamp(1rem,4vw,2rem);border:1px solid var(--rule-2);border-radius:1rem;background:var(--paper);color:var(--ink)}
+dialog::backdrop{background:rgb(0 0 0 / .55)} html:has(dialog[open]){overflow:hidden}
+.dialog-heading{display:flex;align-items:flex-start;gap:1rem;justify-content:space-between}
+.dialog-heading h2{margin:0;padding:0;border:0} .dialog-heading form{flex-shrink:0}
+dialog a{overflow-wrap:anywhere}
 .action{display:inline-block;background:var(--seed);color:var(--paper);padding:.7rem 1rem;border-radius:.6rem;font-weight:650}
 .jump-links{display:flex;flex-wrap:wrap;gap:.6rem 1rem;margin:1.5rem 0;font-size:.95rem}
 .limit{border-left:2px solid var(--rule-2);padding-left:1rem}
@@ -40,58 +46,86 @@ main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 <h2>Require another signing device</h2><p>Add an independent signing key to your phone wallet. In a 2-of-2 MuSig2 account, both keys must participate in every payment; the final Taproot signature does not reveal the signer count.</p>
 <p class="limit"><strong>Know before using it:</strong> The second signer in this journey is a software fixture, not a hardware wallet. Desktop and hardware-wallet integrations remain unverified. Every required key needs a backup; this policy has no alternate recovery branch.</p>
 <p><a href="/vaults">Read the advanced guide</a></p>
-<details><summary>How this journey is checked</summary><ol>
+<button class="test-link" type="button" data-dialog="second-device-tests" aria-controls="second-device-tests" aria-haspopup="dialog">How this is tested</button>
+<dialog id="second-device-tests" aria-labelledby="second-device-tests-title">
+<div class="dialog-heading"><h2 id="second-device-tests-title">How we test: Require another signing device</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Open the extra-device flow from Wallet in Advanced mode and verify the 2-of-2 policy.</li>
 <li>Fund it, create a payment, and confirm that one signer cannot broadcast.</li>
 <li>Abandon a nonce session and verify that reopening cannot resume it.</li>
 <li>Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1503">test16MuSig2RequiresSecondDevice</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
+. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
+<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
+<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
 <section class="journey" id="vaults">
 <h2>Inspect and import signing policies</h2><p>Create a Taproot vault from public signer keys and coordinate approvals using PSBT text. Inspect the policy and reviewed transaction explicitly.</p>
 <img class="app-shot" src="screenshots/11-vault-list.png" width="1320" height="2868" loading="lazy" alt="Inspect and import signing policies in the signet test app.">
 <p class="limit"><strong>Know before using it:</strong> Raw policy tools are Advanced features. Script-path interoperability is tested with Bitcoin Core. A successful MuSig2 exchange with the test fixture does not resolve the separately documented Core round-two compatibility gap.</p>
 <p><a href="/core-cosigner">Read the advanced guide</a></p>
-<details><summary>How this journey is checked</summary><ol>
+<button class="test-link" type="button" data-dialog="vaults-tests" aria-controls="vaults-tests" aria-haspopup="dialog">How this is tested</button>
+<dialog id="vaults-tests" aria-labelledby="vaults-tests-title">
+<div class="dialog-heading"><h2 id="vaults-tests-title">How we test: Inspect and import signing policies</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Create a vault through the advanced form.</li>
 <li>Import an approval request, review it, and contribute the device’s signature.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L377">test04VaultCreate</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L561">test07ApproveRequest</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
+. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
+<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
+<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
 <section class="journey" id="groups">
 <h2>Use a group as a vault cosigner</h2><p>Combine a group cosigner with a threshold vault, then complete the required approvals and broadcast the resulting spend.</p>
 <p class="limit"><strong>Know before using it:</strong> This requires the full group signing ceremony and its other vault approvals. Losing required participants can prevent spending.</p>
-<details><summary>How this journey is checked</summary><ol>
+<button class="test-link" type="button" data-dialog="groups-tests" aria-controls="groups-tests" aria-haspopup="dialog">How this is tested</button>
+<dialog id="groups-tests" aria-labelledby="groups-tests-title">
+<div class="dialog-heading"><h2 id="groups-tests-title">How we test: Use a group as a vault cosigner</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Build and fund a vault containing the group’s synthetic key.</li>
 <li>Complete its signing rounds and confirm the final spend through the app.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1006">test13GroupCosignerVault</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
+. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
+<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
+<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
 <section class="journey" id="fees">
 <h2>Replace a pending payment with a higher fee</h2><p>Review a replacement’s fee and change before authorizing it. The original remains visible as replaced.</p>
-<details><summary>How this journey is checked</summary><ol>
+<button class="test-link" type="button" data-dialog="fees-tests" aria-controls="fees-tests" aria-haspopup="dialog">How this is tested</button>
+<dialog id="fees-tests" aria-labelledby="fees-tests-title">
+<div class="dialog-heading"><h2 id="fees-tests-title">How we test: Replace a pending payment with a higher fee</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Send a payment and leave it in the node’s mempool.</li>
 <li>Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1451">test15ReviewAndReplacePendingPayment</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
+. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
+<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
+<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
 <section class="journey" id="network">
 <h2>Inspect peers and control external disclosure</h2><p>Inspect connected peers and network settings. Explorer links open only after an explicit warning about the information sent to that website.</p>
 <p class="limit"><strong>Know before using it:</strong> Explorer websites are not wallet backends. A single or coordinated set of peers can still withhold information; multiple connections are not proof of independent operators.</p>
-<details><summary>How this journey is checked</summary><ol>
+<button class="test-link" type="button" data-dialog="network-tests" aria-controls="network-tests" aria-haspopup="dialog">How this is tested</button>
+<dialog id="network-tests" aria-labelledby="network-tests-title">
+<div class="dialog-heading"><h2 id="network-tests-title">How we test: Inspect peers and control external disclosure</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Open the real peer settings.</li>
 <li>Open an explorer warning and cancel before leaving the app.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L427">test05SettingsPeersAndExplorerWarning</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p></details></section>
-<section id="evidence"><h2>What the evidence means</h2>
-<p>Each journey above links to tests that drive the actual app against a disposable signet node. Images show test wallets. A screenshot or a test’s presence in the source is not a passing result: inspect the linked run for its revision, failures, and result bundle.</p>
-<p>Cryptographic vectors, hostile-peer checks, storage failures, and Bitcoin Core comparisons support these journeys. They establish properties that a successful screen flow alone cannot show. <a href="/testing">Explore the testing suites and their artifacts</a>, or read the <a href="https://github.com/winnowwallet/winnow/blob/main/docs/testing.md">testing and feature policy</a>.</p>
-<p>Simulator results do not establish hardware security, battery life, or independent security review. <a href="/roadmap">Those release requirements and future features live on the separate roadmap</a>.</p>
-</section>
+. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
+<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
+<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
+<p id="evidence"><a href="/testing">About the testing suites and their evidence</a></p>
 <section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='https://github.com/winnowwallet/winnow/blob/main/Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>
 </main>
 <footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/architecture">How it works</a></div></footer>
+<script>
+document.querySelectorAll('[data-dialog]').forEach(button => {
+  const dialog = document.getElementById(button.dataset.dialog);
+  button.addEventListener('click', () => dialog.showModal());
+  dialog.addEventListener('click', event => {
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+  });
+});
+</script>
 </body>
 </html>
