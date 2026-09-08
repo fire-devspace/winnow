@@ -5,16 +5,19 @@ import TestSupport
 @testable import WalletCore
 
 /// FilterSync end to end, by subject: the happy path over a real loopback
-/// transport, what the on-disk progress file may and may not say, which pinned
-/// headers survive a batch, how the frontier rewinds under a reorg, and the
-/// BIP158 arithmetic underneath it all.
+/// transport, how a bounded run stops and resumes, what the on-disk progress
+/// file may and may not say, which pinned headers survive a batch, how the
+/// frontier rewinds under a reorg, and the BIP158 arithmetic underneath it
+/// all.
 ///
 /// Merged from `LoopbackTests`, `FilterSyncPersistenceTests`,
 /// `FilterProgressRollbackTests` and `FilterMatchingTests`; each `// MARK:`
-/// below is one of those suites, in that order, apart from the pruning section
-/// between the second and third, which came later and belongs to neither. The
-/// loopback sections open real 127.0.0.1 listeners — no external network — and
-/// the last two sections touch no socket at all.
+/// below is one of those suites, in that order, apart from two later
+/// sections: the bounded-run and chunked-fetch tests, which sit with the
+/// loopback tests they extend, and the pruning section between the second and
+/// third, which belongs to neither. The loopback sections open real 127.0.0.1
+/// listeners — no external network — and the last two sections touch no
+/// socket at all.
 @Suite("FilterSync")
 struct FilterSyncTests {
 
@@ -217,6 +220,145 @@ struct FilterSyncTests {
             try await sync.sync(watchScripts: []) { _ in }
         }
         await pool.stop()
+    }
+
+    // MARK: - Bounded runs and chunked fetching
+
+    /// `maxBlocks` is what makes a scan that cannot run to the tip possible:
+    /// the run stops at its ceiling, saves what it scanned, and the next call
+    /// starts from the saved frontier rather than the wallet's start height.
+    ///
+    /// The ceiling also shortens the batch rather than working around it, so
+    /// the cfheaders cross-check still covers exactly the blocks the run
+    /// scanned — asserted here on what the node was actually asked.
+    @Test("a run with maxBlocks stops at its ceiling and the next resumes from disk")
+    func boundedRunStopsAndResumes() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("bounded-progress.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1)
+        let collector = MatchCollector()
+
+        try await sync.sync(watchScripts: [synthetic.watchScript], maxBlocks: 2) {
+            collector.add($0)
+        }
+        #expect(await sync.nextScanHeight == 3)
+        #expect(collector.matches.isEmpty, "the block that pays us is above this ceiling")
+
+        // The ceiling counts from the frontier, so this run covers 3 ... 4 and
+        // finds the payment the first run stopped short of.
+        try await sync.sync(watchScripts: [synthetic.watchScript], maxBlocks: 2) {
+            collector.add($0)
+        }
+        #expect(await sync.nextScanHeight == 5)
+        #expect(collector.matches.map(\.height) == [synthetic.watchHeight])
+
+        // Each run asked for cfheaders over exactly the blocks it scanned:
+        // a shorter batch, not a batch skipped.
+        let cfheaderRanges = await node.receivedMessages.compactMap { message -> UInt32? in
+            guard case let .getcfheaders(request) = message else { return nil }
+            return request.startHeight
+        }
+        #expect(cfheaderRanges == [1, 3])
+
+        // A fresh instance reads the bounded frontier, and an unbounded run
+        // from there finishes the chain.
+        let reloaded = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                      storageURL: progressFile, requiredCheckpointPeers: 1)
+        #expect(await reloaded.nextScanHeight == 5)
+        try await reloaded.sync(watchScripts: [synthetic.watchScript]) { collector.add($0) }
+        #expect(await reloaded.nextScanHeight == 7)
+        #expect(collector.matches.map(\.height) == [synthetic.watchHeight])
+    }
+
+    /// Chunking changes how the filters are fetched and nothing else, so the
+    /// two paths have to agree on everything outside FilterSync: the same
+    /// matches, and the same saved progress. What differs is what the scan
+    /// holds while it works.
+    @Test("a chunked scan and a whole-batch scan agree, and the chunked one holds less")
+    func chunkedScanMatchesWholeBatch() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let whole = try await scanWholeChain(synthetic, filtersPerChunk: 1_000)
+        let chunked = try await scanWholeChain(synthetic, filtersPerChunk: 2)
+
+        #expect(whole.matches.map(\.height) == chunked.matches.map(\.height))
+        #expect(whole.matches.map(\.blockHash) == chunked.matches.map(\.blockHash))
+        #expect(whole.matches.count == 1)
+        #expect(whole.progress == chunked.progress)
+
+        // One request for the whole batch, against one per chunk: 1 ... 2,
+        // 3 ... 4, 5 ... 6. The stop hashes say the ranges are real.
+        #expect(whole.filterRequests.map(\.startHeight) == [1])
+        #expect(chunked.filterRequests.map(\.startHeight) == [1, 3, 5])
+        #expect(chunked.filterRequests.map(\.stopHash)
+            == [2, 4, 6].map { synthetic.blocks[$0].hash })
+
+        // The point of the chunks: peak buffered filter bytes follow the chunk
+        // size, not the batch length. Two filters of six, on a fixture whose
+        // blocks are all about the same size, is comfortably under half.
+        #expect(chunked.peakChunkBytes > 0)
+        #expect(chunked.peakChunkBytes * 2 <= whole.peakChunkBytes)
+    }
+
+    @Test("the scan ceiling counts from the frontier, stops at the tip, and never traps")
+    func scanCeilingArithmetic() {
+        #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 10, tip: 1_000) == 109)
+        #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 1, tip: 1_000) == 100)
+        #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 10_000, tip: 1_000) == 1_000)
+        #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: nil, tip: 1_000) == 1_000)
+        // No room means no blocks, which is not the same as no ceiling.
+        #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 0, tip: 1_000) == nil)
+        // "As far as you can get" must not overflow the addition.
+        #expect(FilterSync.scanCeiling(frontier: .max - 1, maxBlocks: .max, tip: .max) == .max)
+    }
+
+    /// What one scan of the whole synthetic chain did, over its own loopback
+    /// node so two chunk sizes can be compared without either seeing the
+    /// other's connection.
+    private struct ScanOutcome {
+        let matches: [BlockMatch]
+        let progress: FilterSync.Progress
+        let peakChunkBytes: Int
+        let filterRequests: [GetCFiltersRequest]
+    }
+
+    private func scanWholeChain(_ synthetic: SyntheticChain,
+                                filtersPerChunk: UInt32) async throws -> ScanOutcome {
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("chunked-progress.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1,
+                                  filtersPerChunk: filtersPerChunk)
+        let collector = MatchCollector()
+        try await sync.sync(watchScripts: [synthetic.watchScript]) { collector.add($0) }
+        let saved = try JSONDecoder().decode(FilterSync.Progress.self,
+                                             from: Data(contentsOf: progressFile))
+        let requests = await node.receivedMessages.compactMap { message -> GetCFiltersRequest? in
+            guard case let .getcfilters(request) = message else { return nil }
+            return request
+        }
+        return ScanOutcome(matches: collector.matches, progress: saved,
+                           peakChunkBytes: await sync.peakChunkFilterBytesForTest,
+                           filterRequests: requests)
     }
 
     // MARK: - FilterSync persistence

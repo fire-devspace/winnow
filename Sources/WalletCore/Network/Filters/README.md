@@ -16,6 +16,12 @@ rewind into, which ends at the anchor the next batch checks a peer's answer
 against. Keeping that anchor is the condition, not the goal — with no anchor to
 keep, nothing is pruned at all.
 
+A batch of up to 1000 blocks stays the span peers are cross-checked over and
+the span progress is saved after, but its filters are requested a chunk at a
+time and matched as each chunk lands, so a scan holds one chunk rather than a
+whole batch. A caller that cannot run to the tip in one go passes `maxBlocks`
+to bound a single run; the next one resumes from the saved frontier.
+
 [The app](../../../WinnowApp/AppModel.swift) coordinates scanning with
 [wallet state](../../Wallet/README.md),
 [headers](../Headers/README.md), and
