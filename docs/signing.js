@@ -20,7 +20,7 @@ document.querySelectorAll('.signing-story').forEach(story => {
     // Reset without animating backwards before starting a new playback.
     void scene.offsetWidth;
     scene.classList.add('is-playing');
-    [700, 1900, 2900].forEach((delay, index) => {
+    [800, 2100, 3400].forEach((delay, index) => {
       timers.push(setTimeout(() => { scene.dataset.step = String(index + 1); }, delay));
     });
   };
@@ -53,3 +53,18 @@ document.querySelectorAll('.signing-story').forEach(story => {
   reducedMotion.addEventListener('change', () => selectScene());
   selectScene();
 });
+
+// Keep mobile browsing short; the same content stays one tap away.
+const compact = window.matchMedia('(max-width: 40rem)');
+const journeys = [...document.querySelectorAll('details.journey')];
+const revealLinkedJourney = () => {
+  const linked = document.getElementById(window.location.hash.slice(1));
+  if (journeys.includes(linked)) linked.open = true;
+};
+const arrangeJourneys = () => {
+  journeys.forEach(journey => { journey.open = !compact.matches; });
+  revealLinkedJourney();
+};
+compact.addEventListener('change', arrangeJourneys);
+window.addEventListener('hashchange', revealLinkedJourney);
+arrangeJourneys();

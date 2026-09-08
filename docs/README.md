@@ -12,7 +12,10 @@ which generates home and Advanced pages. Other pages are authored directly.
 [signing.js](signing.js) runs the homepage’s signing examples: a stolen hardware
 key, a separate approved payment, shared savings, and a possible future loan.
 Each scene plays once, has replay controls, and shows a still version for reduced
-motion. Without JavaScript, all scenes remain readable. The drawings come from
+motion. Approvals travel to the payment; MuSig2 approvals merge into one on-chain
+signature, while shared spending reveals its three keys and two-approval rule.
+On mobile, app journeys start folded into expandable rows; linked journeys open
+automatically. Without JavaScript, all scenes and journeys remain readable. The drawings come from
 the page generator and use [site.css](site.css); no animation library is needed.
 [The roadmap](roadmap.html) separates planned work from current behavior.
 [Architecture](architecture.html) links directly to the focused technical guides.
