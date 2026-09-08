@@ -6,6 +6,15 @@ Balances, coin selection, fees, recovery imports, people, and vault policies liv
 here. They supply the state and decisions behind receiving, sending, recovery,
 and shared savings; the GUI should not carry a second wallet implementation.
 
+A `HistoryEntry` for a transaction this wallet built records where its outputs
+went — the scripts and amounts it paid, and which of its own outputs were
+change — when [Wallet](Wallet.swift) commits the send, and keeps that record
+through confirmation. The pending record holding the same facts is retired by
+the block that includes the transaction, so without this a confirmed payment
+could say how much left and never to whom. An entry with no breakdown is one
+this wallet did not build, or one written before the breakdown existed: absent
+means not known, not that the transaction paid nobody.
+
 [FeePolicy](FeePolicy.swift) resolves the feerate a send is priced at: an explicit
 user override first, then an optional estimate the embedder supplies (this fork
 adds that parameter for Fire's own fee gateway; upstream has no estimator, the

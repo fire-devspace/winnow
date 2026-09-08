@@ -121,11 +121,12 @@ public struct WalletUTXO: Equatable, Sendable, Codable {
     /// so a reorg can put it back (#127).
     ///
     /// Rescanning forward from the fork cannot recreate a coin whose *creating*
-    /// transaction is below the fork, and `HistoryEntry` cannot help: it stores
-    /// aggregates -- txid, height, received, spent, fee -- with no outpoints,
-    /// scripts, or derivation indices. From "this transaction spent 50,000 sats
-    /// of ours" there is no way back to *which coins*. So the one fact that was
-    /// being thrown away is retained, and everything else is still re-derived.
+    /// transaction is below the fork, and `HistoryEntry` cannot help: it records
+    /// what a transaction paid out, never which coins it spent -- aggregates,
+    /// with no prevouts and no derivation indices. From "this transaction spent
+    /// 50,000 sats of ours" there is no way back to *which coins*. So the one
+    /// fact that was being thrown away is retained, and everything else is
+    /// still re-derived.
     public var spent: SpentMarker?
 
     /// What spent a coin, and when.
@@ -239,18 +240,88 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
     /// history so the old tx is rendered as replaced, not as a second pending
     /// payment. Internal byte order; JSON uses display hex.
     public var replacedBy: Data?
+    /// Where this transaction's outputs went, recorded when the wallet built
+    /// it and kept when it confirms. Nothing else outlives confirmation: the
+    /// `PendingSend` holding the same facts while a send is in flight is
+    /// retired by the block that includes it, and after that a confirmed
+    /// payment could say only how much left, never to whom.
+    ///
+    /// Absent means not known, never "paid nobody". Entries written before
+    /// this was recorded have no breakdown, and neither do transactions the
+    /// wallet merely observed on chain, whose other recipients are not ours
+    /// to keep and are bounded only by the block. A send that paid nothing
+    /// out records an empty `external` instead.
+    public var outputs: Outputs?
+
+    /// A transaction's outputs as this wallet saw them: what it paid out, and
+    /// which of the outputs it kept were change.
+    ///
+    /// An output that was ours and not change -- a payment to one of our own
+    /// receive addresses -- is in neither list. That is a coin, and coins are
+    /// kept in `allUtxos`.
+    public struct Outputs: Equatable, Sendable, Codable {
+        /// Outputs paying scripts that are not ours, in transaction order.
+        public var external: [ExternalOutput]
+        /// Vouts of the outputs that were ours and were change, ascending.
+        public var change: [UInt32]
+
+        public init(external: [ExternalOutput] = [], change: [UInt32] = []) {
+            self.external = external
+            self.change = change
+        }
+    }
+
+    /// One output that paid someone else. The scriptPubKey rather than an
+    /// address, because an address is a rendering of a script and not every
+    /// script has one; the vout so the record can be checked against the
+    /// transaction it describes.
+    public struct ExternalOutput: Equatable, Sendable, Codable {
+        public var vout: UInt32
+        public var amount: Int64
+        public var scriptPubKey: Data // JSON as hex, like a coin's
+
+        public init(vout: UInt32, amount: Int64, scriptPubKey: Data) {
+            self.vout = vout
+            self.amount = amount
+            self.scriptPubKey = scriptPubKey
+        }
+
+        private enum CodingKeys: String, CodingKey { case vout, amount, scriptPubKey }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            guard let scriptPubKey = Data(hex: try container.decode(String.self,
+                                                                    forKey: .scriptPubKey)) else {
+                throw DecodingError.dataCorruptedError(forKey: .scriptPubKey, in: container,
+                                                       debugDescription: "bad scriptPubKey hex")
+            }
+            self.init(vout: try container.decode(UInt32.self, forKey: .vout),
+                      amount: try container.decode(Int64.self, forKey: .amount),
+                      scriptPubKey: scriptPubKey)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(vout, forKey: .vout)
+            try container.encode(amount, forKey: .amount)
+            try container.encode(scriptPubKey.hex, forKey: .scriptPubKey)
+        }
+    }
 
     public init(txid: Data, height: UInt32, received: Int64, spent: Int64,
-                fee: Int64? = nil, replacedBy: Data? = nil) {
+                fee: Int64? = nil, replacedBy: Data? = nil, outputs: Outputs? = nil) {
         self.txid = txid
         self.height = height
         self.received = received
         self.spent = spent
         self.fee = fee
         self.replacedBy = replacedBy
+        self.outputs = outputs
     }
 
-    private enum CodingKeys: String, CodingKey { case txid, height, received, spent, fee, replacedBy }
+    private enum CodingKeys: String, CodingKey {
+        case txid, height, received, spent, fee, replacedBy, outputs
+    }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -273,7 +344,10 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
                   received: try container.decode(Int64.self, forKey: .received),
                   spent: try container.decode(Int64.self, forKey: .spent),
                   fee: try container.decodeIfPresent(Int64.self, forKey: .fee),
-                  replacedBy: replacedBy)
+                  replacedBy: replacedBy,
+                  // Absent in every state file written before the breakdown
+                  // existed, which decodes as not known rather than as empty.
+                  outputs: try container.decodeIfPresent(Outputs.self, forKey: .outputs))
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -284,6 +358,9 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
         try container.encode(spent, forKey: .spent)
         try container.encodeIfPresent(fee, forKey: .fee)
         try container.encodeIfPresent(replacedBy?.displayHex, forKey: .replacedBy)
+        // Absent when not known, so an entry that predates the breakdown is
+        // written back exactly as it was read.
+        try container.encodeIfPresent(outputs, forKey: .outputs)
     }
 }
 
@@ -469,6 +546,11 @@ public struct WalletState: Codable, Equatable, Sendable {
                 && (0 ... BitcoinAmount.maximum).contains(entry.received)
                 && (0 ... BitcoinAmount.maximum).contains(entry.spent)
                 && entry.fee.map { (0 ... BitcoinAmount.maximum).contains($0) } ?? true
+                && entry.outputs.map { outputs in
+                    outputs.external.allSatisfy {
+                        (0 ... BitcoinAmount.maximum).contains($0.amount)
+                    }
+                } ?? true
         }), observedFeeRates.allSatisfy({ $0.isFinite && $0 > 0 && $0 <= 10_000 }) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .history, in: container,
@@ -901,7 +983,10 @@ public actor Wallet {
             }
         }
         if let existing = state.history.firstIndex(where: { $0.txid == txid }) {
-            // Known pending send (height 0) reaching confirmation.
+            // Known pending send (height 0) reaching confirmation. Only the
+            // height moves: the entry's record of where its outputs went was
+            // written at commit, and retiring the pending send below is
+            // exactly why confirmation must not drop it too.
             state.history[existing].height = height
         } else {
             state.history.append(HistoryEntry(txid: txid, height: height,
@@ -1176,6 +1261,32 @@ public actor Wallet {
         }
     }
 
+    /// Sorts a transaction's outputs into what left the wallet and which of
+    /// the outputs it kept were change, so a confirmed send can still say
+    /// where it paid.
+    ///
+    /// Classified against the same watched-script map `apply` uses on a
+    /// matched block, rather than against the prepared change output alone:
+    /// a payment to one of our own receive addresses is not money leaving,
+    /// and the two answers must not disagree about the same transaction.
+    private func classifyOutputs(of transaction: Transaction) throws -> HistoryEntry.Outputs {
+        let map = try watchMap()
+        var outputs = HistoryEntry.Outputs()
+        for (vout, output) in transaction.outputs.enumerated() {
+            switch map[output.scriptPubKey]?.chain {
+            case .change:
+                outputs.change.append(UInt32(vout))
+            case .receive:
+                continue
+            case nil:
+                outputs.external.append(HistoryEntry.ExternalOutput(
+                    vout: UInt32(vout), amount: output.value,
+                    scriptPubKey: output.scriptPubKey))
+            }
+        }
+        return outputs
+    }
+
     /// Commits a prepared send to wallet state: the spent UTXOs leave the
     /// spendable set at once (so a second send can't double-spend the
     /// unconfirmed tx) and the change output enters it as pending (height 0)
@@ -1214,7 +1325,8 @@ public actor Wallet {
         updated.history.append(HistoryEntry(txid: signed.txid, height: 0,
                                           received: prepared.change?.amount ?? 0,
                                           spent: prepared.selected.reduce(0) { $0 + $1.amount },
-                                          fee: prepared.fee))
+                                          fee: prepared.fee,
+                                          outputs: try classifyOutputs(of: signed)))
         updated.pendingSends.append(PendingSend(
             rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,
             changeIndex: prepared.change == nil ? nil : prepared.changeIndex,
@@ -1323,7 +1435,8 @@ public actor Wallet {
         updated.history[historyIndex].replacedBy = signed.txid
         updated.history.append(HistoryEntry(
             txid: signed.txid, height: 0, received: prepared.change?.amount ?? 0,
-            spent: prepared.selected.reduce(0) { $0 + $1.amount }, fee: prepared.built.fee))
+            spent: prepared.selected.reduce(0) { $0 + $1.amount }, fee: prepared.built.fee,
+            outputs: try classifyOutputs(of: signed)))
         updated.pendingSends.remove(at: pendingIndex)
         updated.pendingSends.append(PendingSend(
             rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,

@@ -176,6 +176,9 @@ public struct ImportBundle: Codable, Equatable, Sendable {
                      isCoinbase: utxo.isCoinbase ? true : nil)
             },
             transactions: history.map { entry in
+                // The v2 schema is frozen and carries no output breakdown, so
+                // an entry's `outputs` does not cross an export: it comes back
+                // not known, the same as one written before it was recorded.
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
                                  received: entry.received, spent: entry.spent, fee: entry.fee,
                                  replacedBy: entry.replacedBy?.displayHex)
