@@ -41,27 +41,28 @@ dialog a{overflow-wrap:anywhere}
 
 <p>Wallet reads use Bitcoin peers and compact block filters. Keys are stored in this device’s Keychain; secret exports are explicit. No address-query service supplies the wallet’s balance.</p>
 
-<nav class="jump-links" aria-label="Journeys"><a href="#second-device">Require another signing device</a> <a href="#vaults">Inspect and import signing policies</a> <a href="#groups">Use a group as a vault cosigner</a> <a href="#fees">Replace a pending payment with a higher fee</a> <a href="#network">Inspect peers and control external disclosure</a></nav>
+<nav class="jump-links" aria-label="Journeys"><a href="#second-device">Combine your phone with another signer</a> <a href="#vaults">Inspect and import signing policies</a> <a href="#fees">Replace a pending payment with a higher fee</a> <a href="#network">Inspect peers and control external disclosure</a></nav>
 <section class="journey" id="second-device">
-<h2>Require another signing device</h2><p>Add an independent signing key to your phone wallet. In a 2-of-2 MuSig2 account, both keys must participate in every payment; the final Taproot signature does not reveal the signer count.</p>
-<p class="limit"><strong>Know before using it:</strong> The intended setup pairs your phone with a MuSig2-compatible hardware wallet or a desktop wallet such as Bitcoin Core. Those integrations remain unverified; this journey uses a software test signer. Back up both keys; there is no alternate recovery path.</p>
+<h2>Combine your phone with another signer</h2><p>Use 2-of-2 MuSig2 so your phone and a separate key must both approve every payment. You can also use a MuSig2 group as one cosigner in a larger threshold vault.</p>
+<p class="limit"><strong>Know before using it:</strong> The intended second signer is a compatible hardware wallet or a desktop wallet such as Bitcoin Core. Direct MuSig2 signing with Core and hardware-wallet integration remain unverified. Back up every required key; the MuSig2 group has no alternate recovery path.</p>
 <p><a href="/vaults">Read the advanced guide</a></p>
 <button class="test-link" type="button" data-dialog="second-device-tests" aria-controls="second-device-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="second-device-tests" aria-labelledby="second-device-tests-title">
-<div class="dialog-heading"><h2 id="second-device-tests-title">How we test: Require another signing device</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
+<div class="dialog-heading"><h2 id="second-device-tests-title">How we test: Combine your phone with another signer</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
 <li>Open the extra-device flow from Wallet in Advanced mode and verify the 2-of-2 policy.</li>
 <li>Fund it, create a payment, and confirm that one signer cannot broadcast.</li>
 <li>Abandon a nonce session and verify that reopening cannot resume it.</li>
 <li>Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend.</li>
+<li>In a separate group-as-cosigner flow, build and fund a threshold vault containing the group’s synthetic key.</li>
+<li>Complete the group’s signing rounds and the other required vault approvals, then confirm the final spend through the app.</li>
 </ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1503">test16MuSig2RequiresSecondDevice</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1503">test16MuSig2RequiresSecondDevice</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1006">test13GroupCosignerVault</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
 <p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
 <p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
 <section class="journey" id="vaults">
 <h2>Inspect and import signing policies</h2><p>Create a Taproot vault from public signer keys and coordinate approvals using PSBT text. Inspect the policy and reviewed transaction explicitly.</p>
 <img class="app-shot" src="screenshots/11-vault-list.png" width="1320" height="2868" loading="lazy" alt="Inspect and import signing policies in the signet test app.">
-<p class="limit"><strong>Know before using it:</strong> Raw policy tools are Advanced features. Script-path interoperability is tested with Bitcoin Core. A successful MuSig2 exchange with the test fixture does not resolve the separately documented Core round-two compatibility gap.</p>
 <p><a href="/core-cosigner">Read the advanced guide</a></p>
 <button class="test-link" type="button" data-dialog="vaults-tests" aria-controls="vaults-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="vaults-tests" aria-labelledby="vaults-tests-title">
@@ -70,19 +71,6 @@ dialog a{overflow-wrap:anywhere}
 <li>Import an approval request, review it, and contribute the device’s signature.</li>
 </ol><p>App scenarios:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L377">test04VaultCreate</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L561">test07ApproveRequest</a>
-. <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
-<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
-<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>
-<section class="journey" id="groups">
-<h2>Use a group as a vault cosigner</h2><p>Combine a group cosigner with a threshold vault, then complete the required approvals and broadcast the resulting spend.</p>
-<p class="limit"><strong>Know before using it:</strong> This requires the full group signing ceremony and its other vault approvals. Losing required participants can prevent spending.</p>
-<button class="test-link" type="button" data-dialog="groups-tests" aria-controls="groups-tests" aria-haspopup="dialog">How this is tested</button>
-<dialog id="groups-tests" aria-labelledby="groups-tests-title">
-<div class="dialog-heading"><h2 id="groups-tests-title">How we test: Use a group as a vault cosigner</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
-<li>Build and fund a vault containing the group’s synthetic key.</li>
-<li>Complete its signing rounds and confirm the final spend through the app.</li>
-</ol><p>App scenarios:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1006">test13GroupCosignerVault</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">Inspect test runs and their results</a>.</p>
 <p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>
 <p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>

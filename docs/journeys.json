@@ -79,19 +79,22 @@
   {
     "id": "second-device",
     "section": "advanced",
-    "title": "Require another signing device",
-    "description": "Add an independent signing key to your phone wallet. In a 2-of-2 MuSig2 account, both keys must participate in every payment; the final Taproot signature does not reveal the signer count.",
+    "title": "Combine your phone with another signer",
+    "description": "Use 2-of-2 MuSig2 so your phone and a separate key must both approve every payment. You can also use a MuSig2 group as one cosigner in a larger threshold vault.",
     "journey": [
       "Open the extra-device flow from Wallet in Advanced mode and verify the 2-of-2 policy.",
       "Fund it, create a payment, and confirm that one signer cannot broadcast.",
       "Abandon a nonce session and verify that reopening cannot resume it.",
-      "Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend."
+      "Complete both signing rounds with an independent software fixture; have Bitcoin Core accept and confirm the key-path spend.",
+      "In a separate group-as-cosigner flow, build and fund a threshold vault containing the group’s synthetic key.",
+      "Complete the group’s signing rounds and the other required vault approvals, then confirm the final spend through the app."
     ],
     "tests": [
-      "test16MuSig2RequiresSecondDevice"
+      "test16MuSig2RequiresSecondDevice",
+      "test13GroupCosignerVault"
     ],
     "guide": "/vaults",
-    "limitations": "The intended setup pairs your phone with a MuSig2-compatible hardware wallet or a desktop wallet such as Bitcoin Core. Those integrations remain unverified; this journey uses a software test signer. Back up both keys; there is no alternate recovery path."
+    "limitations": "The intended second signer is a compatible hardware wallet or a desktop wallet such as Bitcoin Core. Direct MuSig2 signing with Core and hardware-wallet integration remain unverified. Back up every required key; the MuSig2 group has no alternate recovery path."
   },
   {
     "id": "recovery",
@@ -136,22 +139,7 @@
       "test07ApproveRequest"
     ],
     "image": "11-vault-list",
-    "guide": "/core-cosigner",
-    "limitations": "Raw policy tools are Advanced features. Script-path interoperability is tested with Bitcoin Core. A successful MuSig2 exchange with the test fixture does not resolve the separately documented Core round-two compatibility gap."
-  },
-  {
-    "id": "groups",
-    "section": "advanced",
-    "title": "Use a group as a vault cosigner",
-    "description": "Combine a group cosigner with a threshold vault, then complete the required approvals and broadcast the resulting spend.",
-    "journey": [
-      "Build and fund a vault containing the group’s synthetic key.",
-      "Complete its signing rounds and confirm the final spend through the app."
-    ],
-    "tests": [
-      "test13GroupCosignerVault"
-    ],
-    "limitations": "This requires the full group signing ceremony and its other vault approvals. Losing required participants can prevent spending."
+    "guide": "/core-cosigner"
   },
   {
     "id": "fees",
