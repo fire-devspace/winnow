@@ -99,7 +99,10 @@ pointers are excluded. See [the counting policy](scripts/report-loc.py).
 
 Mainnet is the default network, and the app starts in beginner mode: Wallet,
 Send, Settings. Open a payment in Wallet to save or rename its recipient,
-then pick them from Saved recipients in Send. Turn on Advanced mode in Settings
+then pick them from Saved recipients in Send. The same Send screen handles every
+account: choose the account, recipient, and amount, then review the fee. Shared
+accounts continue to their required approvals before anything is sent.
+Turn on Advanced mode in Settings
 for the test network, your own peers, chain verification, the block explorer, custom fees,
 fee bumping, build details and the raw vault tools; a peer or setting you already have
 stays visible until you remove it. Switch to signet there for development. Point the app at your own

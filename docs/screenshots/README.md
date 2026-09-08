@@ -25,9 +25,8 @@ payment diagnostics, and following Bitcoin Core confirmation.
 The [run artifact](https://github.com/winnowwallet/winnow/actions/runs/34171647009/artifacts/10036468223)
 contains the original captures, log, and result bundle.
 
-The current Receive, review, account, Settings, saved-recipient, and approval
-captures (`03`, `06`, `10`, `11`, `23-settings-beginner`, `24-saved-recipient`,
-`25-pay-person-review`, `27`, and `35` through `39`) come from
+The retained Receive, ordinary review, account, Settings, and saved-recipient
+captures (`03`, `06`, `10`, `11`, `23-settings-beginner`, and `24-saved-recipient`) come from
 [app revision 4559ecd](https://github.com/winnowwallet/winnow/commit/4559ecd150b2f3399f0b4613cce9db689bcb2d51).
 They are unchanged originals captured locally on 2026-09-08 with an iPhone 17 Pro
 simulator running iOS 26.5 against a disposable signet node.
@@ -38,3 +37,16 @@ The recipient journey covers saving, renaming, restarting, removing and re-addin
 then paying through Send. The extra-device journey uses Bitcoin Core as the other
 signer and covers setup, review, interruption and restart, both approvals, the
 sent receipt, and restoring the pre-payment backup to find the remaining balance.
+
+The current saved-recipient review (`25`), shared-payment review (`27`), and
+extra-device captures (`35` through `39`) use
+[app source c5dd3c1](https://github.com/winnowwallet/winnow/commit/c5dd3c1ce7b5f14eb12326f1ce5afae77bb37f81).
+They are unchanged originals captured locally on 2026-09-08 with an iPhone 17 Pro
+simulator running iOS 26.5 against a disposable signet node.
+All 16 app journeys passed, along with 148 XCTest cases and 8 Swift Testing tests.
+The local evidence is `one-send-final-ui.xcresult` and
+`winnow-one-send-final-ui.log`; originals are in `one-send-final-screenshots`.
+The ordinary, shared, and phone-plus-Core journeys use the same Send form and
+review. Shared payments continue directly to approvals. The Core journey also
+checks leaving and restarting the signing exchange, the completed payment, and
+restoring the earlier backup to find the remaining balance.
