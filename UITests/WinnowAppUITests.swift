@@ -1101,7 +1101,7 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, signingVaultRow), "group vault row not reachable")
         signingVaultRow.tap()
         let signButton = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Sign / combine'")).firstMatch
+            NSPredicate(format: "label BEGINSWITH 'Continue signing'")).firstMatch
         XCTAssertTrue(scrollUntilExists(app, signButton))
         signButton.tap()
         XCTAssertTrue(app.buttons["psbtPasteButton"].waitForExistence(timeout: 20))

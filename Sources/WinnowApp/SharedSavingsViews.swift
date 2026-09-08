@@ -327,9 +327,9 @@ struct SharedSavingsDetailView: View {
                                     .textSelection(.enabled)
                             }
                         }
-                        Button("Create spend PSBT…") { showSpend = true }
+                        Button("Create payment") { showSpend = true }
                             .disabled(record.utxos.isEmpty)
-                        Button("Sign / combine PSBTs…") { showSign = true }
+                        Button("Continue signing") { showSign = true }
                     }
                 }
 
