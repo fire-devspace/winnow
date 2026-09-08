@@ -416,6 +416,54 @@ struct CoinSelectionTests {
         #expect(FeePolicy.resolve(observed: [10], floorSatPerVByte: 1) == 10) // above floor: untouched
     }
 
+    @Test("an embedder estimate outranks the presets and yields to the override")
+    func estimate() {
+        // Nothing else known: the estimate replaces the preset.
+        #expect(FeePolicy.resolve(priority: .high, estimated: 3) == 3)
+        // The user override still wins, estimate or no estimate.
+        #expect(FeePolicy.resolve(override: 42, estimated: 3) == 42)
+        // And the peer floor still clamps it from below.
+        #expect(FeePolicy.resolve(estimated: 1, floorSatPerVByte: 3) == 3)
+    }
+
+    @Test("an estimate is floored at the observed median, never under it")
+    func estimateMedianFloor() {
+        // A lowballing or stale estimate cannot price the wallet below the
+        // feerates it has itself paid and seen confirm.
+        #expect(FeePolicy.resolve(estimated: 2, observed: [8, 10, 12]) == 10)
+        // An estimate above the median is the whole point of having one.
+        #expect(FeePolicy.resolve(estimated: 20, observed: [8, 10, 12]) == 20)
+        // With no samples there is no floor to apply.
+        #expect(FeePolicy.resolve(priority: .high, estimated: 2) == 2)
+    }
+
+    /// Every input class the callers can actually produce: a gateway serving
+    /// junk, a fat-fingered override, a hostile peer's feefilter.
+    @Test("an unusable number falls through to the next source",
+          arguments: [Double.nan, .infinity, -.infinity, -1, 0, 1e12])
+    func unusableInputs(_ bad: Double) {
+        #expect(FeePolicy.resolve(priority: .medium, estimated: bad) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, override: bad) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, observed: [bad]) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: bad) == 5)
+        // A usable source beside a junk one is still used.
+        #expect(FeePolicy.resolve(priority: .medium, estimated: bad, observed: [7, bad]) == 7)
+    }
+
+    /// The band `CoinSelection.select` accepts, asserted at the other end of
+    /// the pipe: resolution must not hand it a rate it would refuse.
+    @Test("no combination of inputs resolves outside the accepted band",
+          arguments: [Double.nan, .infinity, -.infinity, -1, 0, 1e12, 9_999])
+    func bandHolds(_ bad: Double) {
+        for priority in FeePolicy.Priority.allCases {
+            let rate = FeePolicy.resolve(priority: priority, override: bad, estimated: bad,
+                                         observed: [bad, bad], floorSatPerVByte: bad)
+            #expect(rate.isFinite)
+            #expect(rate > 0)
+            #expect(rate <= FeePolicy.maximumSatPerVByte)
+        }
+    }
+
     @Test("median of observed samples")
     func median() {
         #expect(FeePolicy.median([]) == nil)
