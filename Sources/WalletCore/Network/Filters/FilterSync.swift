@@ -85,7 +85,9 @@ public struct BlockMatch: Sendable, Equatable {
 ///    classes, judged by the same strict-majority rule as step 2 — never by
 ///    which peer was seated first; the announced previous filter header must
 ///    equal our pinned header at batchStart-1 (zero at genesis), then the
-///    filter-hash chain is walked forward and pinned per height.
+///    filter-hash chain is walked forward and pinned per height. Every
+///    checkpoint boundary the batch pins is compared against the cfcheckpt
+///    reference before the batch's filters are read.
 /// 4. `getcfilters` (type 0x00) for the batch; each filter must reproduce the
 ///    pinned header chain given the block hash from our PoW-checked header
 ///    chain — this is what anchors filters to the block chain.
@@ -93,7 +95,9 @@ public struct BlockMatch: Sendable, Equatable {
 ///    GCSFilter; on a hit the full block is fetched (getdata MSG_WITNESS_BLOCK),
 ///    its hash verified, and handed to `onMatch`.
 /// 6. Progress (next scan height + pinned filter headers) is persisted after
-///    every batch.
+///    every batch whose boundary comparison passed. A batch that fails it
+///    delivers no match and persists nothing, so no store ever carries
+///    effects from a batch whose commitments were refused.
 public actor FilterSync {
     public enum PersistenceState: Equatable, Sendable {
         case disabled
@@ -269,6 +273,16 @@ public actor FilterSync {
                 batchStart: batchStart, batchStop: batchStop,
                 stopHash: stopHash, peers: peers,
                 startingFrom: progress.filterHeaders)
+            // Every checkpoint boundary this batch pins is compared against
+            // the cfcheckpt reference before the batch is applied. All of the
+            // batch's effects — the caller's `onMatch` work, the scan
+            // frontier, the persisted progress — are downstream of this line,
+            // so a batch whose commitments disagree with the announced
+            // checkpoints is refused having changed nothing. Comparing only
+            // at the end of the sync (below) left every batch already applied
+            // by the time the disagreement was found, and left the boundaries
+            // crossed by earlier batches uncompared until the next run.
+            try Self.checkPinnedBoundaries(of: proposedHeaders, against: reference, tip: tip)
             // The cross-check may have just disconnected `peers[0]` as the
             // minority, so the list is re-derived before anything is sent to
             // it. Same intersection as above, for the same reason: a long
@@ -291,6 +305,11 @@ public actor FilterSync {
         // Final guard: the highest checkpoint header we computed must equal
         // the one the checkpoint peers announced (Core's last cfcheckpt entry
         // is the header at the greatest multiple of 1000 ≤ tip).
+        //
+        // The per-batch comparison walks the reference by index, so it cannot
+        // notice a reference list that stops short of the boundaries we
+        // scanned. This one ties the last announced entry to the last
+        // boundary, which is the case that survives it.
         let lastCheckpoint = (tip / Self.checkpointInterval) * Self.checkpointInterval
         if lastCheckpoint > 0, let pinned = filterHeader(at: lastCheckpoint),
            let announced = reference.filterHeaders.last, pinned != announced {
@@ -414,10 +433,19 @@ public actor FilterSync {
     /// already-pinned header at a checkpoint height must match.
     private func checkPinnedBoundaries(against reference: CFCheckptMessage,
                                        tip: UInt32) throws {
+        try Self.checkPinnedBoundaries(of: progress.filterHeaders,
+                                       against: reference, tip: tip)
+    }
+
+    /// The same comparison over headers a batch has proposed but not
+    /// committed, so the batch can be refused before any of it is applied.
+    private static func checkPinnedBoundaries(of headers: [String: String],
+                                              against reference: CFCheckptMessage,
+                                              tip: UInt32) throws {
         for (index, header) in reference.filterHeaders.enumerated() {
-            let height = UInt32(index + 1) * Self.checkpointInterval
+            let height = UInt32(index + 1) * checkpointInterval
             guard height <= tip else { break }
-            if let pinned = filterHeader(at: height), pinned != header {
+            if let pinned = filterHeader(at: height, in: headers), pinned != header {
                 throw FilterSyncError.checkpointMismatch("pinned header at \(height) disagrees with cfcheckpt")
             }
         }
