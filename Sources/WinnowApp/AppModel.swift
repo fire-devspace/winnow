@@ -986,6 +986,7 @@ final class AppModel {
     @discardableResult
     func importWallet(bundleJSON: String) async throws -> ImportReport? {
         let bundle = try ImportBundle.decode(json: bundleJSON)
+        try VaultStore.validate(bundle.vaults ?? [], network: network)
         guard bundle.network == network.rawValue else { throw AppError.wrongNetwork(bundle.network) }
         if bundle.mnemonic != nil {
             try await authenticateSensitiveAction(
@@ -1008,6 +1009,8 @@ final class AppModel {
         // the same FilterSync/HeaderChain race — crossed getheaders/getcfilter
         // responses on the shared peer). The loop starts on the way out.
         try await adopt(wallet: wallet, startSync: false)
+        try await vaultStore.restore(bundle.vaults ?? [])
+        vaults = await vaultStore.all
         defer { if isActive { startSyncLoop() } }
         await buildStackIfNeeded()
         guard let filters = stack?.filters else {
@@ -1021,7 +1024,13 @@ final class AppModel {
         }
         // A verification failure (e.g. a peer serving a bad filter) is a real
         // error for the user, not the "no peers yet" soft path.
-        let report = try await wallet.verifyImport(bundle, using: filters)
+        let restoredStore = vaultStore
+        let restoredNetwork = network
+        let report = try await wallet.verifyImport(
+            bundle, using: filters,
+            additionalScripts: restoredStore.watchScripts(network: network)) { match in
+                try await restoredStore.apply(match: match, network: restoredNetwork)
+            }
         await refresh()
         e2e?.journal("import.verified", fields: [
             "scannedFromHeight": String(report.scannedFromHeight),
@@ -1053,7 +1062,8 @@ final class AppModel {
         if let filters = stack?.filters {
             try await wallet.recordScanHeight(await filters.nextScanHeight)
         }
-        let bundle = try await wallet.exportBundle(includeMnemonic: includeMnemonic)
+        var bundle = try await wallet.exportBundle(includeMnemonic: includeMnemonic)
+        bundle.vaults = try await vaultStore.backupRecords()
         let serialized = try bundle.serialized()
         e2e?.journal("wallet.exported", fields: [
             "bundleVersion": String(bundle.version),

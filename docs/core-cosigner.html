@@ -28,122 +28,63 @@
   </div>
 </header>
 <main>
-  <h1 id="a-2-of-3-with-bitcoin-core">A 2-of-3 with Bitcoin Core</h1>
-  <p><em>A walkthrough of the ceremony the <a href="https://github.com/winnowwallet/winnow/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">interop suite</a> runs against a real Bitcoin Core node — every command below is the one the tests run, and both configurations end with a spend confirmed on signet.</em></p>
+<h1>Sign with Bitcoin Core</h1>
+<p>Your phone holds one key. Bitcoin Core on your desktop holds another. Winnow and Core 31.1 can exchange signing requests and complete a payment together.</p>
+<p>The <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift">app test</a> covers setup, payment, restarting an interrupted exchange, and restoring an earlier backup. The <a href="https://github.com/winnowwallet/winnow/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">Core comparisons</a> also complete payments with either signer starting first. These use a private test chain with no real money.</p>
 
-  <p>Two Winnow installations are not implementation diversity: they share every line of the code being trusted. Giving one or two of a vault's keys to <strong>Bitcoin Core's descriptor wallet</strong> — software written by other people, from the spec — means a signing bug in either implementation is survivable, because the other one has to agree before money moves. The vault is a <code>tr(NUMS, sortedmulti_a(2, &hellip;))</code> descriptor: script-path only, no key-path escape, and the PSBT file is the whole coordinator.</p>
+<h2 id="phone-and-core">Your phone plus Core</h2>
+<p>Use a 2-of-2 MuSig2 account when you want both devices to approve every payment. Neither key can spend alone. On Bitcoin, the payment has one ordinary Taproot signature.</p>
+<p>The commands below use signet. Run them on the computer where Core is running. Core holds its own software key in this setup; connecting a hardware wallet is a separate step.</p>
 
-  <figure>
-  <svg viewBox="0 0 720 210" role="img" aria-label="The ceremony: Winnow creates a PSBT, Core wallet A signs it, optionally Core wallet B signs A's output, and Winnow combines, finalizes, and broadcasts." style="max-width:100%;height:auto">
-    <style>
-      .box{fill:var(--card);stroke:var(--rule-2);rx:8}
-      .lbl{font:600 14px var(--sans);fill:var(--ink)}
-      .sub{font:12px var(--mono);fill:var(--ink-2)}
-      .arr{stroke:var(--seed);stroke-width:1.6;fill:none;marker-end:url(#a)}
-      .step{font:11px var(--sans);fill:var(--ink-3)}
-    </style>
-    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--seed)"/></marker></defs>
-    <rect class="box" x="8"   y="70" width="150" height="64" rx="8"/>
-    <rect class="box" x="228" y="14" width="150" height="64" rx="8"/>
-    <rect class="box" x="228" y="126" width="150" height="64" rx="8"/>
-    <rect class="box" x="452" y="70" width="120" height="64" rx="8"/>
-    <rect class="box" x="626" y="70" width="86"  height="64" rx="8"/>
-    <text class="lbl" x="83"  y="96"  text-anchor="middle">Winnow</text>
-    <text class="sub" x="83"  y="116" text-anchor="middle">creates PSBT</text>
-    <text class="lbl" x="303" y="40"  text-anchor="middle">Core wallet A</text>
-    <text class="sub" x="303" y="60"  text-anchor="middle">signs leg 1</text>
-    <text class="lbl" x="303" y="152" text-anchor="middle">Core wallet B</text>
-    <text class="sub" x="303" y="172" text-anchor="middle">signs leg 2</text>
-    <text class="lbl" x="512" y="96"  text-anchor="middle">Winnow</text>
-    <text class="sub" x="512" y="116" text-anchor="middle">combine + finalize</text>
-    <text class="lbl" x="669" y="96"  text-anchor="middle">signet</text>
-    <text class="sub" x="669" y="116" text-anchor="middle">confirms</text>
-    <path class="arr" d="M158 88 C 190 70, 200 56, 226 46"/>
-    <path class="arr" d="M378 46 C 404 56, 404 116, 378 148" />
-    <path class="arr" d="M378 158 C 410 148, 424 116, 450 102"/>
-    <path class="arr" d="M572 102 L 624 102"/>
-    <text class="step" x="178" y="52">1</text>
-    <text class="step" x="396" y="104">2</text>
-    <text class="step" x="424" y="146">3</text>
-    <text class="step" x="596" y="94">4</text>
-  </svg>
-  <figcaption aria-hidden="true">The strongest configuration: both threshold signatures come from Core, the PSBT travels Core-to-Core in the middle, and Winnow's key never signs.</figcaption>
-  </figure>
+<h2 id="get-cores-key">1. Get Core’s public key</h2>
+<pre><code>bitcoin-cli -signet createwallet "winnow-signer"
+bitcoin-cli -signet -rpcwallet=winnow-signer listdescriptors</code></pre>
+<p>Find the receive descriptor starting with <code>tr(</code>. Copy the public key expression inside it, keeping the bracketed fingerprint and path but removing the final <code>/0/*</code>. It looks like this:</p>
+<pre><code>[9a1f04c2/86h/1h/0h]tpub…</code></pre>
+<p>This is a public account key, not a private key. Core’s <code>h</code> and Winnow’s <code>'</code> mean the same thing in the path.</p>
 
-  <hr />
-  <h2 id="get-cores-key">1. Get Core's key</h2>
-  <p>Core generates its own key material — a cosigner whose key Winnow chose would prove less. Create a wallet and read its Taproot key expression out of <code>listdescriptors</code>:</p>
-  <pre><code>$ bitcoin-cli -signet createwallet "cosigner-a"
-$ bitcoin-cli -signet -rpcwallet=cosigner-a listdescriptors
-    &hellip; "desc": "tr([9a1f04c2/86h/1h/0h]tpubDC7jGaa&hellip;/0/*)#&hellip;" &hellip;</code></pre>
-  <p>The piece you want is the key expression inside <code>tr(&hellip;)</code>, without the <code>/0/*</code> tail:</p>
-  <pre><code>[9a1f04c2/86h/1h/0h]tpubDC7jGaa&hellip;</code></pre>
-  <p>Core spells hardened steps with <code>h</code>; Winnow writes <code>&#8217;</code>. Both are legal BIP380 and mean the same key — paste it as Core printed it.</p>
+<h2 id="build-the-vault-in-winnow">2. Set up the account on your phone</h2>
+<p>In Advanced mode, open <strong>Wallet → Require another signing device</strong>. Add your phone’s key and paste Core’s public expression. Check that it says <strong>2 of 2 signing keys required</strong>, then save it.</p>
+<p>Copy the complete descriptor shown during setup. Ask Core to derive its first receive addresses and check that they match Winnow:</p>
+<pre><code>bitcoin-cli -signet deriveaddresses "&lt;public descriptor with checksum&gt;" "[0,2]"</code></pre>
 
-  <hr />
-  <h2 id="build-the-vault-in-winnow">2. Build the vault in Winnow</h2>
-  <p>Vaults &rarr; New. Add this device's key, paste Core's expression, and add the third cosigner (a second phone, or a second Core wallet — see §5). Two required of three. Winnow sorts the keys (<code>sortedmulti_a</code>), so independently constructed descriptors agree byte for byte.</p>
-  <figure>
-  <img src="screenshots/10-vault-create.png" alt="Creating the vault: the device key plus pasted cosigner expressions, threshold two of three, and the full descriptor shown before saving." />
-  <figcaption aria-hidden="true">The descriptor is shown in full before saving — it is the vault, and both sides must hold exactly this text.</figcaption>
-  </figure>
-  <p><strong>Check agreement before money moves.</strong> Copy the descriptor from the vault screen and ask Core to derive the same addresses Winnow shows:</p>
-  <pre><code>$ bitcoin-cli -signet deriveaddresses "tr(&hellip;)#checksum" "[0,2]"</code></pre>
-  <p>Handing Core the checksum Winnow computed is deliberate: a wrong checksum is rejected outright rather than silently tolerated. If the three addresses match the vault's receive addresses, both implementations are reading the same policy. If they do not, stop here — nothing after this step would mean anything.</p>
+<h2 id="let-core-hold-its-key">3. Add that account to Core</h2>
+<p>On the desktop, use <code>listdescriptors true</code> to find the private version of Core’s own expression. In a local copy of the shared descriptor, replace only Core’s public expression with its private version. Keep the phone’s expression public. The private version stays on the desktop.</p>
+<pre><code>bitcoin-cli -signet -rpcwallet=winnow-signer listdescriptors true
+bitcoin-cli -signet getdescriptorinfo "&lt;descriptor containing Core’s private expression&gt;"
+bitcoin-cli -signet -rpcwallet=winnow-signer importdescriptors \
+  '[{"desc":"&lt;private descriptor&gt;#&lt;new checksum&gt;","timestamp":"now","active":true,"range":[0,1000]}]'</code></pre>
+<p>Use the new checksum returned by <code>getdescriptorinfo</code>. Back up Core’s wallet separately. Then receive some test bitcoin into the account.</p>
 
-  <hr />
-  <h2 id="let-core-hold-its-key">3. Let Core hold its key as a signer</h2>
-  <p>Core signs from a wallet that watches the vault and holds exactly its own private leg. Take the vault descriptor, replace Core's <em>public</em> expression with the <em>private</em> one from <code>listdescriptors true</code>, and import it into a blank wallet:</p>
-  <pre><code>$ bitcoin-cli -signet createwallet wallet_name="vault-signer-a" blank=true
-$ bitcoin-cli -signet getdescriptorinfo "tr(&hellip;tprv&hellip;)"      # yields the new checksum
-$ bitcoin-cli -signet -rpcwallet=vault-signer-a importdescriptors \
-    '[{"desc":"tr(&hellip;tprv&hellip;)#checksum","timestamp":"now","active":true,"range":[0,5]}]'</code></pre>
-  <p>Fund the vault from anywhere and let it confirm. (If you mine directly to a vault address on your own signet, the coinbase must mature — one hundred confirmations — before the review screen will pass the spend.)</p>
+<h2 id="spend">4. Approve a payment on both sides</h2>
+<ol>
+<li>In Winnow, open the account, choose <strong>Create payment</strong>, and enter the recipient and amount. Copy the request.</li>
+<li>Open <strong>Continue signing</strong> and add that request. Check the address, amount, and fee. Tap <strong>Prepare this phone</strong>.</li>
+<li>Copy the request shown below the buttons to Core. Read its payment details, then process it:</li>
+</ol>
+<pre><code>bitcoin-cli -signet decodepsbt "&lt;request&gt;"
+bitcoin-cli -signet -rpcwallet=winnow-signer \
+  walletprocesspsbt "&lt;request&gt;" true "DEFAULT" true false</code></pre>
+<ol start="4">
+<li>Paste Core’s returned <code>psbt</code> into Winnow and tap <strong>Add reply</strong>. Check the payment and tap <strong>Approve on this phone</strong>.</li>
+<li>Pass that new request through Core’s same command. Add its reply in Winnow, then tap <strong>Send payment</strong>.</li>
+</ol>
+<p>The final <code>false</code> asks Core to leave the signing data available for Winnow to combine. The app handles the file format conversion. Keep its signing screen open during the exchange.</p>
+<p>If you leave the screen or lock the phone, tap <strong>Start again</strong> and exchange the fresh request with Core. Do not reuse an old reply.</p>
 
-  <hr />
-  <h2 id="spend">4. Spend</h2>
-  <p>In Winnow, open the vault and create the spend: destination, amount, fee. The result is a PSBTv2 as Base64 — AirDrop it, paste it, put it wherever the machine running Core can read it. Then have Core add its signature:</p>
-  <pre><code>$ bitcoin-cli -signet -rpcwallet=vault-signer-a \
-    walletprocesspsbt "&lt;base64&gt;" true "DEFAULT" true false</code></pre>
-  <p>The trailing <code>false</code> is load-bearing. Left at its default, Core signs <em>and finalizes</em>, folding its partial signature into a final witness and reporting <code>complete</code> — at which point the tap script signatures are gone from the PSBT and it looks like Core signed nothing. You want its <em>partial</em> signature, so that the combining and finalizing happen where you can review them. Winnow reads Core's v0 envelope and converts it back to v2 automatically; the envelope is incompatible between the two, the signatures inside it are not.</p>
-  <p>Back in Winnow: Sign / combine &rarr; paste Core's output &rarr; Add / combine. The review shows what is actually being signed — every input a known vault coin, the destination, the change, the fee — and refuses anything else. Sign the second leg on the phone (or see §5), finalize, broadcast.</p>
-  <figure>
-  <img src="screenshots/15-vault-cosign.png" alt="The Sign / combine screen reviewing a vault spend: payment, vault-owned change, fee, sighash, and locktime, before anything is signed." />
-  <figcaption aria-hidden="true">The review is the gate: amounts and scripts are checked against the vault's own coins and descriptor, never against what the PSBT merely claims.</figcaption>
-  </figure>
+<h2 id="backups">5. Keep a backup of both sides</h2>
+<p>In the account, choose <strong>Back up this wallet</strong>. Save that file and the phone’s recovery words. Back up Core’s wallet on the desktop as well. Wait for pending payments to confirm before exporting.</p>
+<p>The phone’s file includes the account and its tracked funds. Restoring an older file checks for later payments, so an already-spent coin does not come back as available. The file does not contain Core’s private key or a live signing exchange. Losing either required key and all its backups leaves this account unable to spend.</p>
 
-  <hr />
-  <h2 id="both-signatures-from-core">5. The stronger version: both signatures from Core</h2>
-  <p>Make the third cosigner a second Core wallet (repeat §1 and §3 as <code>cosigner-b</code> / <code>vault-signer-b</code>) and let the two Cores meet the threshold by themselves — hand wallet A's output straight to wallet B:</p>
-  <pre><code>$ A=$(bitcoin-cli -signet -rpcwallet=vault-signer-a walletprocesspsbt "&lt;base64&gt;" true "DEFAULT" true false | jq -r .psbt)
-$ bitcoin-cli -signet -rpcwallet=vault-signer-b walletprocesspsbt "$A" true "DEFAULT" true false</code></pre>
-  <p>Paste B's output into Winnow and finalize. The phone's key never signs; Winnow is creator, combiner, finalizer, and broadcaster only. That is exactly the promise a wallet app should be able to make about shared custody — <em>your money moves even if this app's signer never runs</em> — and the test that pins it asserts our key's absence from the final witness, then lets the network confirm the spend.</p>
-
-  <hr />
-  <h2 id="a-signer-can-be-a-group">5&frac12;. One signer can be a group</h2>
-  <p>A cosigner slot does not have to hold a person's key. A MuSig2 2-of-2 <em>group</em> — spouse and lawyer, two officers of a company — can occupy one slot of the 2-of-3 through its BIP328 synthetic xpub, and from the vault's point of view it is just another pasted key that derives fresh addresses like everyone else. No single member can produce the group's signature.</p>
-  <pre><code>$ btc-swift musig-xpub &lt;member-key-hex&gt; &lt;member-key-hex&gt;
-    &hellip; "cosignerExpression": "[8307b7d6]tpubD6NzVbkr&hellip;/&lt;0;1&gt;/*" &hellip;</code></pre>
-  <p>Paste that expression into the vault like any cosigner. When the group's turn comes to sign, the demo-grade <code>musig-sign-psbt</code> runs both members' rounds in one invocation (a real deployment distributes the two rounds; the primitives are the same):</p>
-  <pre><code>$ btc-swift musig-sign-psbt "&lt;base64&gt;" --secrets &lt;hex&gt;,&lt;hex&gt;</code></pre>
-  <p>The whole ceremony runs through the app — create the vault with the group pasted in, create the spend, accept the group's signature from the clipboard, sign the device leg, finalize, broadcast:</p>
-  <figure>
-  <img src="screenshots/23-group-vault.png" alt="Creating a vault whose second cosigner is a MuSig2 group's synthetic xpub, pasted like any other key." />
-  <figcaption aria-hidden="true">The group enters the vault as a pasted expression — the app neither knows nor cares that a committee stands behind it.</figcaption>
-  </figure>
-  <figure>
-  <img src="screenshots/25-group-broadcast.png" alt="The finalized spend broadcast from the phone: one signature from the device, one from the group." />
-  <figcaption aria-hidden="true">Broadcast from the phone: one signature from this device, one from the group — the threshold met across two kinds of signer.</figcaption>
-  </figure>
-  <p>The e2e suite drives exactly this flow through the app's UI and then checks the chain: the funding outpoint must be gone. The library-level twin goes further still — the group beside <em>Core</em>, our key silent — in the same interop suite linked below.</p>
-
-  <hr />
-  <h2 id="what-this-costs-and-proves">6. What this costs, and what it proves</h2>
-  <ul>
-  <li><strong>On-chain visibility.</strong> A script-path spend shows its control block, leaf script, and both signatures. That is the honest price of k-of-n; the MuSig2 vaults pay interactivity instead.</li>
-  <li><strong>MuSig2 is not included in this claim.</strong> Core contributes a BIP373 nonce but keys it differently than we do, so neither side can consume the other's — recorded in the same suite as unsupported rather than inferred from the script-path result.</li>
-  <li><strong>The evidence.</strong> Both ceremonies on this page run in <a href="https://github.com/winnowwallet/winnow/blob/main/Tests/DifferentialTests/VaultInteropDiffTests.swift">VaultInteropDiffTests</a> against a reproducible signet with a real Core node, on every dispatch of the node battery — fresh Core wallets each run, matured coinbase funding, and a confirmation as the last assert.</li>
-  </ul>
+<h2 id="a-2-of-3-with-bitcoin-core">A shared 2-of-3 account</h2>
+<p>For shared decisions, create a three-key account and require two approvals. One or two of those keys can belong to Core wallets. Get each public expression as above; for this setup, keep the <code>/&lt;0;1&gt;/*</code> suffix on each participant.</p>
+<p>The account uses <code>tr(NUMS, sortedmulti_a(2, …))</code>. Import it into each Core signer with only that signer’s private expression. Each signer runs <code>walletprocesspsbt</code>; combine the replies in Winnow. It needs two signatures, with no MuSig2 preparation round for ordinary individual keys.</p>
+<p>Any two keys can move the money. A payment reveals the three public keys and the two-required rule, but not people’s names or device types.</p>
+<h2 id="two-core-signers">Two Core signers</h2>
+<p>The comparison suite also has two independently created Core wallets approve while Winnow’s key stays unused. That tests the account’s any-two rule.</p>
+<h2 id="group-as-cosigner">Use a group as one signer</h2>
+<p>A phone-and-second-key MuSig2 group can fill one slot in a larger shared account. Both group members must participate to fill that slot. The other two outer signers can still spend together without the group. See <a href="/vaults#the-two-policies">the group setup</a>.</p>
+<p><a href="/testing#artifacts">Find the test logs and app screenshots</a> · <a href="/vaults">Signing accounts explained</a> · <a href="/roadmap#signing-partners">Hardware wallets and future partners</a></p>
 </main>
 <footer>
   <div class="bar">

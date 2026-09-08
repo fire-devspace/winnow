@@ -24,34 +24,6 @@ import TestSupport
 struct VaultInteropDiffTests {
     private let endpoint = PeerEndpoint(host: BitcoinCLI.nodeHost, port: BitcoinCLI.p2pPort)
 
-    /// Core's own key material, taken from a wallet Core generated itself.
-    /// Deliberately not derived from our seeds: a cosigner whose key we chose
-    /// would prove less.
-    private struct CoreParticipant {
-        let publicExpression: String   // [fp/86h/1h/0h]tpub…
-        let privateExpression: String  // tprv…/86h/1h/0h
-    }
-
-    private func coreParticipant(wallet: String) throws -> CoreParticipant {
-        if (try? BitcoinCLI.run(["loadwallet", wallet])) == nil,
-           (try? BitcoinCLI.runJSON(["listwalletdir"])) != nil {
-            _ = try? BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(wallet)"])
-        }
-        func descriptor(private isPrivate: Bool) throws -> String {
-            let listed = try BitcoinCLI.runObject(["listdescriptors", isPrivate ? "true" : "false"],
-                                                  wallet: wallet)
-            let entries = try BitcoinCLI.array(listed, "descriptors").compactMap { $0 as? [String: Any] }
-            guard let entry = entries.first(where: {
-                ($0["desc"] as? String)?.hasPrefix("tr(") == true && ($0["internal"] as? Bool) != true
-            }), let text = entry["desc"] as? String else {
-                throw VaultInteropError.setup("no external tr() descriptor in \(wallet)")
-            }
-            return text
-        }
-        return CoreParticipant(publicExpression: try coreDescriptorKey(from: descriptor(private: false)),
-                               privateExpression: try coreDescriptorKey(from: descriptor(private: true)))
-    }
-
     enum VaultInteropError: Error, CustomStringConvertible {
         case setup(String)
         var description: String {
@@ -66,7 +38,7 @@ struct VaultInteropDiffTests {
                                                 defaultPort: BitcoinCLI.p2pPort)
 
         // 1. One cosigner is Core's; two are ours.
-        let core = try coreParticipant(wallet: "interop")
+        let core = try CoreSigner(wallet: "interop")
         var ourMasters: [HDKey] = []
         for index: UInt8 in 0 ..< 2 {
             let entropy = Data([0x40 + index] + Data(repeating: 0, count: 15))
@@ -148,11 +120,8 @@ struct VaultInteropDiffTests {
         // 6. Core signs the PSBT we produced. This is the claim under test:
         //    an independent implementation reading our PSBT, finding its own
         //    key in it, and producing a BIP342 script-path signature.
-        //    Core cannot read our v2 envelope and we cannot read the v0 it
-        //    returns, so the exchange is converted in both directions. The
-        //    envelope is incompatible; the signature inside it is what this
-        //    test is really asking about.
-        let handedToCore = try v0Envelope(psbt)
+        //    Use the same v0 export and normalized import as the app.
+        let handedToCore = try psbt.base64V0()
         // finalize=false is load-bearing. Left at its default, Core signs AND
         // finalizes, folding both partial signatures into a final witness and
         // reporting complete=1 — at which point the tap script sigs are gone
@@ -162,13 +131,7 @@ struct VaultInteropDiffTests {
             ["walletprocesspsbt", handedToCore, "true", "DEFAULT", "true", "false"],
             wallet: signerWallet)
         let coreText = try BitcoinCLI.string(processed, "psbt")
-        let coreMaps = try v0InputMaps(base64: coreText, inputCount: psbt.inputs.count)
-        for (index, map) in coreMaps.enumerated() {
-            for pair in map where pair.type == 0x14 { // PSBT_IN_TAP_SCRIPT_SIG
-                guard !psbt.inputs[index].pairs.contains(where: { $0.key == pair.key }) else { continue }
-                psbt.inputs[index].pairs.append(pair)
-            }
-        }
+        psbt = try psbt.combined(with: [PSBT(base64: coreText)])
         let bothSignatures = psbt.inputs[0].tapScriptSignatures.count
         #expect(bothSignatures == 2,
                 "expected our signature plus Core's, got \(bothSignatures)")
@@ -206,8 +169,8 @@ struct VaultInteropDiffTests {
 
         // 1. Two cosigners are Core's, from two wallets Core generated; one
         //    is ours and stays silent.
-        let coreA = try coreParticipant(wallet: "interop-a")
-        let coreB = try coreParticipant(wallet: "interop-b")
+        let coreA = try CoreSigner(wallet: "interop-a")
+        let coreB = try CoreSigner(wallet: "interop-b")
         let silentEntropy = Data([0x60] + Data(repeating: 0, count: 15))
         let silentMaster = try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: silentEntropy)))
         let silentAccount = try silentMaster.derived(path: "m/86'/1'/0'")
@@ -282,20 +245,14 @@ struct VaultInteropDiffTests {
         // 6. A signs our envelope; B signs A's output — a Core-to-Core leg
         //    with no Winnow code in it. Both with finalize=false, for the
         //    same load-bearing reason as the first test.
-        let toA = try v0Envelope(psbt)
+        let toA = try psbt.base64V0()
         let fromA = try BitcoinCLI.string(
             BitcoinCLI.runObject(["walletprocesspsbt", toA, "true", "DEFAULT", "true", "false"],
                                  wallet: walletA), "psbt")
         let fromB = try BitcoinCLI.string(
             BitcoinCLI.runObject(["walletprocesspsbt", fromA, "true", "DEFAULT", "true", "false"],
                                  wallet: walletB), "psbt")
-        let coreMaps = try v0InputMaps(base64: fromB, inputCount: psbt.inputs.count)
-        for (index, map) in coreMaps.enumerated() {
-            for pair in map where pair.type == 0x14 {
-                guard !psbt.inputs[index].pairs.contains(where: { $0.key == pair.key }) else { continue }
-                psbt.inputs[index].pairs.append(pair)
-            }
-        }
+        psbt = try psbt.combined(with: [PSBT(base64: fromB)])
         let signatures = psbt.inputs[0].tapScriptSignatures
         #expect(signatures.count == 2, "expected both Core signatures, got \(signatures.count)")
         let ourLeafKey = try BIP86.xonlyPublicKey(
@@ -353,7 +310,7 @@ struct VaultInteropDiffTests {
         let synthetic = try MuSig.syntheticExtendedKey(aggregatePublicKey: aggregateCompressed)
         let groupExpression = "[\(String(format: "%08x", synthetic.fingerprint))]"
             + "\(synthetic.serialized(network: .testnet))/<0;1>/*"
-        let core = try coreParticipant(wallet: "interop-a")
+        let core = try CoreSigner(wallet: "interop-a")
         let coreExpression = core.publicExpression + "/<0;1>/*"
         let silentEntropy = Data([0x73] + Data(repeating: 0, count: 15))
         let silentMaster = try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: silentEntropy)))
@@ -461,16 +418,9 @@ struct VaultInteropDiffTests {
 
         // 7. Core signs its leg from our envelope.
         let processed = try BitcoinCLI.runObject(
-            ["walletprocesspsbt", try v0Envelope(psbt), "true", "DEFAULT", "true", "false"],
+            ["walletprocesspsbt", try psbt.base64V0(), "true", "DEFAULT", "true", "false"],
             wallet: signerWallet)
-        let coreMaps = try v0InputMaps(base64: try BitcoinCLI.string(processed, "psbt"),
-                                       inputCount: psbt.inputs.count)
-        for (index, map) in coreMaps.enumerated() {
-            for pair in map where pair.type == 0x14 {
-                guard !psbt.inputs[index].pairs.contains(where: { $0.key == pair.key }) else { continue }
-                psbt.inputs[index].pairs.append(pair)
-            }
-        }
+        psbt = try psbt.combined(with: [PSBT(base64: BitcoinCLI.string(processed, "psbt"))])
         #expect(psbt.inputs[0].tapScriptSignatures.count == 2,
                 "expected the group's signature plus Core's")
 
@@ -493,29 +443,10 @@ struct VaultInteropDiffTests {
         trace("confirmed \(txid.prefix(16))… — one signer was a 2-of-2 group")
     }
 
-    /// Can Core co-sign a MuSig2 vault? (#58, S8)
-    ///
-    /// #58 is explicit that MuSig2 compatibility must never be inferred from
-    /// ordinary PSBT support, and the script-path result above is exactly the
-    /// evidence someone would be tempted to infer it from. So it is asked
-    /// separately.
-    ///
-    /// Key-path MuSig2 needs a two-round protocol: every participant publishes
-    /// a public nonce (BIP373 `PSBT_IN_MUSIG2_PUB_NONCE`, 0x1B), then each
-    /// partial-signs against the aggregate of those nonces
-    /// (`PSBT_IN_MUSIG2_PARTIAL_SIG`, 0x1C). A wallet that can parse a
-    /// `musig()` descriptor and call the output solvable has said nothing
-    /// about whether it implements either round.
-    ///
-    /// No mining here on purpose: `walletprocesspsbt` works from the PSBT's
-    /// own witness UTXO, so a fabricated one answers the question in a second
-    /// rather than in a hundred blocks. If Core ever does contribute, the
-    /// on-chain spend becomes worth building — and this test failing is how
-    /// we would find out.
-    @Test("Core's MuSig2 participation, whatever it currently is")
-    func coreMuSig2Participation() async throws {
+    @Test("Core and Winnow complete a MuSig2 payment", arguments: [false, true])
+    func coreMuSig2Payment(coreFirst: Bool) async throws {
         func trace(_ step: String) { FileHandle.standardError.write(Data("musig: \(step)\n".utf8)) }
-        let core = try coreParticipant(wallet: "interop")
+        let core = try CoreSigner(wallet: "musig-\(UUID().uuidString)")
         let ourMaster = try HDKey(seed: BIP39.seed(
             mnemonic: BIP39.mnemonic(entropy: Data([0x60] + Data(repeating: 0, count: 15)))))
         // BIP390: participants carry no derivation of their own when the
@@ -532,109 +463,72 @@ struct VaultInteropDiffTests {
         #expect(coreAddresses == ourAddresses, "Core and Winnow disagree about musig addresses")
         trace("descriptor agreement over \(ourAddresses.count) musig addresses")
 
-        // Core holds one of the two participant keys.
-        let wallet = "musig-interop-\(UInt32.random(in: 0 ..< 1_000_000))"
-        _ = try BitcoinCLI.run(["-named", "createwallet", "wallet_name=\(wallet)", "blank=true"])
-        let body = String(ourText.split(separator: "#")[0])
-        let privateText = body.replacingOccurrences(of: core.publicExpression,
-                                                    with: core.privateExpression)
-        try #require(privateText != body, "Core's participant key was not substituted")
-        let checksum = try BitcoinCLI.string(
-            BitcoinCLI.runObject(["getdescriptorinfo", privateText]), "checksum")
-        let imported = try BitcoinCLI.runJSON(
-            ["importdescriptors",
-             #"[{"desc":"\#(privateText)#\#(checksum)","timestamp":"now","active":true,"range":[0,2]}]"#],
-            wallet: wallet)
-        let importOK = ((imported as? [Any])?.first as? [String: Any])?["success"] as? Bool
-        #expect(importOK == true, "Core refused a musig descriptor holding one private key")
-        let addressInfo = try BitcoinCLI.runObject(["getaddressinfo", ourAddresses[0]], wallet: wallet)
-        trace("Core wallet: ismine=\(String(describing: addressInfo["ismine"]))"
-            + " solvable=\(String(describing: addressInfo["solvable"]))")
-
-        // Round 1 from our side: our nonce goes in, Core's does not yet exist.
+        try core.importVault(vault)
         let script = try vault.scriptPubKey(index: 0)
-        let utxo = WalletUTXO(txid: Data(repeating: 0x7C, count: 32), vout: 0, amount: 200_000,
-                              scriptPubKey: script, chain: .receive, index: 0, height: 500)
         let payout = try BIP86.scriptPubKey(
             internalKey: BIP86.xonlyPublicKey(of: testMaster().derived(path: "m/86'/1'/9'/0/4")))
+        let block = try await SignetMiner.mineOntoTip(payingTo: script)
+        let height = try BitcoinCLI.blockHeight(of: block)
+        try await SignetMiner.ensureChainHeight(atLeast: height + Int(Wallet.coinbaseMaturity) - 1)
+        let fundingTxid = try BitcoinCLI.coinbaseTxid(blockHash: block)
+        let coin = try #require(BitcoinCLI.unspents(scriptHex: script.hex).first { $0.txid == fundingTxid })
+        let utxo = WalletUTXO(txid: Data(Data(hex: coin.txid)!.reversed()), vout: coin.vout,
+                              amount: coin.amount, scriptPubKey: script, chain: .receive,
+                              index: 0, height: coin.height, isCoinbase: true)
+        let tip = UInt32(try BitcoinCLI.blockCount())
+        let coordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
         var psbt = try vault.createSpend(
             utxos: [utxo], payments: [Payment(amount: 50_000, scriptPubKey: payout)],
-            changeIndex: 0, feeRateSatPerVByte: 2, chainTip: 600)
+            changeIndex: 0, feeRateSatPerVByte: 2, chainTip: tip)
+        let unsigned = try psbt.unsignedTransaction()
+        func process(_ proposal: PSBT) throws -> PSBT {
+            let returned = try core.process(proposal)
+            #expect(try returned.unsignedTransaction() == unsigned, "Core changed the payment")
+            return returned
+        }
+        if coreFirst {
+            psbt = try process(psbt)
+            #expect(psbt.inputs[0].musig2PubNonces.count == 1)
+            #expect(psbt.inputs[0].musig2PartialSigs.isEmpty)
+        }
         let context = try vault.muSig2Context(choice: 0, index: 0)
         var secretNonces = try vault.muSig2AttachNonce(
             &psbt, input: 0, context: context, master: ourMaster, knownUTXOs: [utxo],
-            ownedOutputCoordinates: [.init(choice: 1, index: 0)], chainTip: 600)
-        _ = secretNonces
-        let ourNonces = psbt.inputs[0].pairs.filter { $0.type == 0x1B }.count
-        #expect(ourNonces == 1, "we did not attach our own nonce")
-
-        // The question. finalize=false for the same reason as the script-path
-        // case: finalizing would consume anything Core added.
-        let handed = try v0Envelope(psbt)
-        let processed = try BitcoinCLI.runObject(
-            ["walletprocesspsbt", handed, "true", "DEFAULT", "true", "false"], wallet: wallet)
-        let returned = try BitcoinCLI.string(processed, "psbt")
-        let maps = try v0InputMaps(base64: returned, inputCount: psbt.inputs.count)
-        let nonces = maps[0].filter { $0.type == 0x1B }.count
-        let partials = maps[0].filter { $0.type == 0x1C }.count
-        trace("Core returned nonces=\(nonces) partials=\(partials) "
-            + "complete=\(String(describing: processed["complete"]))")
-
-        // Core contributes a nonce: BIP373 round 1 is implemented, which
-        // ordinary PSBT support would never have told us.
-        #expect(nonces == ourNonces + 1, "Core did not contribute a MuSig2 public nonce")
-        #expect(partials == 0, "a partial signature before every nonce is in would be a protocol error")
-
-        // And here is exactly where interop stops.
-        //
-        // BIP373 keys a nonce by <participant pubkey><aggregate pubkey>. We
-        // write the *root aggregate* P; Core writes the taproot-*tweaked*
-        // output key Q. Same descriptor, same participants, identical
-        // addresses — and two nonce entries neither side can look the other's
-        // up by, which is why round 2 cannot proceed between us.
-        //
-        // Which of the two BIP373 actually mandates is a question about the
-        // spec text rather than about this run, and is deliberately not
-        // settled here. What this establishes is that they disagree, and
-        // precisely how — the part that was unknown.
-        let outputKey = Data(script.dropFirst(2))
-        var ourAggregate: Data?
-        var coreAggregate: Data?
-        for pair in maps[0] where pair.type == 0x1B {
-            let aggregate = Data(pair.key.dropFirst().dropFirst(33))
-            if aggregate.dropFirst() == outputKey { coreAggregate = aggregate }
-            else { ourAggregate = aggregate }
+            ownedOutputCoordinates: coordinates, chainTip: tip)
+        if !coreFirst { psbt = try process(psbt) }
+        #expect(psbt.inputs[0].musig2PubNonces.count == 2)
+        #expect(psbt.inputs[0].musig2PubNonces.keys.allSatisfy { $0.aggregate == context.signingKey })
+        #expect(throws: (any Error).self) {
+            var incomplete = psbt
+            _ = try vault.finalizeSpend(&incomplete, knownUTXOs: [utxo],
+                                       ownedOutputCoordinates: coordinates, chainTip: tip)
         }
-        let mine = try #require(ourAggregate, "our own nonce went missing from the round trip")
-        let theirs = try #require(coreAggregate, "Core's nonce is not keyed by the tweaked output key")
-        #expect(mine == context.aggregate, "we key the nonce by the root aggregate")
-        #expect(theirs.dropFirst() == outputKey, "Core keys the nonce by the tweaked output key")
-        #expect(mine != theirs,
-                "the two now agree on the aggregate key: round 2 and an on-chain MuSig2 co-sign are worth building")
-        trace("round 1 works on both sides; round 2 is blocked by the aggregate-key encoding")
+        try vault.muSig2Sign(&psbt, input: 0, context: context, master: ourMaster,
+                            secretNonces: &secretNonces, knownUTXOs: [utxo],
+                            ownedOutputCoordinates: coordinates, chainTip: tip)
+        #expect(secretNonces.values.allSatisfy { $0.allSatisfy { $0 == 0 } })
+        psbt = try process(psbt)
+        #expect(psbt.inputs[0].musig2PartialSigs.count == 2)
+        try vault.muSig2Aggregate(&psbt, input: 0, context: context, knownUTXOs: [utxo],
+                                 ownedOutputCoordinates: coordinates, chainTip: tip)
+        let transaction = try vault.finalizeSpend(&psbt, knownUTXOs: [utxo],
+                                                  ownedOutputCoordinates: coordinates, chainTip: tip)
+        #expect(transaction.inputs[0].witness.count == 1)
+        #expect(transaction.inputs[0].witness[0].count == 64)
+        let txid = try BitcoinCLI.run(["sendrawtransaction", transaction.serialized(includeWitness: true).hex])
+        _ = try await SignetMiner.mineOntoTip(payingTo: payout)
+        let confirmed = try BitcoinCLI.runObject(["getrawtransaction", txid, "true"])
+        #expect(try BitcoinCLI.int(confirmed, "confirmations") >= 1)
+        trace("confirmed one-signature payment; Core first=\(coreFirst)")
     }
-}
 
-// Parse once at the fixture boundary. Replacing "h/" throughout an expression
-// also changes a base58 key ending in h immediately before its derivation path.
-private func coreDescriptorKey(from text: String) throws -> String {
-    let descriptor = try Descriptor(text).serialized()
-    guard let open = descriptor.firstIndex(of: "("),
-          let close = descriptor.lastIndex(of: ")") else {
-        throw VaultInteropDiffTests.VaultInteropError.setup("unparsable Core descriptor")
-    }
-    let inner = String(descriptor[descriptor.index(after: open) ..< close])
-    guard let range = inner.range(of: "/0/*", options: .backwards) else {
-        throw VaultInteropDiffTests.VaultInteropError.setup("unexpected Core key path")
-    }
-    return String(inner[..<range.lowerBound])
 }
 
 @Test("Core fixture preserves base58 keys ending in h", arguments: ["h", "'"])
 func coreDescriptorKeyPreservesBase58(hardened: String) throws {
     let key = "tpubDDChux5N2nzqQBFzaBdidpdEGspdKEmRwi7gQdbqpnHvAviVZxikms3ZjaSQVLmnFaopeDnoBDdRdocHBBnw2K7AbiQLJLdnuQX1cbTPYFh"
     let input = "tr([e11008c1/86\(hardened)/1\(hardened)/0\(hardened)]\(key)/0/*)"
-    let expression = try coreDescriptorKey(from: input) + "/<0;1>/*"
+    let expression = try CoreSigner.keyExpression(from: input) + "/<0;1>/*"
     #expect(expression == "[e11008c1/86'/1'/0']\(key)/<0;1>/*")
     #expect(try Descriptor("tr(\(expression))").serialized().contains(expression))
 }

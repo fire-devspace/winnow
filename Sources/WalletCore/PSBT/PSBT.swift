@@ -5,7 +5,7 @@ public enum PSBTError: Error, Equatable, LocalizedError {
     case truncated
     /// Keys must be unique within a map (BIP370).
     case duplicateKey(Data)
-    /// Only PSBTv2 (BIP370) is supported; v0 carries an unsigned tx instead.
+    /// PSBT versions other than BIP174 v0 and BIP370 v2 are unsupported.
     case unsupportedVersion(UInt32)
     case missingField(String)
     case malformed(String)
@@ -22,7 +22,7 @@ public enum PSBTError: Error, Equatable, LocalizedError {
         case .duplicateKey:
             "The PSBT repeats a field that must appear only once."
         case let .unsupportedVersion(version):
-            "This PSBT uses unsupported version \(version). Winnow requires PSBTv2."
+            "This PSBT uses unsupported version \(version). Use PSBTv0 or PSBTv2."
         case let .missingField(field):
             "The PSBT is missing required data (\(field))."
         case let .malformed(reason):
@@ -35,9 +35,8 @@ public enum PSBTError: Error, Equatable, LocalizedError {
     }
 }
 
-/// PSBTv2 (BIP370) with the BIP371 Taproot fields needed for key-path P2TR
-/// spends. The key-value maps are stored generically — unknown pair types
-/// round-trip verbatim so Phase 5 (MuSig2/multisig) can layer its fields on.
+/// PSBTv2 in memory, with BIP174 v0 import/export for external signers.
+/// Unknown fields survive conversion and the BIP371/373 signing exchange.
 public struct PSBT: Equatable, Sendable {
     /// A PSBT is an interchange document, not an arbitrary file container.
     /// Four megabytes matches Winnow's P2P payload budget and is an explicit
@@ -50,7 +49,7 @@ public struct PSBT: Equatable, Sendable {
     static let maxInputOutputCount = 100_000
     /// BIP174/370 global key types.
     public enum GlobalType {
-        public static let unsignedTx: UInt8 = 0x00 // v0 only; rejected here
+        public static let unsignedTx: UInt8 = 0x00 // v0 interchange only
         public static let txVersion: UInt8 = 0x02
         public static let fallbackLocktime: UInt8 = 0x03
         public static let inputCount: UInt8 = 0x04
@@ -151,7 +150,7 @@ public struct PSBT: Equatable, Sendable {
     }
 
     /// Identifies a BIP373 MuSig2 nonce / partial-signature entry: the
-    /// contributing participant and aggregate keys (both compressed) plus the
+    /// contributing participant and final signing keys (both compressed) plus the
     /// tapleaf hash when the aggregate key sits in a script (omitted for the
     /// key-path vault flow).
     public struct MuSig2KeyID: Hashable, Sendable {
@@ -645,6 +644,29 @@ public struct PSBT: Equatable, Sendable {
     /// Base64 form (the standard PSBT interchange encoding).
     public var base64: String { serialized.base64EncodedString() }
 
+    /// BIP174 envelope for Bitcoin Core and other v0 signers. Signing fields
+    /// stay intact; only the transaction's representation changes.
+    public func base64V0() throws -> String {
+        // Validate before dropping v2 fields; never export ambiguous locktime
+        // requirements that unsignedTransaction() does not implement.
+        let checked = try PSBT(serialized: serialized)
+        guard !checked.inputs.contains(where: { input in
+            input.pairs.contains { $0.type == 0x11 || $0.type == 0x12 }
+        }) else { throw PSBTError.malformed("per-input locktime requirements are unsupported") }
+        let unsigned = try checked.unsignedTransaction().serialized(includeWitness: false)
+        var data = Data([0x70, 0x73, 0x62, 0x74, 0xFF])
+        var globals = checked.globals.filter { ![UInt8(0x02), 0x03, 0x04, 0x05, 0x06, 0xFB].contains($0.type) }
+        globals.append(KeyValue(type: GlobalType.unsignedTx, value: unsigned))
+        serializeMap(globals, into: &data)
+        for input in checked.inputs {
+            serializeMap(input.pairs.filter { ![UInt8(0x0E), 0x0F, 0x10].contains($0.type) }, into: &data)
+        }
+        for output in checked.outputs {
+            serializeMap(output.pairs.filter { ![UInt8(0x03), 0x04].contains($0.type) }, into: &data)
+        }
+        return data.base64EncodedString()
+    }
+
     private func serializeMap(_ pairs: [KeyValue], into data: inout Data) {
         for pair in pairs.sorted(by: { $0.key.lexicographicallyPrecedes($1.key) }) {
             data.appendCompactSize(UInt64(pair.key.count))
@@ -655,9 +677,7 @@ public struct PSBT: Equatable, Sendable {
         data.appendUInt8(0) // map separator
     }
 
-    /// Parses a PSBT (raw bytes or Base64). Requires PSBTv2 semantics: the
-    /// global version must be 2, and the input/output counts must match the
-    /// map counts.
+    /// Parses either envelope, normalizing v0 transaction fields to v2.
     public init(serialized data: Data) throws {
         guard data.count <= Self.maxSerializedSize else {
             throw PSBTError.malformed("document exceeds \(Self.maxSerializedSize) bytes")
@@ -696,17 +716,7 @@ public struct PSBT: Equatable, Sendable {
 
         let globals = try readMap()
         func global(_ type: UInt8) -> KeyValue? { globals.first { $0.type == type } }
-        let versionPair = global(GlobalType.version)
-        guard versionPair == nil || versionPair?.value.count == 4 else {
-            throw PSBTError.malformed("global version must be four bytes")
-        }
-        let version = versionPair?.value.withUnsafeBytes {
-            $0.loadUnaligned(as: UInt32.self).littleEndian
-        }
-        guard version == 2 else { throw PSBTError.unsupportedVersion(version ?? 0) }
-        guard global(GlobalType.unsignedTx) == nil else {
-            throw PSBTError.unsupportedVersion(0) // v0 carries a full unsigned tx
-        }
+        let unsigned = try Self.unsignedV0Transaction(globals: globals)
 
         func count(_ type: UInt8) throws -> Int {
             guard let pair = global(type) else { throw PSBTError.missingField("global \(type)") }
@@ -718,14 +728,79 @@ public struct PSBT: Equatable, Sendable {
             }
             return Int(count)
         }
-        let inputCount = try count(GlobalType.inputCount)
-        let outputCount = try count(GlobalType.outputCount)
+        let inputCount = try unsigned?.inputs.count ?? count(GlobalType.inputCount)
+        let outputCount = try unsigned?.outputs.count ?? count(GlobalType.outputCount)
         var inputs: [Input] = []
         var outputs: [Output] = []
         for _ in 0 ..< inputCount { inputs.append(Input(pairs: try readMap())) }
         for _ in 0 ..< outputCount { outputs.append(Output(pairs: try readMap())) }
         try reader.requireEnd()
         try Self.validateKnownFields(globals: globals, inputs: inputs, outputs: outputs)
+        if let unsigned {
+            try self.init(v0: unsigned, globals: globals, inputs: inputs, outputs: outputs)
+        } else {
+            self.init(globals: globals, inputs: inputs, outputs: outputs)
+        }
+    }
+
+    private static func unsignedV0Transaction(globals: [KeyValue]) throws -> Transaction? {
+        func global(_ type: UInt8) -> KeyValue? { globals.first { $0.type == type } }
+        let versionPair = global(GlobalType.version)
+        guard versionPair == nil || versionPair?.value.count == 4 else {
+            throw PSBTError.malformed("global version must be four bytes")
+        }
+        let version = versionPair?.value.withUnsafeBytes {
+            $0.loadUnaligned(as: UInt32.self).littleEndian
+        } ?? 0
+        guard version == 0 || version == 2 else { throw PSBTError.unsupportedVersion(version) }
+        if version == 0 {
+            guard !globals.contains(where: { (0x02 ... 0x06).contains($0.type) }) else {
+                throw PSBTError.malformed("v0 contains v2 transaction fields")
+            }
+            guard let pair = global(GlobalType.unsignedTx), pair.key.count == 1 else {
+                throw PSBTError.missingField("v0 unsigned transaction")
+            }
+            let tx = try Transaction.decode(pair.value)
+            guard tx.inputs.count <= Self.maxInputOutputCount,
+                  tx.outputs.count <= Self.maxInputOutputCount,
+                  tx.inputs.allSatisfy({ $0.scriptSig.isEmpty && $0.witness.isEmpty }),
+                  tx.serialized(includeWitness: false) == pair.value else {
+                throw PSBTError.malformed("v0 requires an unsigned non-witness transaction")
+            }
+            return tx
+        } else if global(GlobalType.unsignedTx) != nil {
+            throw PSBTError.malformed("v2 contains a v0 unsigned transaction")
+        }
+
+        return nil
+    }
+
+    private init(v0 unsigned: Transaction, globals: [KeyValue], inputs: [Input], outputs: [Output]) throws {
+        var globals = globals
+        var inputs = inputs
+        var outputs = outputs
+        guard !inputs.contains(where: { $0.pairs.contains { (0x0E ... 0x12).contains($0.type) } }),
+              !outputs.contains(where: { $0.pairs.contains { $0.type == 0x03 || $0.type == 0x04 } }) else {
+            throw PSBTError.malformed("v0 contains v2 input/output fields")
+        }
+        globals.removeAll { $0.type == GlobalType.unsignedTx || $0.type == GlobalType.version }
+        globals += [KeyValue(type: GlobalType.version, value: Self.uint32le(2)),
+                    KeyValue(type: GlobalType.txVersion, value: Self.int32le(unsigned.version)),
+                    KeyValue(type: GlobalType.fallbackLocktime, value: Self.uint32le(unsigned.locktime)),
+                    KeyValue(type: GlobalType.inputCount, value: Self.compactSize(UInt64(unsigned.inputs.count))),
+                    KeyValue(type: GlobalType.outputCount, value: Self.compactSize(UInt64(unsigned.outputs.count)))]
+        for (index, input) in unsigned.inputs.enumerated() {
+            inputs[index].pairs += [KeyValue(type: InType.previousTxid, value: input.previousOutput.txid),
+                                    KeyValue(type: InType.outputIndex, value: Self.uint32le(input.previousOutput.vout)),
+                                    KeyValue(type: InType.sequence, value: Self.uint32le(input.sequence))]
+            inputs[index].pairs.sort { $0.key.lexicographicallyPrecedes($1.key) }
+        }
+        for (index, output) in unsigned.outputs.enumerated() {
+            outputs[index].pairs += [KeyValue(type: OutType.amount, value: Self.int64le(output.value)),
+                                     KeyValue(type: OutType.script, value: output.scriptPubKey)]
+            outputs[index].pairs.sort { $0.key.lexicographicallyPrecedes($1.key) }
+        }
+        globals.sort { $0.key.lexicographicallyPrecedes($1.key) }
         self.init(globals: globals, inputs: inputs, outputs: outputs)
     }
 
@@ -750,6 +825,8 @@ public struct PSBT: Equatable, Sendable {
 
         for pair in globals {
             switch pair.type {
+            case GlobalType.unsignedTx:
+                try requireSingleton(pair, name: "unsigned transaction")
             case GlobalType.version, GlobalType.txVersion, GlobalType.fallbackLocktime:
                 try requireSingleton(pair, length: 4, name: "global field \(pair.type)")
             case GlobalType.inputCount, GlobalType.outputCount:

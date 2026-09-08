@@ -326,7 +326,7 @@ struct SettingsView: View {
 
 /// Settings → Backup → Export: emit the v2 ImportBundle JSON (watch-only
 /// by default; seed behind an explicit confirm).
-private struct ExportBundleView: View {
+struct ExportBundleView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -354,12 +354,12 @@ private struct ExportBundleView: View {
                             resetExport()
                         }
                     if includeMnemonic {
-                        Text("A bundle with the seed is a hot backup. Anyone who has the file can spend. Share it the same way you would share the words — not through iCloud or a chat.")
+                        Text("This file includes your phone’s signing key. Keep it as private as your recovery words.")
                             .foregroundStyle(.orange)
                             .font(.footnote)
                     }
                 } footer: {
-                    Text("Off by default. Without the phrase the bundle restores history and the descriptor, not the ability to spend.")
+                    Text("The file includes your payment history and shared accounts. Keep your recovery phrase separately to restore signing. Back up the other signer's key on that device too.")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -367,6 +367,7 @@ private struct ExportBundleView: View {
                 if let previewJSON {
                     Section("Bundle") {
                         CopyableTextBlock(text: previewJSON)
+                            .accessibilityIdentifier("backupPreview")
                         if includeMnemonic {
                             Text("The recovery phrase is in the shared file, not shown here.")
                                 .font(.footnote)

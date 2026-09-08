@@ -211,7 +211,7 @@ struct PSBTDiffTests {
         var psbt = try unsignedPSBT(tx, script: script, internalKey: internalKey)
 
         // Unsigned: Core reconstructs the same transaction and sees our fields.
-        let decoded = try BitcoinCLI.runObject(["decodepsbt", v0Envelope(psbt)])
+        let decoded = try BitcoinCLI.runObject(["decodepsbt", psbt.base64V0()])
         let coreTx = decoded["tx"] as! [String: Any]
         #expect(coreTx["txid"] as? String == tx.txid.displayHex, "unsigned txid")
         let coreVin = coreTx["vin"] as! [[String: Any]]
@@ -228,7 +228,7 @@ struct PSBTDiffTests {
 
         // Signed (not finalized): Core sees the key-path signature.
         try psbt.signKeyPath(input: 0, tweakedPrivateKey: BIP86.tweakedPrivateKey(secret))
-        let signedDecoded = try BitcoinCLI.runObject(["decodepsbt", v0Envelope(psbt)])
+        let signedDecoded = try BitcoinCLI.runObject(["decodepsbt", psbt.base64V0()])
         let signedInput = (signedDecoded["inputs"] as! [[String: Any]])[0]
         let keySig = try #require(signedInput["taproot_key_path_sig"] as? String, "taproot_key_path_sig missing")
         #expect(keySig == psbt.inputs[0].tapKeySignature?.hex, "taproot_key_path_sig bytes")
@@ -236,7 +236,7 @@ struct PSBTDiffTests {
         // Finalized: Core sees the final witness.
         var finalized = psbt
         try finalized.finalize()
-        let finalDecoded = try BitcoinCLI.runObject(["decodepsbt", v0Envelope(finalized)])
+        let finalDecoded = try BitcoinCLI.runObject(["decodepsbt", finalized.base64V0()])
         let finalInput = (finalDecoded["inputs"] as! [[String: Any]])[0]
         let finalWitness = finalInput["final_scriptwitness"] as? [String]
         #expect(finalWitness == psbt.inputs[0].tapKeySignature.map { [$0.hex] }, "final witness")
@@ -250,7 +250,7 @@ struct PSBTDiffTests {
         try signed.signKeyPath(input: 0, tweakedPrivateKey: BIP86.tweakedPrivateKey(secret))
 
         let combinedBase64 = try BitcoinCLI.run(["combinepsbt",
-                                                 "[\"\(v0Envelope(unsigned))\",\"\(v0Envelope(signed))\"]"])
+                                                 "[\"\(unsigned.base64V0())\",\"\(signed.base64V0())\"]"])
         // The combined result is v0 (Core's envelope); inspect it via Core.
         let decoded = try BitcoinCLI.runObject(["decodepsbt", combinedBase64])
         let input = (decoded["inputs"] as! [[String: Any]])[0]
@@ -271,7 +271,7 @@ struct PSBTDiffTests {
         var psbt = try unsignedPSBT(tx, script: script, internalKey: internalKey)
         try psbt.signKeyPath(input: 0, tweakedPrivateKey: BIP86.tweakedPrivateKey(secret))
 
-        let result = try BitcoinCLI.runObject(["finalizepsbt", v0Envelope(psbt)])
+        let result = try BitcoinCLI.runObject(["finalizepsbt", psbt.base64V0()])
         #expect(result["complete"] as? Bool == true, "Core finalizepsbt incomplete")
         let coreHex = result["hex"] as! String
 
@@ -366,15 +366,12 @@ struct PSBTConversionDiffTests {
         // missing without a word — which is precisely the failure #58 names.
         let sentinel = PSBT.KeyValue(type: 0x7E, value: Data([0xDE, 0xAD, 0xBE, 0xEF]))
         psbt.inputs[0].pairs.append(sentinel)
-        let envelope = try v0Envelope(psbt)
-        let maps = try v0InputMaps(base64: envelope, inputCount: psbt.inputs.count)
-        #expect(maps[0].contains { $0.key == sentinel.key && $0.value == sentinel.value },
+        let envelope = try psbt.base64V0()
+        let restored = try PSBT(base64: envelope)
+        #expect(restored.inputs[0].pairs.contains { $0.key == sentinel.key && $0.value == sentinel.value },
                 "an unrecognised input field was silently dropped converting to v0")
 
-        let dropped: Set<UInt8> = [0x0E, 0x0F, 0x10]
-        let expected = psbt.inputs[0].pairs.filter { !dropped.contains($0.type) }
-        #expect(maps[0].count == expected.count,
-                "the conversion dropped \(expected.count - maps[0].count) field(s) beyond the relocated three")
+        #expect(restored == psbt, "conversion lost or changed PSBT data")
     }
 
     /// Core must accept what the conversion produces. A lossless envelope that
@@ -383,7 +380,7 @@ struct PSBTConversionDiffTests {
     @Test("Core parses the converted envelope and agrees about the inputs")
     func coreAcceptsTheEnvelope() throws {
         let psbt = try fixturePSBT()
-        let decoded = try BitcoinCLI.runObject(["decodepsbt", try v0Envelope(psbt)])
+        let decoded = try BitcoinCLI.runObject(["decodepsbt", try psbt.base64V0()])
         let inputs = try BitcoinCLI.array(decoded, "inputs")
         #expect(inputs.count == psbt.inputs.count, "Core sees a different number of inputs")
         let tx = try #require(decoded["tx"] as? [String: Any], "no unsigned transaction in the envelope")

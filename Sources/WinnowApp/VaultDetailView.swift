@@ -9,6 +9,7 @@ struct VaultDetailView: View {
     @Environment(AppModel.self) private var model
     @State private var showSpend = false
     @State private var showSign = false
+    @State private var showBackup = false
 
     private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
 
@@ -62,11 +63,18 @@ struct VaultDetailView: View {
                 VaultPolicySection(vault: vault)
 
                 Section {
-                    Button("Create spend PSBT…") { showSpend = true }
-                        .disabled(record.utxos.isEmpty)
-                    Button("Sign / combine PSBTs…") { showSign = true }
+                    Button("Back up this wallet") { showBackup = true }
+                        .accessibilityIdentifier("vaultBackupButton")
                 } footer: {
-                    Text("Spends run as a PSBTv2 workflow: create here, partial-sign on each cosigner device, combine when enough partials are collected, then finalize and broadcast.")
+                    Text("Save the wallet backup file and your recovery phrase. Each other signer needs its own key backup. A backup cannot replace a missing signer’s key.")
+                }
+
+                Section {
+                    Button("Create payment") { showSpend = true }
+                        .disabled(record.utxos.isEmpty)
+                    Button("Continue signing") { showSign = true }
+                } footer: {
+                    Text("Create a payment, then exchange approvals with the other signer.")
                 }
             } else {
                 Text("This vault is no longer available.")
@@ -79,6 +87,9 @@ struct VaultDetailView: View {
         }
         .sheet(isPresented: $showSign) {
             VaultSignView(recordID: recordID)
+        }
+        .sheet(isPresented: $showBackup) {
+            ExportBundleView()
         }
     }
 }
@@ -153,7 +164,7 @@ struct VaultSpendView: View {
                     }
                 }
                 Section {
-                    Button("Create spend PSBT") { create() }
+                    Button("Prepare payment") { create() }
                         .disabled(destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || Int64(amountText) == nil)
                 }
@@ -163,7 +174,7 @@ struct VaultSpendView: View {
                     } header: {
                         Text("Spend PSBT")
                     } footer: {
-                        Text("Share this with the cosigners. Each signs it in “Sign / combine PSBTs”; combine the partials there when enough are collected.")
+                        Text("Open Continue signing and paste this request. Keep that screen open while exchanging replies with the other signer.")
                     }
                 }
             }
@@ -195,7 +206,7 @@ struct VaultSpendView: View {
             let payment = try model.vaultPayment(amount: amount, address: destination)
             let (psbt, lagsTip) = try model.createVaultSpend(record: record, payment: payment,
                                                              feeRateSatPerVByte: feeRate)
-            created = psbt.base64
+            created = try psbt.base64V0()
             // #151, same as the ordinary send path: the PSBT's locktime came
             // from `status.tipHeight`, which lags while headers catch up.
             notice = lagsTip

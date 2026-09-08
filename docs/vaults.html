@@ -49,7 +49,7 @@
 <p>For personal savings, keep one key on the phone and another on an independent signing device. A 2-of-2 MuSig2 policy requires both keys for every payment. Two keys on the same compromised device do not provide the intended separation.</p>
 <p>In <strong>Advanced mode → Wallet → Require another signing device</strong>, add the phone’s key and a compatible participant’s public account key. Review the policy before funding. MuSig2 exchanges public nonces and then partial signatures; the final payment has one Taproot key-path signature.</p>
 <p>The signature alone does not reveal the number of signers. This does not hide balances, transaction history, or signing coordination from everyone. Every participant remains required: losing a key and all its backups can lock the funds permanently. Winnow’s MuSig2 policy has no alternate recovery branch.</p>
-<p><strong>Current compatibility:</strong> the app journey uses an independent software signer as a fixture. It does not establish compatibility with a desktop application or a particular hardware wallet. Bitcoin Core round-two compatibility remains an open issue. A hardware secret would stay on its device; the desktop would coordinate, not import that secret into Winnow.</p>
+<p><strong>Bitcoin Core 31.1 can be the second signer.</strong> The app test exchanges PSBT files with Core, confirms a payment, and restores the account from a backup. A hardware wallet is a separate integration: its secret would stay on the device, with the desktop coordinating the exchange.</p>
 <p><a href="/advanced#second-device">App journey and its exact limits</a> · <a href="/core-cosigner">Core interoperability</a> · <a href="https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki">MuSig2 specification</a></p>
 </section>
 
@@ -71,12 +71,15 @@
 <details id="the-two-policies">
 <summary>Advanced: descriptors and signing</summary>
 <p>Threshold accounts use <code>tr(NUMS, sortedmulti_a(k, …))</code>; imported <code>multi_a</code> orderings are also supported. MuSig2 accounts use <code>tr(musig(k1, k2, …)/…)</code> with BIP328 derivation. Winnow does not combine the two into a hidden alternate spending path.</p>
-<p>PSBTv2 carries the proposed transaction, Taproot information, and signatures. The app checks known inputs and derives its own output scripts to recognize change; it does not trust a proposer’s change label or derivation metadata. It displays recipients, amounts, fees, and the signing policy before authorization.</p>
-<p>MuSig2 secret nonces stay in the active signing screen’s memory. Leaving the screen abandons the session; completing a signature consumes its nonce. Co-signers must restart an abandoned exchange with fresh nonces.</p>
+<p>The app reads PSBTv0 and v2 and shares v0 files with Core. Both carry the payment details and signing data. The app checks known inputs and derives its own output scripts to recognize change; it does not trust a proposer’s change label or derivation metadata. It displays recipients, amounts, fees, and the signing policy before authorization.</p>
+<p>MuSig2 secret nonces stay in the active signing screen’s memory. Leaving the screen abandons the session; completing a signature consumes its nonce. Choose <strong>Start again</strong> after an interrupted exchange, and start fresh on the other signer too.</p>
 <p>Each account is watched through the same compact-filter flow as the everyday wallet. Creation height matters: importing a public policy does not automatically recover funds sent before this phone started watching it. Keep the policy and the required wallet history for recovery. <a href="/import">Recovery behavior</a>.</p>
 <p>Current signing support is Taproot. Support for a different provider’s P2SH/P2WSH policies or PSBT conventions cannot be inferred from the shared word “multisig.” The planned <a href="/roadmap#safe">P2WSH Safe</a> is a separate proposal, not proof of that compatibility.</p>
 </details>
 <p><a href="/testing">How the suites and artifacts support these claims</a></p>
+<h2 id="backups">Back up both sides</h2>
+<p>Open the account and choose <strong>Back up this wallet</strong>. The file includes the account’s setup, address positions, and tracked funds. Keep the phone’s recovery words separately. The other signer needs its own key backup.</p>
+<p>Restoring a recent file checks forward for later payments, including payments from these accounts. Older Winnow files may not include shared accounts; create a fresh backup after setting one up. Signing exchanges are never restored: start a new exchange after restoring the wallet.</p>
 </main>
 <footer>
   <div class="bar">

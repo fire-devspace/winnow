@@ -259,9 +259,13 @@ extension PSBT {
             throw PSBTError.missingField("input \(index) musig2 participants")
         }
         let nonces = inputs[index].musig2PubNonces
+        // Participant lists name the root aggregate; signing contributions
+        // name the actual output key, after derivation and TapTweak (BIP373).
+        let signingKey = try MuSig.aggregate(publicKeys: participants, tweaks: tweaks,
+                                             isXOnlyTweaks: isXOnlyTweaks)
         var ordered: [Data] = []
         for participant in participants {
-            guard let nonce = nonces[MuSig2KeyID(participant: participant, aggregate: aggregateKey)] else {
+            guard let nonce = nonces[MuSig2KeyID(participant: participant, aggregate: signingKey)] else {
                 throw PSBTError.missingField("input \(index) musig2 nonce for \(participant.hex)")
             }
             ordered.append(nonce)
@@ -298,7 +302,8 @@ extension PSBT {
         guard inputs.indices.contains(index) else { throw PSBTError.missingField("input \(index)") }
         let partials = inputs[index].musig2PartialSigs
         let nonces = inputs[index].musig2PubNonces
-        let aggregate = try MuSig.aggregate(session.publicKeys) // root aggregate (BIP373 key)
+        let aggregate = try MuSig.aggregate(publicKeys: session.publicKeys, tweaks: session.tweaks,
+                                            isXOnlyTweaks: session.isXOnlyTweaks)
         var ordered: [Data] = []
         for participant in session.publicKeys {
             let id = MuSig2KeyID(participant: participant, aggregate: aggregate)

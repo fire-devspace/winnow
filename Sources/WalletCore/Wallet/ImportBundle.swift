@@ -134,6 +134,8 @@ public struct ImportBundle: Codable, Equatable, Sendable {
     public var lastKnownHeight: UInt32
     public var utxos: [UTXO]
     public var transactions: [KnownTransaction]
+    /// Shared and extra-device accounts. Older backups omit them.
+    public var vaults: [VaultRecord]?
     /// Next unused BIP86 receive index. Absent from v1 files and from
     /// writers that only knew UTXO-derived maxima; the importer then
     /// falls back to `max(receive UTXO index) + 1`.
@@ -197,6 +199,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
     /// then materialised and scanned.
     public static let maximumSerializedBytes = 8 * 1024 * 1024
     public static let maximumEntries = 50_000
+    public static let maximumVaults = 100
 
     /// Decodes a bundle from untrusted text, refusing implausible sizes before
     /// allocating anything proportional to them.
@@ -220,6 +223,10 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         guard bundle.transactions.count <= maximumEntries else {
             throw WalletError.invalidBundle(
                 "bundle declares \(bundle.transactions.count) transactions, above the \(maximumEntries) limit")
+        }
+        guard (bundle.vaults?.count ?? 0) <= maximumVaults,
+              (bundle.vaults ?? []).reduce(0, { $0 + $1.allUtxos.count }) <= maximumEntries else {
+            throw WalletError.invalidBundle("too many shared accounts or account coins")
         }
         return bundle
     }
@@ -250,11 +257,12 @@ public struct ImportBundle: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, network, descriptor, mnemonic, lastKnownHeight, utxos, transactions
-        case nextReceiveIndex, nextChangeIndex
+        case nextReceiveIndex, nextChangeIndex, vaults
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(vaults, forKey: .vaults)
         try container.encode(version, forKey: .version)
         try container.encode(network, forKey: .network)
         try container.encodeIfPresent(descriptor, forKey: .descriptor)
@@ -509,11 +517,14 @@ extension Wallet {
     /// consuming every matched block, and comparing the outcome against the
     /// bundle's claims (docs/import.md §3). Mismatches — e.g. a claimed
     /// UTXO discovered spent — surface in the report, never silently.
-    public func verifyImport(_ bundle: ImportBundle, using sync: FilterSync) async throws -> ImportReport {
+    public func verifyImport(_ bundle: ImportBundle, using sync: FilterSync,
+                             additionalScripts: [Data] = [],
+                             onMatch: (@Sendable (BlockMatch) async throws -> Void)? = nil) async throws -> ImportReport {
         let fromHeight = await sync.nextScanHeight
         let collector = EffectCollector()
-        try await sync.sync(watchScripts: watchScripts()) { match in
+        try await sync.sync(watchScripts: watchScripts() + additionalScripts) { match in
             collector.add(try await self.apply(match: match))
+            try await onMatch?(match)
         }
         let toHeight = await sync.lastScannedHeight
         return try ImportReport.make(bundle: bundle, effects: collector.effects, finalUTXOs: utxos,

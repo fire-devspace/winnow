@@ -496,7 +496,7 @@ struct SendView: View {
 
 /// Addresses must wrap literally: prose layout can insert a visible hyphen
 /// that is not part of the address. UIKit exposes character wrapping directly.
-private struct ReviewAddress: UIViewRepresentable {
+struct ReviewAddress: UIViewRepresentable {
     let address: String
 
     func makeUIView(context: Context) -> UILabel {
