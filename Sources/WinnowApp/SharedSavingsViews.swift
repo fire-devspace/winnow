@@ -248,12 +248,11 @@ struct AddSharedSavingsView: View {
 /// One shared savings: receive, balance, co-owners, and the two moves.
 struct SharedSavingsDetailView: View {
     let recordID: String
+    var send: () -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var showAsk = false
     @State private var showApprove = false
     @State private var showShare = false
-    @State private var showSpend = false
     @State private var showSign = false
     @State private var confirmRemove = false
 
@@ -307,13 +306,13 @@ struct SharedSavingsDetailView: View {
                 }
 
                 Section {
-                    Button("Ask for approval") { showAsk = true }
-                        .accessibilityIdentifier("askApprovalButton")
+                    Button("Send", action: send)
+                        .accessibilityIdentifier("sendFromAccountButton")
                         .disabled(record.utxos.isEmpty)
                     Button("Approve a request") { showApprove = true }
                         .accessibilityIdentifier("approveRequestButton")
                 } footer: {
-                    Text("Asking builds a payment and hands it to the co-owners as text. Approving adds this phone's approval to one they sent you.")
+                    Text("Send prepares a payment for the co-owners to approve. To approve a payment someone else prepared, open their request.")
                 }
 
                 if model.advancedMode {
@@ -327,8 +326,6 @@ struct SharedSavingsDetailView: View {
                                     .textSelection(.enabled)
                             }
                         }
-                        Button("Create payment") { showSpend = true }
-                            .disabled(record.utxos.isEmpty)
                         Button("Continue signing") { showSign = true }
                     }
                 }
@@ -345,7 +342,6 @@ struct SharedSavingsDetailView: View {
             }
         }
         .navigationTitle(record?.name ?? "Shared savings")
-        .sheet(isPresented: $showAsk) { AskApprovalView(recordID: recordID) }
         .sheet(isPresented: $showApprove) { ApprovalView(recordID: recordID) }
         .sheet(isPresented: $showShare) {
             if let record {
@@ -360,7 +356,6 @@ struct SharedSavingsDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSpend) { VaultSpendView(recordID: recordID) }
         .sheet(isPresented: $showSign) { VaultSignView(recordID: recordID) }
         .confirmationDialog("Remove these savings from this phone?", isPresented: $confirmRemove) {
             Button("Remove", role: .destructive) {
@@ -370,146 +365,6 @@ struct SharedSavingsDetailView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        }
-    }
-}
-
-/// Builds a payment from the savings and hands it to the co-owners as a
-/// request. The destination is a person (a fresh address, whose counter
-/// moves as soon as the request exists) or a pasted address.
-struct AskApprovalView: View {
-    let recordID: String
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedPersonID: String?
-    @State private var address = ""
-    @State private var amountText = ""
-    @State private var request: String?
-    @State private var lagsTip = false
-    @State private var error: String?
-    @State private var building = false
-
-    private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
-    private var person: PersonRecord? {
-        guard let selectedPersonID else { return nil }
-        return model.people.first { $0.id == selectedPersonID && $0.payTo != nil }
-    }
-    private var payablePeople: [PersonRecord] { model.savedRecipients }
-
-    private var canBuild: Bool {
-        guard let amount = Int64(amountText), amount > 0 else { return false }
-        return person != nil || !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    LabeledContent("Available", value: satsText(record?.balance ?? 0))
-                    if let person {
-                        HStack {
-                            Text(person.name)
-                            Spacer()
-                            Button("Change") { selectedPersonID = nil }
-                        }
-                    } else {
-                        // People as rows rather than a menu: one tap, and
-                        // every name is on screen for the person choosing.
-                        ForEach(payablePeople) { candidate in
-                            Button {
-                                selectedPersonID = candidate.id
-                                address = ""
-                            } label: {
-                                Label(candidate.name, systemImage: "person")
-                            }
-                            .accessibilityIdentifier("askChoosePerson-\(candidate.name)")
-                        }
-                        TextField(payablePeople.isEmpty ? "Bitcoin address" : "Or a Bitcoin address", text: $address)
-                            .font(.system(.footnote, design: .monospaced))
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .accessibilityIdentifier("askDestinationField")
-                    }
-                    TextField("Amount (sats)", text: $amountText)
-                        .keyboardType(.numberPad)
-                        .accessibilityIdentifier("askAmountField")
-                } header: {
-                    Text("Pay to")
-                }
-
-                if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("askError") }
-                }
-
-                if request == nil {
-                    Section {
-                        Button(building ? "Building…" : "Build the request") { build() }
-                            .accessibilityIdentifier("buildApprovalRequestButton")
-                            .disabled(building || !canBuild)
-                    }
-                }
-
-                if let request {
-                    Section {
-                        if lagsTip {
-                            Label("Built while sync was catching up: the payment carries a locktime behind the network tip, which on-chain shows it was built mid-sync. Rebuild after sync to avoid that.",
-                                  systemImage: "clock.arrow.circlepath")
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-                        }
-                        CopyableTextBlock(text: request)
-                            .accessibilityIdentifier("approvalRequestBlock")
-                    } header: {
-                        Text("The request")
-                    } footer: {
-                        Text("Send this to any co-owner. When \(thresholdText) have approved, whoever holds the last approval taps Finish. You can add your own approval under Approve a request.")
-                    }
-                }
-            }
-            .navigationTitle("Ask for approval")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private var thresholdText: String {
-        guard let savings = model.sharedSavings.first(where: { $0.id == recordID }) else { return "enough co-owners" }
-        return "\(savings.threshold) of \(savings.signerCount)"
-    }
-
-    private func build() {
-        guard let record, let amount = Int64(amountText), amount > 0 else { return }
-        building = true
-        error = nil
-        Task {
-            do {
-                let destination: String
-                var paidPerson: (id: String, index: UInt32)?
-                if let person {
-                    let (next, index) = try model.nextPaymentAddress(for: person)
-                    destination = next
-                    if person.derivesFreshAddresses { paidPerson = (person.id, index) }
-                } else {
-                    destination = address
-                }
-                let payment = try model.vaultPayment(amount: amount, address: destination)
-                let feeRate = await model.resolvedFeeRate(priority: .medium, override: nil)
-                let (psbt, lags) = try model.createVaultSpend(record: record, payment: payment,
-                                                              feeRateSatPerVByte: feeRate)
-                let envelope = model.approvalRequest(for: record, psbt: psbt)
-                request = try envelope.serialized()
-                lagsTip = lags
-                if let paidPerson {
-                    await model.advancePersonPaymentIndex(id: paidPerson.id, past: paidPerson.index)
-                }
-                model.journalApproval("approval.requested", vaultID: record.id, fields: ["base64": psbt.base64])
-            } catch {
-                self.error = error.localizedDescription
-            }
-            building = false
         }
     }
 }

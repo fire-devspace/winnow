@@ -6,8 +6,8 @@ import UIKit
 /// points (creator role here, signer/combiner in `VaultSignView`).
 struct VaultDetailView: View {
     let recordID: String
+    var send: () -> Void
     @Environment(AppModel.self) private var model
-    @State private var showSpend = false
     @State private var showSign = false
     @State private var showBackup = false
 
@@ -70,7 +70,8 @@ struct VaultDetailView: View {
                 }
 
                 Section {
-                    Button("Create payment") { showSpend = true }
+                    Button("Send", action: send)
+                        .accessibilityIdentifier("sendFromAccountButton")
                         .disabled(record.utxos.isEmpty)
                     Button("Continue signing") { showSign = true }
                 } footer: {
@@ -82,9 +83,6 @@ struct VaultDetailView: View {
             }
         }
         .navigationTitle(record?.name ?? "Vault")
-        .sheet(isPresented: $showSpend) {
-            VaultSpendView(recordID: recordID)
-        }
         .sheet(isPresented: $showSign) {
             VaultSignView(recordID: recordID)
         }
@@ -117,105 +115,6 @@ struct VaultPolicySection: View {
             .font(.footnote)
         } header: {
             Text("Signing policy")
-        }
-    }
-}
-
-/// Creator role: destination + amount + feerate → the spend PSBT (Base64),
-/// shared with the cosigners.
-struct VaultSpendView: View {
-    let recordID: String
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var destination = ""
-    @State private var amountText = ""
-    @State private var feeRateText = ""
-    @State private var created: String?
-    @State private var error: String?
-    /// Informational, not a failure: rendered orange, kept separate from
-    /// `error` so a successful creation never looks like a failed one (#151).
-    @State private var notice: String?
-
-    private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Spend from vault") {
-                    LabeledContent("Available", value: satsText(record?.balance ?? 0))
-                    TextField("Destination address", text: $destination)
-                        .font(.system(.footnote, design: .monospaced))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    TextField("Amount (sats)", text: $amountText)
-                        .keyboardType(.numberPad)
-                    TextField("Feerate (sat/vB)", text: $feeRateText)
-                        .keyboardType(.decimalPad)
-                }
-                if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
-                }
-                if let notice {
-                    Section {
-                        Label(notice, systemImage: "clock.arrow.circlepath")
-                            .foregroundStyle(.orange).font(.footnote)
-                            .accessibilityIdentifier("vaultLocktimeLagNotice")
-                    }
-                }
-                Section {
-                    Button("Prepare payment") { create() }
-                        .disabled(destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || Int64(amountText) == nil)
-                }
-                if let created {
-                    Section {
-                        CopyableTextBlock(text: created)
-                    } header: {
-                        Text("Spend PSBT")
-                    } footer: {
-                        Text("Open Continue signing and paste this request. Keep that screen open while exchanging replies with the other signer.")
-                    }
-                }
-            }
-            .navigationTitle("Create payment")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .task {
-                let rate = await model.resolvedFeeRate(priority: .medium, override: nil)
-                feeRateText = rate.formatted(.number.precision(.fractionLength(0 ... 2)))
-            }
-        }
-    }
-
-    private func create() {
-        error = nil
-        notice = nil
-        created = nil
-        guard let record else { return }
-        do {
-            guard let amount = Int64(amountText), amount > 0,
-                  let feeRate = Double(feeRateText), feeRate > 0
-            else {
-                error = "Enter an amount in sats and a feerate in sat/vB."
-                return
-            }
-            let payment = try model.vaultPayment(amount: amount, address: destination)
-            let (psbt, lagsTip) = try model.createVaultSpend(record: record, payment: payment,
-                                                             feeRateSatPerVByte: feeRate)
-            created = try psbt.base64V0()
-            // #151, same as the ordinary send path: the PSBT's locktime came
-            // from `status.tipHeight`, which lags while headers catch up.
-            notice = lagsTip
-                ? "Created while header sync is catching up: the spend carries a "
-                    + "locktime behind the network tip, which on-chain reveals it was "
-                    + "built mid-sync. Recreate it after sync to avoid that."
-                : nil
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 }

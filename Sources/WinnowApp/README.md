@@ -7,7 +7,10 @@ sending, recovery, saved recipients, and shared accounts. The app owns user revi
 authentication, presentation, and lifecycle; WalletCore owns the Bitcoin rules.
 
 Wallet is the one account and transaction list. Payment details save or rename a
-recipient; Send holds the saved-recipient picker. Removing a shortcut preserves
+recipient; Send holds the account and saved-recipient pickers. Ordinary payments,
+shared savings, and extra-device accounts use the same form and review. The
+reviewed proposal goes directly to the account's approval screen; each signing
+method keeps its own approval rules. Removing a shortcut preserves
 past labels, signer identities, and fresh-address counters in the existing
 people.json store. Receive shares the wallet’s payment card.
 

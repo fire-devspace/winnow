@@ -1380,6 +1380,12 @@ final class AppModel {
     }
 
     struct SendPreview: Equatable {
+        enum Source: Equatable {
+            case wallet
+            case vault(VaultRecord, PSBT)
+        }
+
+        var source: Source = .wallet
         struct ReviewedOutpoint: Equatable {
             var txid: Data
             var vout: UInt32
@@ -1477,12 +1483,15 @@ final class AppModel {
     /// Parses the destination (any standard address) and previews coin
     /// selection at the resolved feerate.
     func previewSend(destination: String, amount: Int64, priority: FeePolicy.Priority,
-                     override: Double?) async throws -> SendPreview {
-        guard let wallet else { throw AppError.noWallet }
+                     override: Double?, accountID: String? = nil) async throws -> SendPreview {
         let feeRate = await resolvedFeeRate(priority: priority, override: override)
         let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
-        var payments: [Payment] = []
-        payments.append(try Payment(amount: amount, address: trimmed, network: network))
+        let payments = [try Payment(amount: amount, address: trimmed, network: network)]
+        if let accountID {
+            guard let record = vaults.first(where: { $0.id == accountID }) else { throw VaultSpendError.unknownVault }
+            return try previewVaultSend(record: record, destination: trimmed, payment: payments[0], feeRate: feeRate)
+        }
+        guard let wallet else { throw AppError.noWallet }
         let utxos = await wallet.spendableUtxos
         let changeScript = try await wallet.scriptPubKey(chain: .change, index: wallet.nextChangeIndex)
         let selection = try CoinSelection.select(utxos: utxos, payments: payments,
@@ -1501,14 +1510,52 @@ final class AppModel {
     /// A payment to a person in the address book: the next fresh address is
     /// peeked here and the counter moves only when the send commits.
     func previewSend(to person: PersonRecord, amount: Int64, priority: FeePolicy.Priority,
-                     override: Double?) async throws -> SendPreview {
+                     override: Double?, accountID: String? = nil) async throws -> SendPreview {
         let (address, index) = try nextPaymentAddress(for: person)
         var preview = try await previewSend(destination: address, amount: amount,
-                                            priority: priority, override: override)
+                                            priority: priority, override: override, accountID: accountID)
         preview.recipient = SendPreview.Recipient(
             personID: person.id, name: person.name,
             paymentIndex: person.derivesFreshAddresses ? index : nil)
         return preview
+    }
+
+    private func previewVaultSend(record: VaultRecord, destination: String, payment: Payment,
+                                  feeRate: Double) throws -> SendPreview {
+        let (psbt, lagsTip) = try createVaultSpend(record: record, payment: payment, feeRateSatPerVByte: feeRate)
+        let reviewed = try reviewVaultSpend(psbt, record: record)
+        let transaction = try psbt.unsignedTransaction()
+        let remaining = reviewed.outputTotal - payment.amount
+        let changeScript = try vault(for: record).scriptPubKey(index: record.nextChangeIndex, choice: 1)
+        return SendPreview(source: .vault(record, psbt), destination: destination, payments: [payment],
+                           feeRateSatPerVByte: feeRate, fee: reviewed.fee,
+                           changeAmount: remaining > 0 ? remaining : nil, inputCount: transaction.inputs.count,
+                           selectedOutpoints: transaction.inputs.map {
+                               .init(txid: $0.previousOutput.txid, vout: $0.previousOutput.vout)
+                           }, change: remaining > 0 ? Payment(amount: remaining, scriptPubKey: changeScript) : nil,
+                           locktimeLagsTip: lagsTip)
+    }
+
+    /// Keep the reviewed proposal intact when handing it to the approval screen.
+    /// Reserve a card's address only once the user proceeds past review.
+    func prepareVaultApproval(_ preview: SendPreview) async throws {
+        try await exclusively(.spending) {
+            guard case let .vault(original, psbt) = preview.source,
+                  let record = vaults.first(where: { $0.id == original.id && $0.descriptor == original.descriptor })
+            else { throw AppError.sendReviewChanged }
+            let reviewed = try reviewVaultSpend(psbt, record: record)
+            let remaining = reviewed.outputTotal - preview.amountSent
+            let built = try BuiltTransaction(psbt: psbt, transaction: psbt.unsignedTransaction(),
+                                             fee: reviewed.fee, changeAmount: remaining > 0 ? remaining : nil)
+            guard preview.authorizes(built) else { throw AppError.sendReviewChanged }
+            if let recipient = preview.recipient, let index = recipient.paymentIndex {
+                guard people.first(where: { $0.id == recipient.personID })?.nextPaymentIndex == index
+                else { throw AppError.sendReviewChanged }
+                try await peopleStore.advancePaymentIndex(id: recipient.personID, past: index)
+                people = await peopleStore.all
+            }
+            journalApproval("approval.requested", vaultID: record.id, fields: ["base64": psbt.base64])
+        }
     }
 
     /// Builds, signs and broadcasts the previewed send. Returns the txid
@@ -1543,6 +1590,7 @@ final class AppModel {
 
     func send(preview: SendPreview) async throws -> Data {
         try await exclusively(.spending) {
+        guard case .wallet = preview.source else { throw AppError.sendReviewChanged }
         guard let wallet else { throw AppError.noWallet }
         try await authenticateSensitiveAction(reason: "Sign and send this Bitcoin transaction")
         // Build and sign WITHOUT touching wallet state, hand the tx to the
@@ -1946,12 +1994,6 @@ final class AppModel {
                                          chainTip: status.tipHeight)
         journalPSBT(stage: "vault-spend-created", psbt: psbt)
         return (psbt, syncPhase.headerTipMayLagNetwork)
-    }
-
-    /// Resolves a standard Bitcoin address for a vault spend.
-    func vaultPayment(amount: Int64, address: String) throws -> Payment {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        return try Payment(amount: amount, address: trimmed, network: network)
     }
 
     /// Adds this device's script-path signature to every input, after the

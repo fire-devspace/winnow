@@ -108,6 +108,7 @@ final class VaultSpendSession {
             let candidate = try working?.combined(with: [incoming]) ?? incoming
             try refresh(with: candidate, record: record)
             working = candidate
+            output = try model.approvalRequest(for: record, psbt: candidate).serialized()
             model.journalPSBT(stage: "vault-psbt-combined", psbt: candidate)
         } catch {
             self.error = error.localizedDescription
@@ -236,6 +237,7 @@ final class VaultSpendSession {
 /// as on the expert screen.
 struct ApprovalView: View {
     let recordID: String
+    var initialPSBT: PSBT?
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -261,7 +263,10 @@ struct ApprovalView: View {
                 }
             }
             .onAppear {
-                if session == nil { session = VaultSpendSession(model: model, recordID: recordID) }
+                if session == nil {
+                    session = VaultSpendSession(model: model, recordID: recordID)
+                    if let initialPSBT { session?.add(text: initialPSBT.base64) }
+                }
             }
             .task(id: model.vaults.first { $0.id == recordID }) {
                 session?.recheck()
@@ -283,7 +288,7 @@ struct ApprovalView: View {
         if let error = session.error, session.review != nil || session.working == nil {
             Section { Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("approvalError") }
         }
-        if let output = session.output, session.broadcastTxid == nil { shareSection(output) }
+        if let output = session.output, session.broadcastTxid == nil { shareSection(output, approved: session.approvedByYou) }
         if let txid = session.broadcastTxid { sentSection(txid) }
     }
 
@@ -371,12 +376,12 @@ struct ApprovalView: View {
         }
     }
 
-    private func shareSection(_ output: String) -> some View {
+    private func shareSection(_ output: String, approved: Bool) -> some View {
         Section {
             CopyableTextBlock(text: output)
                 .accessibilityIdentifier("approvalOutputBlock")
         } header: {
-            Text("Share your approval")
+            Text(approved ? "Share your approval" : "Share payment request")
         } footer: {
             Text("Send this back to a co-owner, or to whoever will finish the payment.")
         }
