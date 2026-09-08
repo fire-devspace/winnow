@@ -2,27 +2,27 @@
   {
     "id": "setup",
     "section": "everyday",
-    "title": "Create a wallet and finish its backup",
-    "description": "Create keys on the phone, write down the recovery phrase, and resume an unfinished backup after reopening the app.",
+    "title": "Set up your wallet",
+    "description": "Create a wallet and write down your recovery words. If you stop partway through, you can finish the backup when you return.",
     "journey": [
-      "Create the wallet before network sync finishes.",
-      "Complete the backup; reopen and reveal it only through the protected flow."
+      "Create a wallet while it connects to the network.",
+      "Leave the backup unfinished, reopen the app, and finish it. Check that viewing the recovery words requires unlocking."
     ],
     "tests": [
       "test01OnboardingCreateWallet",
       "test09BackupResumeAndReveal"
     ],
     "image": "01-onboarding",
-    "limitations": "A recovery phrase alone does not reconstruct this wallet’s historical scan. Keep the history-carrying backup too."
+    "limitations": "Save a backup file too. Winnow needs it to find your past payments when you restore the wallet."
   },
   {
     "id": "receive",
     "section": "everyday",
-    "title": "Receive and recognize a payment",
-    "description": "Show a fresh address and QR code. While Receive is open, peer-relayed payments appear as unconfirmed; confirmed payments enter the wallet’s history.",
+    "title": "Receive bitcoin",
+    "description": "Share your address or QR code. Keep Receive open to watch for a payment, then check its confirmation in your wallet.",
     "journey": [
-      "Mine a payment and find it through compact filters.",
-      "Receive a normal transaction before mining it, then observe its confirmation in the app."
+      "Confirm a payment on the test network and check that it appears in the wallet.",
+      "Watch a new payment arrive on Receive before it is confirmed, then check that its status updates after confirmation."
     ],
     "tests": [
       "test02ReceiveAndFunding",
@@ -33,12 +33,12 @@
   {
     "id": "send",
     "section": "everyday",
-    "title": "Review, send, and follow confirmation",
-    "description": "Choose a recipient and enter an amount. Review the full address, network fee, and total on the next screen, then send and follow confirmation.",
+    "title": "Send bitcoin",
+    "description": "Enter an address and amount. Check the address, fee, and total before you send, then follow the payment’s status.",
     "journey": [
-      "Enter a recipient and amount without fee controls crowding the form.",
+      "Enter an address and amount on the simple send screen.",
       "Edit a reviewed payment, then verify the new amount, full address, fee, and total before sending.",
-      "Check that Bitcoin Core received the payment, open its diagnostics, and follow confirmation in the app."
+      "Check that Bitcoin Core received the payment, open its details, and wait for the app to show it as confirmed."
     ],
     "tests": [
       "test03Send"
@@ -48,11 +48,11 @@
   {
     "id": "people",
     "section": "everyday",
-    "title": "Pay a person",
-    "description": "Add a person’s public card and pay them using a fresh address derived from their account key.",
+    "title": "Pay someone again",
+    "description": "Save someone’s payment card in People. Next time, choose their name instead of pasting an address.",
     "journey": [
-      "Import a card and choose the person from the app.",
-      "Review and send the payment; verify the destination and next-address behavior."
+      "Add a payment card and select the saved person.",
+      "Send a payment and check that the next payment uses a new address."
     ],
     "tests": [
       "test10PeopleAddAndPay"
@@ -62,18 +62,18 @@
   {
     "id": "savings",
     "section": "everyday",
-    "title": "Share control with other people",
-    "description": "Choose a threshold such as 2 of 3: any two keys can approve a payment while one is unavailable. Start from Savings on the Wallet screen.",
+    "title": "Save with other people",
+    "description": "Choose who shares the wallet and how many approvals a payment needs. With two approvals out of three, one person can be away and the other two can still pay.",
     "journey": [
-      "Create shared savings from the Wallet screen and choose the co-owners and threshold.",
-      "Fund the savings, review a request, and complete two approvals while the third signer stays absent."
+      "Create shared savings from Wallet and choose who can approve payments.",
+      "Add funds, review a payment request, and complete two approvals without the third person."
     ],
     "tests": [
       "test12SharedSavingsCreateAndAsk",
       "test07ApproveRequest"
     ],
     "image": "27-ask-approval",
-    "limitations": "The threshold counts keys, not verified people. A 1-of-n policy allows one key to spend. Taproot hides the threshold until a script-path spend reveals it; key separation is not protection against every coercion scenario.",
+    "limitations": "For shared control, each person must keep their own key. If you choose just one required approval, any one of them can spend.",
     "guide": "/vaults"
   },
   {
@@ -99,26 +99,26 @@
   {
     "id": "recovery",
     "section": "everyday",
-    "title": "Export and restore a wallet",
-    "description": "Export a history-carrying bundle and verify it when importing. Secret-bearing exports require an explicit protected action.",
+    "title": "Back up and restore",
+    "description": "Save a backup file with your wallet’s history. Import it when you need to restore your wallet. The app asks you to unlock before exporting private keys.",
     "journey": [
-      "Export watch-only and secret-bearing bundles through their distinct controls.",
-      "Import a funded bundle and check its verification report and wallet state."
+      "Export a backup with private keys and one without them.",
+      "Restore a wallet that has funds and check that the backup is valid and the funds are found."
     ],
     "tests": [
       "test06ImportBundleVerification",
       "test08ExportBundle"
     ],
-    "limitations": "Recovery is forward verification from the bundle’s saved history, not a historical rescan from twelve words."
+    "limitations": "Keep both your recovery words and your backup file. The words alone won’t restore your payment history."
   },
   {
     "id": "controls",
     "section": "everyday",
-    "title": "Keep everyday controls simple",
-    "description": "Use Wallet, Send, People, and Settings without protocol controls crowding the normal flow. Turn on Advanced mode when those controls are useful.",
+    "title": "More options when you need them",
+    "description": "Start with the basics. Turn on Advanced mode in Settings to adjust fees and manage network connections.",
     "journey": [
-      "Check the beginner navigation and hidden advanced controls.",
-      "Turn Advanced mode on to reveal fee and peer controls, then hide them again."
+      "Check which tabs and controls appear in normal mode.",
+      "Turn Advanced mode on and off, checking that fee and network settings appear and disappear."
     ],
     "tests": [
       "test11BeginnerShellHidesAdvancedControls"

@@ -55,41 +55,44 @@ def card(journey, cases):
     parts = [f'<section class="journey" id="{journey["id"]}">']
     parts.append(f'<h2>{escape(journey["title"])}</h2><p>{escape(journey["description"])}</p>')
     if image := journey.get("image"):
-        parts.append(f'<img class="app-shot" src="screenshots/{image}.png" width="1320" height="2868" loading="lazy" alt="{escape(journey["title"])} in the signet test app.">')
+        parts.append(f'<img class="app-shot" src="screenshots/{image}.png" width="1320" height="2868" loading="lazy" alt="Winnow: {escape(journey["title"])}.">')
     if limitation := journey.get("limitations"):
-        parts.append(f'<p class="limit"><strong>Know before using it:</strong> {escape(limitation)}</p>')
+        parts.append(f'<p class="limit">{escape(limitation)}</p>')
     if guide := journey.get("guide"):
-        parts.append(f'<p><a href="{guide}">Read the advanced guide</a></p>')
+        parts.append(f'<p><a href="{guide}">Read the guide</a></p>')
     dialog = f'{journey["id"]}-tests'
     parts.append(f'<button class="test-link" type="button" data-dialog="{dialog}" aria-controls="{dialog}" aria-haspopup="dialog">How this is tested</button>')
     parts.append(f'<dialog id="{dialog}" aria-labelledby="{dialog}-title">')
     parts.append(f'<div class="dialog-heading"><h2 id="{dialog}-title">How we test: {escape(journey["title"])}</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>')
     parts.extend(f'<li>{escape(step)}</li>' for step in journey["journey"])
-    parts.append('</ol><p>App scenarios:')
+    parts.append('</ol><p>Test code:')
     parts.append(", ".join(f'<a href="{SOURCE}{TEST_PATH}#L{cases[test][0]}">{escape(test)}</a>' for test in journey["tests"]))
-    parts.append(f'. <a href="{RESULTS}">Inspect test runs and their results</a>.</p>')
-    parts.append('<p>These tests drive the app against a disposable signet node. Images show test wallets; a screenshot or a test in the source is not a passing result. Check the run’s revision, failures, and result bundle.</p>')
-    parts.append('<p><a href="/testing#artifacts">How to read the evidence</a> · <a href="/testing#limits">What these tests cannot prove</a></p></dialog></section>')
+    parts.append(f'. <a href="{RESULTS}">View test results</a>.</p>')
+    parts.append('<p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>')
+    parts.append('<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>')
     return "\n".join(parts)
 
 def page(section, journeys, cases):
     advanced = section == "advanced"
-    title = "Advanced wallet journeys" if advanced else "Pay with your phone. Choose how to protect your savings."
+    title = "Advanced wallet journeys" if advanced else "A Bitcoin wallet for your iPhone."
     intro = ("Turn on Advanced mode for explicit vault policies, signing exchanges, fee controls and replacement, and peer controls."
-             if advanced else "Create a wallet on your phone, pay people, and choose when a payment needs more than one approval.")
+             if advanced else "Send and receive bitcoin, keep track of payments, and save with other people.")
     selected = [j for j in journeys if j["section"] == section]
     content = "\n".join(card(j, cases) for j in selected)
     links = " ".join(f'<a href="#{j["id"]}">{escape(j["title"])}</a>' for j in selected)
-    cta = "" if advanced else '<p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Get early access on TestFlight</a></p>'
+    cta = "" if advanced else '<p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Try it on TestFlight</a></p>'
     choices = ""
     if not advanced:
         options = []
         for journey in journeys:
             if journey["id"] in {"savings", "second-device"}:
                 route = "/advanced" if journey["section"] == "advanced" else "/"
-                availability = "Advanced · software signer tested; hardware integration unverified" if route == "/advanced" else "Shared savings · choose the approval threshold"
-                options.append(f'<article><p class="lede">{availability}</p><h3>{escape(journey["title"])}</h3><p>{escape(journey["description"])}</p><a href="{route}#{journey["id"]}">Explore this journey</a></article>')
-        choices = '<section id="signing-choices"><h2>Two reasons to use more than one key</h2><div class="signing-choices">' + "".join(options) + '</div><p><a href="/vaults">What each policy enforces, and what it cannot prove</a></p></section>'
+                availability = "Advanced" if route == "/advanced" else "Shared savings"
+                heading = "Require a second key" if route == "/advanced" else journey["title"]
+                description = ("Require both your phone’s key and a second key to approve a payment. We haven’t tested hardware wallets yet."
+                               if route == "/advanced" else journey["description"])
+                options.append(f'<article><p class="lede">{availability}</p><h3>{escape(heading)}</h3><p>{escape(description)}</p><a href="{route}#{journey["id"]}">See how it works</a></article>')
+        choices = '<section id="signing-choices"><h2>Choose who can spend</h2><div class="signing-choices">' + "".join(options) + '</div><p><a href="/vaults">How shared wallets work</a></p></section>'
     return f"""<!doctype html>
 <!-- Generated by scripts/build-site from docs/journeys.json and the app test source. -->
 <html lang="en">
@@ -124,19 +127,19 @@ dialog a{{overflow-wrap:anywhere}}
 <body>
 <header class="topbar"><div class="bar">
 <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
-<nav class="links" aria-label="Main"><a href="/">Everyday use</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
+<nav class="links" aria-label="Main"><a href="/">Home</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">GitHub</a></nav>
 </div></header>
 <main>
 <p class="lede">Early access · open source · iPhone</p>
 <h1>{escape(title)}</h1>
 <p class="lede">{escape(intro)}</p>
 {cta}
-<p>Wallet reads use Bitcoin peers and compact block filters. Keys are stored in this device’s Keychain; secret exports are explicit. No address-query service supplies the wallet’s balance.</p>
+<p>Your wallet connects directly to the Bitcoin network. Your private keys stay on your phone unless you choose to export them.</p>
 {choices}
-<nav class="jump-links" aria-label="Journeys">{links}</nav>
+<nav class="jump-links" aria-label="On this page">{links}</nav>
 {content}
-<p id="evidence"><a href="/testing">About the testing suites and their evidence</a></p>
-{"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Explore advanced wallet journeys</a> · <a href='/roadmap'>See planned work</a></p>"}
+<p id="evidence"><a href="/testing">How we test Winnow</a></p>
+{"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Advanced features</a> · <a href='/roadmap'>What’s next</a></p>"}
 </main>
 <footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/architecture">How it works</a></div></footer>
 <script>
