@@ -45,8 +45,10 @@ uses a 2-of-3 account: two approvals complete the payment while the third signer
 is absent. The extra-device MuSig2 journey requires both keys, refuses to finish
 with only the phone's signature, abandons nonces when its signing screen closes,
 and completes a single-signature key-path spend with Bitcoin Core 31.1 as the
-second signer. It saves a backup before payment and restores it afterward,
-checking the remaining account balance. It does not establish hardware-wallet
+second signer. Both shared-payment flows check that sending ends on a clear
+success screen, without leaving an obsolete signing review in view. The MuSig2
+journey saves a backup before payment and restores it afterward, checking the
+remaining account balance. It does not establish hardware-wallet
 or custody-provider compatibility. A group nested inside a threshold account is a
 separate advanced composition, not substitute evidence for the direct MuSig2 UI.
 

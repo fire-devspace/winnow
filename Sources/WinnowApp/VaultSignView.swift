@@ -87,54 +87,23 @@ struct VaultSignView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("Paste a PSBT (Base64)", text: $pasted)
-                        .font(.system(.caption, design: .monospaced))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .accessibilityIdentifier("psbtField")
-                    Button("Paste from clipboard") {
-                        pasted = UIPasteboard.general.string ?? ""
-                    }
-                    .accessibilityIdentifier("psbtPasteButton")
-                    Button("Add reply") { addPasted() }
-                        .accessibilityIdentifier("addPSBTButton")
-                        .disabled(authorizing
-                            || pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } footer: {
-                    Text("Paste the payment or the other signer’s reply here.")
-                }
-
-                if working != nil {
-                    reviewSection
-                    progressSection
-                    actionsSection
-                }
-
-                if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
-                }
-
-                if let output {
-                    Section("PSBT to share") {
-                        CopyableTextBlock(text: output)
-                    }
-                }
-
                 if let broadcastTxid {
                     Section {
-                        Label("Broadcast", systemImage: "checkmark.seal")
+                        Text("Payment sent")
+                            .font(.headline)
                             .foregroundStyle(.green)
+                            .accessibilityIdentifier("vaultPaymentSent")
                         Text(broadcastTxid.displayHex)
                             .font(.system(.caption2, design: .monospaced))
                             .textSelection(.enabled)
-                        Text("A filter match will confirm it in a block; the vault's balance updates then.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                    } footer: {
+                        Text("You can close this screen.")
                     }
+                } else {
+                    signingSections
                 }
             }
-            .navigationTitle("Approve payment")
+            .navigationTitle(broadcastTxid == nil ? "Approve payment" : "Payment")
             .task(id: trustedStateIdentity) {
                 refreshSpendReview()
             }
@@ -152,6 +121,38 @@ struct VaultSignView: View {
                 dismiss()
             }
             .onDisappear { clearSensitiveSigningState() }
+        }
+    }
+
+    @ViewBuilder
+    private var signingSections: some View {
+        Section {
+            TextField("Paste a PSBT (Base64)", text: $pasted)
+                .font(.system(.caption, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .accessibilityIdentifier("psbtField")
+            Button("Paste from clipboard") {
+                pasted = UIPasteboard.general.string ?? ""
+            }
+            .accessibilityIdentifier("psbtPasteButton")
+            Button("Add reply") { addPasted() }
+                .accessibilityIdentifier("addPSBTButton")
+                .disabled(authorizing
+                    || pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } footer: {
+            Text("Paste the payment or the other signer’s reply here.")
+        }
+        if working != nil {
+            reviewSection
+            progressSection
+            actionsSection
+        }
+        if let error {
+            Section { Text(error).foregroundStyle(.red).font(.footnote) }
+        }
+        if let output {
+            Section("PSBT to share") { CopyableTextBlock(text: output) }
         }
     }
 
@@ -339,7 +340,6 @@ struct VaultSignView: View {
     }
 
     private func signingInstruction(required: Int) -> String {
-        if broadcastTxid != nil { return "Payment sent. Waiting for confirmation." }
         if minPartialSigs >= required { return "Every approval is here. You can send the payment." }
         if signedMuSig2ThisSession { return "Copy the request below to the other signer, then add its signed reply here." }
         if minNonces >= required && nonceSessionStarted { return "The signers are ready. Check the payment, then approve it on this phone." }

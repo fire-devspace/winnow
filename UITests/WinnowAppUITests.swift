@@ -1130,8 +1130,9 @@ final class WinnowAppUITests: XCTestCase {
             NSPredicate(format: "label BEGINSWITH 'Finalize'")).firstMatch
         XCTAssertTrue(scrollUntilExists(app, finalize), "finalize button missing")
         finalize.tap()
-        XCTAssertTrue(app.staticTexts["Broadcast"].waitForExistence(timeout: 60),
-                      "broadcast confirmation missing")
+        XCTAssertTrue(app.staticTexts["vaultPaymentSent"].waitForExistence(timeout: 60),
+                      "payment success screen missing")
+        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this proposal"].exists)
         Screenshots.capture(app, "32-group-broadcast", testCase: self)
 
         // 6. The node is the judge — patiently: the app broadcasts over P2P
@@ -1634,6 +1635,10 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(poll(timeout: 60, interval: 1, "MuSig2 spend accepted by Core") {
             ((try? Set(BitcoinCLI.mempoolTxids()).subtracting(before).isEmpty) ?? true) == false
         })
+        XCTAssertTrue(app.staticTexts["vaultPaymentSent"].waitForExistence(timeout: 60))
+        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this proposal"].exists)
+        XCTAssertFalse(app.buttons["musigBroadcastButton"].exists)
+        Screenshots.capture(app, "39-extra-device-sent", testCase: self)
         let txid = try XCTUnwrap(Set(BitcoinCLI.mempoolTxids()).subtracting(before).first)
         let tx = try BitcoinCLI.runObject(["getrawtransaction", txid, "true"])
         let inputs = try XCTUnwrap(tx["vin"] as? [[String: Any]])
