@@ -10,7 +10,9 @@ import TestSupport
 ///
 /// Merged from `PeerPoolTests`, `PeerCooldownTests`, `StaleTipEvictionTests`
 /// and `SocksProxyTests`; each `// MARK:` below is one of those suites, in
-/// that order. All of it is socket-backed — real 127.0.0.1 listeners, no
+/// that order, apart from the relay-only sessions between the first two: that
+/// section belongs to none of them, and sits with the dialing and lifecycle
+/// tests it narrows. All of it is socket-backed — real 127.0.0.1 listeners, no
 /// external network.
 ///
 /// Of the four, two carried a time limit: two minutes for the stale-tip cases
@@ -272,6 +274,176 @@ struct PeerPoolTests {
             return false
         }())
         #expect(await pool.connectedPeers().count == 1)
+        await pool.stop()
+    }
+
+    // MARK: - Relay-only sessions
+
+    // Keeping a payment moving while nothing is being read.
+    //
+    // `stop()` is all or nothing: it disconnects every peer, and `TxBroadcaster`
+    // announces over exactly those connections, so a wallet that stops its pool
+    // with a transaction still pending stops relaying it. `enterRelayOnly` is
+    // the state in between — a seat or two held for announcements, nothing
+    // dialled, nothing read.
+
+    @Test("a relay-only session keeps only the seats it was given and dials nothing")
+    func relayOnlyKeepsSeats() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        for _ in 0 ..< 3 {
+            let node = LoopbackNode(params: params)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: params, peerCount: 3, manualPeers: endpoints,
+                            dialTimeout: .milliseconds(500))
+        await pool.start()
+        #expect(await pool.connectedPeers().count == 3)
+
+        await pool.enterRelayOnly(seats: 1)
+        #expect(await pool.mode == .relayOnly)
+        #expect(await pool.isRunning, "a narrowed pool is still running")
+        let kept = await pool.connectedPeers()
+        #expect(kept.count == 1)
+        #expect(await kept.first?.isConnected == true, "the seat that stays must stay connected")
+        let status = await pool.connectionStatus
+        #expect(status.connected == 1)
+        #expect(status.target == 1, "the target is what the session holds, not the sync pool's")
+
+        // Nothing dials it back up: not the retry the UI offers after
+        // exhaustion, and not the monitor, which the session cancelled. Two
+        // candidates are sitting there unconnected, so a pool that was willing
+        // to dial would take them.
+        //
+        // The attempt counter is the assertion that says *dialled*, not merely
+        // *seated*: a pool that dials and then refuses the arrival still spent
+        // the connection, still told two more nodes where this wallet is, and
+        // would still have resolved DNS seeds to find them.
+        await pool.retry()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await pool.connectedPeers().count == 1)
+        #expect(await pool.connectionStatus.attempts == 0, "a relay-only session dials nothing")
+        #expect(await pool.connectionStatus.dialing == false)
+        await pool.stop()
+    }
+
+    @Test("a dial already racing when the pool narrows is not seated")
+    func relayOnlyRefusesInFlightDials() async throws {
+        // One node answers at once and two answer late, so the pool is still
+        // mid-round — dials in flight, seats unfilled — when it narrows.
+        let fast = LoopbackNode(params: params)
+        let slowA = LoopbackNode(params: params, versionDelay: .milliseconds(400))
+        let slowB = LoopbackNode(params: params, versionDelay: .milliseconds(400))
+        let nodes = [fast, slowA, slowB]
+        for node in nodes { try await node.start() }
+        defer { for node in nodes { Task { await node.stop() } } }
+        var endpoints: [PeerEndpoint] = []
+        for node in nodes { endpoints.append(await node.endpoint) }
+
+        let pool = PeerPool(params: params, peerCount: 3, manualPeers: endpoints,
+                            dialTimeout: .seconds(2))
+        let dialing = Task { await pool.start() }
+        #expect(await pollUntil(.seconds(5)) { await pool.connectedPeers().count == 1 },
+                "the fast node must be seated while the slow ones are still handshaking")
+
+        await pool.enterRelayOnly(seats: 1)
+        await dialing.value
+
+        // The late arrivals are refused and hung up on rather than seated: a
+        // session that asked for one seat must not end up holding three
+        // because the dials that were racing happened to land.
+        #expect(await pool.connectedPeers().count == 1)
+        #expect(await pool.mode == .relayOnly)
+        let status = await pool.connectionStatus
+        #expect(status.attempts == 0, "no dial was launched after the pool narrowed")
+        #expect(!status.exhausted, "a round cut short by narrowing is not a peerless pool")
+        await pool.stop()
+    }
+
+    @Test("start() leaves a relay-only session and fills the pool again")
+    func relayOnlyResumes() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        for _ in 0 ..< 3 {
+            let node = LoopbackNode(params: params)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: params, peerCount: 3, manualPeers: endpoints,
+                            dialTimeout: .milliseconds(500))
+        await pool.start()
+        await pool.enterRelayOnly(seats: 1)
+        #expect(await pool.connectedPeers().count == 1)
+
+        // The app's foreground path is a plain `start()`, and a narrowed pool
+        // is already started — so this is the call that has to notice.
+        await pool.start()
+        #expect(await pool.mode == .full)
+        #expect(await pool.connectedPeers().count == 3)
+        #expect(await pool.connectionStatus.target == 3)
+        await pool.stop()
+    }
+
+    @Test("stop() during a relay-only session still disconnects everything")
+    func relayOnlyStopIsStillFull() async throws {
+        let nodeA = LoopbackNode(params: params)
+        let nodeB = LoopbackNode(params: params)
+        try await nodeA.start()
+        try await nodeB.start()
+        defer {
+            Task { await nodeA.stop() }
+            Task { await nodeB.stop() }
+        }
+
+        let pool = PeerPool(params: params, peerCount: 2,
+                            manualPeers: [await nodeA.endpoint, await nodeB.endpoint],
+                            dialTimeout: .milliseconds(500))
+        await pool.start()
+        await pool.enterRelayOnly(seats: 1)
+        let seat = try #require(await pool.connectedPeers().first)
+
+        // The mode is a narrower pool, never a pool that refuses to be shut
+        // down: upstream's teardown must mean exactly what it meant before.
+        await pool.stop()
+        #expect(await pool.connectedPeers().isEmpty)
+        #expect(await seat.isConnected == false)
+        #expect(await pool.isRunning == false)
+        #expect(await pool.mode == .full, "a stopped pool is not in a session")
+    }
+
+    @Test("a relay-only pool refuses header sync and asks its peer nothing")
+    func relayOnlyRefusesHeaderSync() async throws {
+        let best = makeSyntheticChain(length: 8, watchHeight: 3)
+        let node = LoopbackNode(params: best.params, chain: best.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: best.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            dialTimeout: .seconds(1))
+        await pool.start()
+        await pool.enterRelayOnly(seats: 1)
+
+        let chain = try HeaderChain(params: best.params)
+        var caught: PeerPoolHeaderSyncError?
+        do {
+            try await pool.syncHeaders(chain, timeoutPerPeer: .seconds(1), maxAttempts: 1)
+        } catch let error as PeerPoolHeaderSyncError {
+            caught = error
+        }
+        #expect(caught == .relayOnly)
+        // Refused before the wire, not after: the seat is being held for a
+        // payment, and a header sync over it can burn it on a peer fault.
+        #expect(await node.nextMessage(command: "getheaders", timeout: .milliseconds(300)) == nil)
+        #expect(await chain.height == 0)
+        #expect(await pool.connectedPeers().count == 1, "refusing must not cost the seat")
         await pool.stop()
     }
 

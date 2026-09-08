@@ -9,7 +9,9 @@ import TestSupport
 ///
 /// Combined from `TxBroadcaster` (minus its store-persistence tests, which are
 /// now in `TxBroadcasterStoreTests.swift`), `TxBroadcaster backoff schedule`
-/// and `Fee filter announcements`. Only the last of the three carried a suite
+/// and `Fee filter announcements`. The relay-only sessions at the end came
+/// from none of them: they are this fork's mode for a payment still going out
+/// while nothing is being read. Only the last of the three carried a suite
 /// trait, `.timeLimit(.minutes(2))`; it is the stricter of the three and so it
 /// is the trait this suite keeps.
 @Suite("TxBroadcaster", .timeLimit(.minutes(2)))
@@ -548,6 +550,179 @@ struct TxBroadcasterTests {
         #expect(await node.nextMessage(command: "inv", timeout: .seconds(10)) != nil,
                 "a filter that later allows the transaction lets the peer back in")
     }
+
+    // MARK: - Relay-only sessions
+    //
+    // A wallet that goes idle with a payment in flight has two bad options and
+    // one good one. Stopping the pool disconnects the peers announcements go
+    // over, so the transaction stops being relayed until the app is opened
+    // again; keeping the full pool up pays for a sync pool nobody is reading.
+    // `enterRelayOnly` is the third: a seat held for the announcements, and a
+    // pool that stops itself when there is nothing left to announce.
+
+    @Test("a relay-only session keeps a pending payment announcing and being served")
+    func relayOnlyKeepsRelaying() async throws {
+        let params = NetworkParams.signet
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        var byEndpoint: [PeerEndpoint: LoopbackNode] = [:]
+        for _ in 0 ..< 3 {
+            let node = LoopbackNode(params: params)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+            byEndpoint[await node.endpoint] = node
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: params, peerCount: 3, manualPeers: endpoints)
+        await pool.start()
+        #expect(await pool.connectedPeers().count == 3)
+
+        // A high per-peer announcement ceiling: this is about relay surviving
+        // the narrowing, not about the peer that never answers.
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .milliseconds(500),
+                                            maxRebroadcastInterval: .seconds(1),
+                                            maxAnnouncementsPerPeer: 20,
+                                            announcementTimeout: .seconds(30))
+        defer { Task { await broadcaster.shutdown() } }
+        let tx = makeFakeSegwitTx()
+        let txid = try await broadcaster.broadcast(tx.serialized(includeWitness: true))
+        for node in nodes {
+            #expect(await node.nextMessage(command: "inv") != nil, "every peer hears the first inv")
+        }
+
+        let opened = try await broadcaster.enterRelayOnly(seats: 1)
+        #expect(opened, "a pending payment is what a session is opened for")
+        #expect(await broadcaster.isRelayOnly)
+        #expect(await pool.mode == .relayOnly)
+        let seat = try #require(await pool.connectedPeers().first)
+        let kept = try #require(byEndpoint[await seat.endpoint])
+
+        // The seat that stayed goes on hearing rebroadcasts. Drained first, so
+        // this is an announcement scheduled after the narrowing rather than
+        // one that was already in flight when it happened.
+        await drainQueuedInvs(from: kept)
+        #expect(await kept.nextMessage(command: "inv", timeout: .seconds(10)) != nil,
+                "the backoff loop must keep announcing over the seat that stayed")
+
+        // And the bytes still go out when that peer asks for them, which is
+        // the half of relay that actually puts the transaction on the network.
+        try await kept.send(.getdata(InventoryPayload([
+            InventoryVector(type: .witnessTx, hash: txid)])))
+        guard case let .tx(served) = await kept.nextMessage(command: "tx") else {
+            Issue.record("a relay-only session did not answer getdata")
+            return
+        }
+        #expect(served == tx)
+        #expect(await pool.isRunning, "the session holds the pool open while the payment is pending")
+        await pool.stop()
+    }
+
+    @Test("the pool stops itself once the relay-only session has nothing pending")
+    func relayOnlyStopsWhenDrained() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+
+        let confirmed = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+        var opened = try await broadcaster.enterRelayOnly()
+        #expect(opened)
+        #expect(await pool.connectedPeers().count == 1)
+
+        // The confirmation is the drain, and nothing external watches for it:
+        // the broadcaster owns the pending set, so it is the thing that can
+        // say the pool has no work left.
+        try await broadcaster.markConfirmed(confirmed, atHeight: 1)
+        #expect(await pollUntil(.seconds(10)) { await poolIsStopped(pool) },
+                "a drained session must stop its pool without being asked")
+        #expect(await broadcaster.isRelayOnly == false)
+
+        // The same for a cancellation, which is what a fee bump does to the
+        // transaction it replaces — and `start()` is all it takes to come back
+        // from a stopped pool.
+        await pool.start()
+        #expect(await pool.connectedPeers().count == 1)
+        let cancelled = try await broadcaster.broadcast(
+            makeFakeSegwitTx(value: 40_000).serialized(includeWitness: true))
+        opened = try await broadcaster.enterRelayOnly()
+        #expect(opened)
+        try await broadcaster.cancel(cancelled)
+        #expect(await pollUntil(.seconds(10)) { await poolIsStopped(pool) })
+    }
+
+    @Test("a session whose pool went back to full service does not stop it on the drain")
+    func relayOnlyYieldsToAResumedPool() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+        _ = try await broadcaster.enterRelayOnly()
+
+        // The app comes back and resumes full service, so the pool is being
+        // synced over again. The payment confirming a moment later must end
+        // the session without taking those peers away.
+        await pool.start()
+        try await broadcaster.markConfirmed(txid, atHeight: 1)
+        #expect(await pollUntil(.seconds(10)) { await broadcaster.isRelayOnly == false })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await pool.isRunning, "a resumed pool belongs to its caller again")
+        #expect(await pool.connectedPeers().count == 1)
+        await pool.stop()
+    }
+
+    @Test("a relay-only session with nothing pending stops the pool instead of holding it")
+    func relayOnlyWithNothingPending() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool)
+
+        // Nothing is in flight, so there is nothing to stay up for: the caller
+        // asked to go quiet and quiet is available immediately.
+        let opened = try await broadcaster.enterRelayOnly()
+        #expect(opened == false)
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await pool.isRunning == false)
+        #expect(await pool.connectedPeers().isEmpty)
+
+        // A finished relay session cannot open one, exactly as it cannot
+        // broadcast, confirm or cancel.
+        await broadcaster.shutdown()
+        await #expect(throws: TxBroadcasterError.stopped) {
+            _ = try await broadcaster.enterRelayOnly()
+        }
+    }
+}
+
+/// Whether the pool has finished stopping: not running *and* with no peer
+/// left. Both halves, because `stop()` clears the running flag before it
+/// awaits each disconnect, so a pool can be observed stopped with its last
+/// peer still on the way down.
+private func poolIsStopped(_ pool: PeerPool) async -> Bool {
+    guard await pool.isRunning == false else { return false }
+    return await pool.connectedPeers().isEmpty
 }
 
 /// Consumes every inv already queued on `node`, so a following assertion is

@@ -80,13 +80,15 @@ public func makeSyntheticChain(length: Int = 6, watchHeight: UInt32 = 3) -> Synt
                           watchHeight: watchHeight)
 }
 
-/// A segwit transaction with one witness item, for relay tests.
-public func makeFakeSegwitTx() -> Transaction {
+/// A segwit transaction with one witness item, for relay tests. `value` is a
+/// parameter only so a test that needs two pending transactions can have two
+/// distinct txids; every caller that does not care keeps the original one.
+public func makeFakeSegwitTx(value: Int64 = 50_000) -> Transaction {
     var input = Transaction.Input(
         previousOutput: Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32), vout: 0),
         scriptSig: Data(), sequence: 0xFFFF_FFFD)
     input.witness = [Data([0x30, 0x44, 0x02, 0x20]), Data(repeating: 0x02, count: 33)]
-    let output = Transaction.Output(value: 50_000,
+    let output = Transaction.Output(value: value,
                                     scriptPubKey: Data([0x51, 0x20] + repeatElement(0x77, count: 32)))
     return Transaction(version: 2, inputs: [input], outputs: [output], locktime: 0)
 }

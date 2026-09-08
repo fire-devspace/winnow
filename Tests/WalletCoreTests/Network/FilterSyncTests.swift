@@ -222,6 +222,36 @@ struct FilterSyncTests {
         await pool.stop()
     }
 
+    /// The read side over a pool that is only relaying: refused, and refused
+    /// before the wire. A relay-only pool (`PeerPool.enterRelayOnly(seats:)`)
+    /// holds a seat so a signed payment can finish going out; a filter sync
+    /// over it would spend that seat on cfcheckpt round trips and could burn
+    /// it outright on a peer fault or a stale tip.
+    @Test("a relay-only pool refuses a filter sync and asks its peer nothing")
+    func relayOnlyRefusesFilterSync() async throws {
+        let synthetic = makeSyntheticChain(length: 4, watchHeight: 6)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint])
+        await pool.start()
+        await pool.enterRelayOnly(seats: 1)
+
+        let chain = try HeaderChain(params: synthetic.params)
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  requiredCheckpointPeers: 1)
+        await #expect(throws: FilterSyncError.relayOnly) {
+            try await sync.sync(watchScripts: []) { _ in }
+        }
+        #expect(await node.nextMessage(command: "getheaders", timeout: .milliseconds(300)) == nil)
+        #expect(await node.nextMessage(command: "getcfcheckpt", timeout: .milliseconds(100)) == nil)
+        #expect(await sync.nextScanHeight == 1, "a refused run scans nothing")
+        #expect(await pool.connectedPeers().count == 1, "and costs no seat")
+        await pool.stop()
+    }
+
     // MARK: - Bounded runs and chunked fetching
 
     /// `maxBlocks` is what makes a scan that cannot run to the tip possible:

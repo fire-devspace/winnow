@@ -6,11 +6,16 @@ public enum PeerPoolHeaderSyncError: LocalizedError, Equatable {
     /// Every peer is briefly cooling off after a slow reply. Distinct from
     /// `noPeers`, which means there is nothing to dial at all (#82).
     case allPeersCoolingDown(cooling: Int, lastError: String)
+    /// The pool is holding seats for transaction relay only
+    /// (`PeerPool.enterRelayOnly(seats:)`), which does not read the chain.
+    case relayOnly
 
     public var errorDescription: String? {
         switch self {
         case .noPeers:
             "No Bitcoin peers are available for block-header sync."
+        case .relayOnly:
+            "Winnow is keeping Bitcoin peers connected only to finish relaying a payment. Resume syncing to download block headers."
         case let .exhausted(attempts, lastError):
             "Winnow tried \(attempts) Bitcoin peer\(attempts == 1 ? "" : "s"), but none supplied a usable block-header chain. Last error: \(lastError)"
         case let .allPeersCoolingDown(cooling, lastError):
@@ -28,6 +33,11 @@ public enum PeerPoolHeaderSyncError: LocalizedError, Equatable {
 /// `exhausted` in `connectionStatus`. A monitor task prunes dead connections
 /// and connects replacements. Deliberately simple: no scoring buckets, no
 /// addr gossip — misbehaving peers are dropped and replaced.
+///
+/// Two modes, and `stop()` is neither: full service, and a relay-only session
+/// (`enterRelayOnly(seats:)`) that keeps a seat or two so a payment already
+/// signed can go on being announced while the pool dials nothing and reads
+/// nothing. See `Mode`.
 public actor PeerPool {
     public let params: NetworkParams
     public let peerCount: Int
@@ -94,6 +104,29 @@ public actor PeerPool {
     /// advances with every header sync, so judging the same seat again later
     /// would read an honest peer's age as staleness and burn it.
     private var staleTipJudged: Set<PeerEndpoint> = []
+    /// What the pool is currently willing to do. Set by `start()` and
+    /// `enterRelayOnly(seats:)`, and reset by `stop()`.
+    public private(set) var mode: Mode = .full
+    /// Seats a relay-only session was asked to keep. Meaningless — and zero —
+    /// in `.full`, where `peerCount` is the target.
+    private var relaySeats = 0
+
+    /// What a pool is doing for its owner right now.
+    public enum Mode: String, Sendable, Equatable {
+        /// Everything: dial up to `peerCount`, replace seats the monitor finds
+        /// dead, sync headers and filters, relay transactions.
+        case full
+        /// Relay only. The pool keeps a few of the peers it already had so a
+        /// pending payment can go on being announced, dials nothing, resolves
+        /// no addresses, runs no replacement monitor, and refuses header (and
+        /// so filter) sync. See `enterRelayOnly(seats:)`.
+        case relayOnly
+    }
+
+    /// Seats `enterRelayOnly(seats:)` keeps unless the caller says otherwise.
+    /// One, because the point of the mode is to cost less than a sync pool;
+    /// a caller that would rather pay for redundancy passes more.
+    public static let defaultRelaySeats = 1
 
     /// UI-facing snapshot of the pool's connection progress.
     public struct ConnectionStatus: Sendable, Equatable {
@@ -111,10 +144,20 @@ public actor PeerPool {
     }
 
     public var connectionStatus: ConnectionStatus {
-        ConnectionStatus(connected: peers.count, target: peerCount,
+        ConnectionStatus(connected: peers.count, target: seatTarget,
                          dialing: replenishing, attempts: attemptsThisRound,
                          exhausted: exhausted)
     }
+
+    /// How many seats the pool holds in its current mode: the full target, or
+    /// what a relay-only session was asked to keep. Reported as the target so
+    /// a paused pool does not read as permanently short of peers.
+    private var seatTarget: Int { mode == .full ? peerCount : relaySeats }
+
+    /// Whether the pool is running: `start()` has been called and `stop()` has
+    /// not. A relay-only pool is running — it holds live connections — so this
+    /// is not the same question as `mode`.
+    public var isRunning: Bool { started }
 
     public init(params: NetworkParams, peerCount: Int = 3,
                 manualPeers: [PeerEndpoint] = [], peersFileURL: URL? = nil,
@@ -143,10 +186,19 @@ public actor PeerPool {
     }
 
     /// Connects to `peerCount` peers and starts the replacement monitor.
+    ///
+    /// Also the way back from `.relayOnly`: a narrowed pool is still running,
+    /// so this restores full service, refills the seats the session dropped
+    /// and starts the monitor again. An app that already calls `start()` when
+    /// it comes back to the foreground needs no second call.
     public func start() async {
-        guard !started else { return }
+        let resuming = started && mode == .relayOnly
+        guard !started || resuming else { return }
+        mode = .full
+        relaySeats = 0
         started = true
         await replenish()
+        guard monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -156,11 +208,55 @@ public actor PeerPool {
         }
     }
 
+    /// Narrows the pool to transaction relay: keeps at most `seats` of the
+    /// peers it already has, disconnects the rest, and stops dialling.
+    ///
+    /// This is the state a wallet needs when it is otherwise idle but has a
+    /// payment in flight. `stop()` is all or nothing — it disconnects every
+    /// peer, and `TxBroadcaster` announces over exactly those connections, so
+    /// stopping a pool with a pending transaction leaves relay dead until the
+    /// app is opened again. A relay-only pool keeps announcing and
+    /// rebroadcasting while costing one connection instead of `peerCount`.
+    ///
+    /// What it stops doing: `replenish` refuses, so no candidate is dialled,
+    /// no DNS seed is resolved and no new address is taken; the replacement
+    /// monitor is cancelled; `syncHeaders` (and so `FilterSync`) is refused.
+    /// What it keeps doing: `connectedPeers()` still answers, and everything
+    /// `TxBroadcaster` does over those peers is unchanged.
+    ///
+    /// Deliberately not a self-healing mode. A seat lost while relaying is not
+    /// replaced, because replacing it means dialling, which is the cost and
+    /// the exposure this session exists to avoid; the session holds what it
+    /// was given until the caller resumes full service with `start()`. Callers
+    /// that need the pool to stop itself once relay is finished should drive
+    /// this through `TxBroadcaster.enterRelayOnly(seats:)`, which owns the
+    /// pending set and stops the pool when it drains.
+    ///
+    /// A stopped pool is not narrowed: there is nothing to keep, and dialling
+    /// here would be the very thing the mode refuses.
+    public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async {
+        guard started else { return }
+        mode = .relayOnly
+        relaySeats = max(0, seats)
+        monitorTask?.cancel()
+        monitorTask = nil
+        // No round has been dialled in this session, and none will be: the
+        // counters describe dialling, so they start the session empty rather
+        // than reporting the sync pool's last round for as long as it lasts.
+        attemptsThisRound = 0
+        exhausted = false
+        for peer in peers.dropFirst(relaySeats) { await peer.disconnect() }
+        peers = Array(peers.prefix(relaySeats))
+        persistKnownGood()
+    }
+
     /// Disconnects everything and persists the good-peers list.
     public func stop() async {
         monitorTask?.cancel()
         monitorTask = nil
         started = false
+        mode = .full
+        relaySeats = 0
         for peer in peers { await peer.disconnect() }
         peers = []
         rejectedForSession = []
@@ -339,6 +435,12 @@ public actor PeerPool {
                             maxAttempts: Int = 6,
                             maxTransportRetries: Int = 12) async throws -> HeaderChain.SyncOutcome {
         precondition(maxAttempts > 0)
+        // A relay-only session holds a seat so a pending payment can still be
+        // announced, and reading the chain over it is the work it exists not
+        // to do. Refused rather than served quietly: a caller that asked for
+        // headers here has lost track of the mode, and a header sync that runs
+        // anyway would burn the relay seat on a peer fault or a stale tip.
+        guard mode == .full else { throw PeerPoolHeaderSyncError.relayOnly }
         var attempts = 0
         var transportRetries = 0
         var lastError: (any Error)?
@@ -501,8 +603,11 @@ public actor PeerPool {
     private func launchEligibleDials(from queue: [PeerCandidate], next: inout Int,
                                      running: inout Int,
                                      into group: inout TaskGroup<(PeerEndpoint, PeerConnection?)>) {
+        // `mode` here as well as in `replenish`: a round already in flight when
+        // the pool narrows must stop launching dials, while its outer loop
+        // goes on consuming arrivals so a late success is still disconnected.
         while next < queue.count, running < maxParallelDials,
-              attemptsThisRound < maxDialAttempts {
+              attemptsThisRound < maxDialAttempts, mode == .full {
             let candidate = queue[next]
             next += 1
             guard policy.admits(candidate, given: seatedCandidates()) else { continue }
@@ -529,7 +634,11 @@ public actor PeerPool {
     private func seatArrival(_ peer: PeerConnection, endpoint: PeerEndpoint,
                              source: PeerSource, stillNeeded: Bool) async -> Bool {
         let candidate = PeerCandidate(endpoint: endpoint, source: source)
-        guard started, stillNeeded, !peers.contains(where: { $0.endpoint == endpoint }),
+        // `mode` is re-checked for the same reason `started` is: a dial that
+        // was already racing when the pool narrowed must not seat a peer the
+        // relay-only session did not ask for.
+        guard started, mode == .full, stillNeeded,
+              !peers.contains(where: { $0.endpoint == endpoint }),
               policy.admits(candidate, given: seatedCandidates()) else {
             await peer.disconnect() // slot filled, or diversity refused it
             return false
@@ -554,7 +663,8 @@ public actor PeerPool {
     }
 
     /// Dials again immediately (UI retry after exhaustion). No-op while a
-    /// round is in flight, the pool is full, or the pool is stopped.
+    /// round is in flight, the pool is full, or the pool is stopped or
+    /// relaying only — `start()` is what leaves a relay-only session.
     public func retry() async {
         await replenish()
     }
@@ -566,7 +676,11 @@ public actor PeerPool {
     /// to cancellation); they resolve on their own timeout and a late success
     /// with no slot left is disconnected again.
     private func replenish() async {
-        guard started, !replenishing, peers.count < peerCount else { return }
+        // `mode` is checked here rather than at each caller: every path back
+        // into dialling — the monitor, a peer dropped for misconduct or a
+        // timeout, the UI's retry — runs through this one function, and a
+        // relay-only session must not dial from any of them.
+        guard started, mode == .full, !replenishing, peers.count < peerCount else { return }
         replenishing = true
         attemptsThisRound = 0
         exhausted = false
@@ -603,6 +717,10 @@ public actor PeerPool {
                 }
             }
         }
+        // A round that ended because the pool narrowed is not a round that came
+        // up short of peers, and a relay-only session neither evicts nor
+        // refills: it holds what it was given.
+        guard mode == .full else { return }
         // Judged after the round against the last validated tip, so a stale
         // peer that raced in ahead of honest ones does not keep its seat.
         let evicted = await evictStaleTips()

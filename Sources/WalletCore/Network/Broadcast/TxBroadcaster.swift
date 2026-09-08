@@ -158,6 +158,9 @@ public actor TxBroadcaster {
     private var listenedPeers: Set<String> = []
     private var subscribers: [UUID: AsyncStream<Event>.Continuation] = [:]
     private var stopped = false
+    /// Whether this broadcaster narrowed the pool to a relay-only session and
+    /// therefore owns stopping it when nothing is left to relay.
+    private var relayOnlySession = false
 
     private static let storageVersion = 1
     private static let maximumStoredTransactions = 4_096
@@ -231,14 +234,60 @@ public actor TxBroadcaster {
     /// Ends this relay session without changing its durable pending set. A
     /// replacement broadcaster may reload the same store (reconnect), or the
     /// caller may deliberately remove the store while changing wallets.
+    ///
+    /// A relay-only session ends here too, but the pool is left alone: a
+    /// caller shutting the broadcaster down is rebuilding the stack around it
+    /// and owns what happens to the peers next. Stopping the pool from here
+    /// would race a caller that shuts this broadcaster down and immediately
+    /// starts the pool for its replacement.
     public func shutdown() {
         guard !stopped else { return }
         stopped = true
+        relayOnlySession = false
         rebroadcastTask?.cancel()
         rebroadcastTask = nil
         pending.removeAll()
         for subscriber in subscribers.values { subscriber.finish() }
         subscribers.removeAll()
+    }
+
+    /// Whether a relay-only session opened by this broadcaster is still open.
+    /// It closes when the pending set drains — or quietly, without stopping
+    /// anything, if the caller resumed full service on the pool first.
+    public var isRelayOnly: Bool { relayOnlySession }
+
+    /// Goes on relaying with the peer pool narrowed to a relay-only session,
+    /// and stops that pool once nothing is left to relay.
+    ///
+    /// This is what a wallet needs when it goes idle with a payment in flight.
+    /// `PeerPool.stop()` disconnects every peer, and announcements go over
+    /// exactly those connections, so stopping a pool with a pending
+    /// transaction leaves it unrelayed until the app is opened again. Holding
+    /// the full pool instead pays for a sync pool nobody is reading. In
+    /// between is this: `seats` connections, announcements and rebroadcasts
+    /// unchanged, no filter sync, nothing dialled.
+    ///
+    /// Watching for the drain is not the caller's job. Every path that empties
+    /// the pending set — a confirmation, a cancellation, a replacement —
+    /// already reschedules the backoff loop, and the session ends there: the
+    /// pool stops itself and persists its good-peers list. After that the pool
+    /// is stopped, so a caller that wants to relay again starts it first.
+    ///
+    /// - Parameter seats: peers to keep, defaulting to `PeerPool.defaultRelaySeats`.
+    /// - Returns: whether a session was opened. False means nothing was
+    ///   pending, so the pool was stopped instead — the caller asked to go
+    ///   quiet and there was no reason to wait.
+    @discardableResult
+    public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async throws -> Bool {
+        guard !stopped else { throw TxBroadcasterError.stopped }
+        guard hasPendingRelay else {
+            relayOnlySession = false
+            await pool.stop()
+            return false
+        }
+        relayOnlySession = true
+        await pool.enterRelayOnly(seats: seats)
+        return true
     }
 
     /// Validates, stores and announces a raw signed transaction.
@@ -345,6 +394,33 @@ public actor TxBroadcaster {
     /// Test-visible backoff accessors (@testable).
     func attemptCount(_ txid: Data) -> Int? { pending[txid]?.attempt }
     func nextAttemptDate(_ txid: Data) -> Date? { pending[txid]?.nextAttemptAt }
+
+    /// Whether anything is still being relayed. Confirmed-held entries (#157)
+    /// are retained for a reorg, not announced, so they are not relay work —
+    /// the same reading of "pending" `pendingTxids` publishes.
+    private var hasPendingRelay: Bool {
+        pending.contains { $0.value.confirmedAtHeight == nil }
+    }
+
+    /// Ends a relay-only session and stops the pool it narrowed.
+    ///
+    /// A detached stop rather than an awaited one because every caller is a
+    /// synchronous state transition that must not suspend part-way through
+    /// its own bookkeeping. `PeerPool.stop()` is idempotent, so a caller that
+    /// stops the pool itself as well loses nothing.
+    ///
+    /// The mode is re-read there rather than assumed. A caller that resumed
+    /// full service — the app coming back to the foreground — has taken the
+    /// pool back, and a payment confirming a moment later must not tear down
+    /// the peers it is now syncing over. The session simply expires.
+    private func closeRelayOnlySession() {
+        guard relayOnlySession else { return }
+        relayOnlySession = false
+        Task { [pool] in
+            guard await pool.mode == .relayOnly else { return }
+            await pool.stop()
+        }
+    }
 
     private func removeSubscriber(_ id: UUID) {
         subscribers.removeValue(forKey: id)
@@ -688,9 +764,13 @@ public actor TxBroadcaster {
     /// pending set or its schedule changes; stops when nothing is pending.
     private func scheduleRebroadcast() {
         rebroadcastTask?.cancel()
-        guard !stopped, !persistenceBlocked,
-              pending.contains(where: { $0.value.confirmedAtHeight == nil }) else {
+        guard !stopped, !persistenceBlocked, hasPendingRelay else {
             rebroadcastTask = nil
+            // The drain, wherever it came from: a confirmation, a
+            // cancellation, a replacement. A relay-only session is peers held
+            // open for work in flight, so with no work left it ends here and
+            // the pool stops itself.
+            if !hasPendingRelay { closeRelayOnlySession() }
             return
         }
         rebroadcastTask = Task { [weak self] in

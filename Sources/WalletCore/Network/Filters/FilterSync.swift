@@ -14,11 +14,16 @@ public enum FilterSyncError: LocalizedError, Equatable, Sendable {
     case unexpectedBlockHash
     /// A `sync` was asked for while one was already running on this instance.
     case syncAlreadyRunning
+    /// The pool is holding seats for transaction relay only
+    /// (`PeerPool.enterRelayOnly(seats:)`), so there is no read side to run.
+    case relayOnly
 
     public var errorDescription: String? {
         switch self {
         case .noPeers:
             "No Bitcoin peers are available for compact-filter synchronization."
+        case .relayOnly:
+            "Winnow is keeping Bitcoin peers connected only to finish relaying a payment. Resume syncing to scan for new blocks."
         case let .peersCoolingDown(count):
             "\(count) Bitcoin peer\(count == 1 ? " is" : "s are") resting briefly after a slow reply. Scanning will resume on its own."
         case let .checkpointMismatch(reason):
@@ -278,11 +283,25 @@ public actor FilterSync {
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         // Before anything else, and cleared on every exit path — a throw from
         // the middle of a run must not leave the instance refusing every
-        // later sync.
+        // later sync. It goes ahead of the relay-only check below because it
+        // is the only guard here that reads and writes actor state with no
+        // suspension between the two: a second call must be refused before
+        // this one awaits anything.
         guard !isSyncing else { throw FilterSyncError.syncAlreadyRunning }
         isSyncing = true
         defer { isSyncing = false }
 
+        // A relay-only pool is holding seats so a signed payment can finish
+        // going out, not so the chain can be read over them. The header sync
+        // below would refuse anyway; refusing first means no cfcheckpt round
+        // trip is spent, and the caller hears it in the read side's own terms
+        // rather than as a header-sync failure.
+        //
+        // Entry only: a run already past this line keeps reading over the
+        // seats if the pool narrows underneath it. See the note on
+        // `PeerPool.enterRelayOnly(seats:)` — the caller cancels and awaits a
+        // running scan before narrowing.
+        guard await pool.mode == .full else { throw FilterSyncError.relayOnly }
         var peers = await pool.connectedPeers()
         guard !peers.isEmpty else {
             // Same distinction as `PeerPool.syncHeaders`: since transport
