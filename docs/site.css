@@ -44,10 +44,17 @@ a{color:var(--seed);text-decoration:none}
 a:hover{text-decoration:underline;text-underline-offset:3px}
 :focus-visible{outline:2px solid var(--mark);outline-offset:3px;border-radius:5px}
 
-/* Two short signing explanations on the homepage. */
-.signing-choices .lede{margin:0 0 .3rem}
-.signing-choices h3{margin:.3rem 0 .7rem}
-.signing-demo{position:relative;margin-top:1.2rem;background:var(--paper-2);border-radius:1rem;padding:.8rem .4rem 2.2rem}
+/* Signing stories on the homepage. */
+.signing-story{--signing-danger:#b3261e}
+.signing-story [hidden]{display:none}
+.signing-choices h3{margin:.3rem 0 .7rem;min-height:2.4em}
+.signing-story.is-interactive .signing-scene-title{display:none}
+.signing-switch{display:flex;gap:.5rem;flex-wrap:wrap;border:0;margin:1rem 0}
+.signing-switch legend{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}
+.signing-switch label{display:flex;align-items:center;gap:.4rem;min-height:44px;padding:.4rem .65rem;border:1px solid var(--rule-2);border-radius:.5rem;font-size:.9rem;cursor:pointer}
+.signing-switch label:has(input:checked){background:var(--paper-2);border-color:var(--seed)}
+.signing-switch input{accent-color:var(--seed)}
+.signing-demo{margin-top:1rem;background:var(--paper-2);border-radius:1rem;padding:.8rem}
 .signing-demo svg{display:block;width:100%;height:auto;overflow:visible}
 .signing-wire,.signing-flow{fill:none;stroke:var(--rule-2);stroke-width:2}
 .signing-flow{stroke:var(--good);stroke-width:3;stroke-dasharray:1;stroke-dashoffset:1}
@@ -56,29 +63,50 @@ a:hover{text-decoration:underline;text-underline-offset:3px}
 .signing-label{fill:var(--ink-2);font:15px var(--sans);text-anchor:middle}
 .signing-person.absent .signing-node{stroke-dasharray:4 4}
 .signing-person.absent .signing-icon{stroke:var(--ink-3)}
-.signing-check{opacity:0}
+.signing-check,.signing-warning,.stolen-label{opacity:0}
 .signing-check circle{fill:var(--good)}
 .signing-check path{fill:none;stroke:var(--paper);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.signing-warning circle{fill:var(--signing-danger)}
+.signing-warning text{fill:var(--paper);font:bold 16px var(--sans);text-anchor:middle}
 .signing-payment rect{fill:var(--paper);stroke:var(--rule-2);stroke-width:2}
 .signing-payment text{fill:var(--ink-2);font:600 16px var(--sans);text-anchor:middle}
 .signing-payment path{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.signing-approved{opacity:0}
-.signing-approved path{stroke:var(--good);stroke-width:3}
-.signing-approved text{fill:var(--good)}
-.signing-demo:not([data-step="0"]) .signing-flow.first,
-.signing-demo:is([data-step="2"],[data-step="3"]) .signing-flow.second{stroke-dashoffset:0}
-.signing-demo:not([data-step="0"]) .signing-person.first .signing-check,
-.signing-demo:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-check,
-.signing-demo[data-step="3"] .signing-approved{opacity:1}
-.signing-demo:not([data-step="0"]) .signing-person.first .signing-node,
-.signing-demo:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-node,
-.signing-demo[data-step="3"] .signing-payment rect{stroke:var(--good)}
-.signing-demo[data-step="3"] .signing-locked{opacity:0}
-.signing-demo.is-playing .signing-flow{transition:stroke-dashoffset .65s ease}
-.signing-demo.is-playing :is(.signing-check,.signing-locked,.signing-approved){transition:opacity .2s ease}
-.signing-replay{position:absolute;bottom:.2rem;right:.8rem;min-height:44px;border:0;background:none;color:var(--seed);font:inherit;font-size:.85rem;cursor:pointer}
+.signing-finished{opacity:0}
+.signing-finished path{stroke:var(--good);stroke-width:3}
+.signing-finished text{fill:var(--good)}
+.signing-scene:not([data-step="0"]) .signing-flow.first,
+.signing-scene:is([data-step="2"],[data-step="3"]) .signing-flow.second,
+.signing-scene:is([data-step="2"],[data-step="3"]) .signing-flow.stolen{stroke-dashoffset:0}
+.signing-scene:not([data-step="0"]) .signing-person.first .signing-check,
+.signing-scene:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-check,
+.signing-scene:not([data-step="0"]) .signing-warning,
+.signing-scene:not([data-step="0"]) .stolen-label,
+.signing-scene[data-step="3"] .signing-finished{opacity:1}
+.signing-scene:not([data-step="0"]) .signing-person.first .signing-node,
+.signing-scene:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-node,
+.signing-scene[data-step="3"] .signing-payment rect{stroke:var(--good)}
+.signing-scene[data-step="3"] .signing-locked{opacity:0}
+.signing-scene:not([data-step="0"]) .stolen .device-label{opacity:0}
+.signing-scene[data-scene="attack"] .signing-flow,
+.signing-scene[data-scene="attack"] .signing-finished path,
+.signing-scene:not([data-step="0"]) .signing-person.stolen .signing-node,
+.signing-scene[data-scene="attack"][data-step="3"] .signing-payment rect{stroke:var(--signing-danger)}
+.signing-scene[data-scene="attack"] .signing-finished text{fill:var(--signing-danger)}
+.signing-chain{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3rem;min-height:100px;border-top:1px solid var(--rule-2);padding-top:.7rem;font-size:.85rem;color:var(--ink-2);opacity:0}
+.chain-label{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+.chain-token,.chain-keys span{background:var(--paper);border:1px solid var(--rule-2);border-radius:.4rem;padding:.3rem .65rem}
+.chain-keys{display:flex;gap:.4rem}
+.signing-scene[data-step="3"] .signing-chain{opacity:1}
+.signing-scene.is-playing .signing-flow{transition:stroke-dashoffset .65s ease}
+.signing-scene.is-playing :is(.signing-check,.signing-warning,.signing-locked,.signing-finished,.signing-chain){transition:opacity .2s ease}
+.signing-replay{min-height:44px;padding:0 .5rem;border:0;background:none;color:var(--seed);font:inherit;font-size:.85rem;cursor:pointer}
 .signing-choices .signing-caption{font-weight:600;color:var(--ink);margin:.85rem 0 .35rem}
-.signing-choices .signing-note{font-size:.85rem;margin:.35rem 0}
+.signing-choices .signing-note,.signing-links{font-size:.85rem;margin:.35rem 0}
+.combined-signers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;margin:1.5rem 0}
+.combined-signers>div{display:flex;flex-direction:column;justify-content:space-between;gap:.5rem;padding:.7rem .4rem;border:1px solid var(--rule-2);border-radius:.5rem;text-align:center;font-size:.85rem;background:var(--paper-2)}
+.combined-signers .combined-you{border-color:var(--seed)}
+@media(prefers-color-scheme:dark){.signing-story{--signing-danger:#ff9389}}
+
 /* ── page chrome ─────────────────────────────────────────── */
 
 .topbar{

@@ -40,27 +40,71 @@ dialog a{overflow-wrap:anywhere}
 <p class="lede">Send and receive bitcoin, keep track of payments, and save with other people.</p>
 <p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Try it on TestFlight</a></p>
 <p>Your wallet connects directly to the Bitcoin network. Your private keys stay on your phone unless you choose to export them.</p>
-<section id="signing-choices"><h2>Choose who can spend</h2><div class="signing-choices"><article><p class="lede">Shared savings</p><h3>Save with other people</h3><div class="signing-demo" data-step="3">
-<svg viewBox="0 0 360 230" role="img" aria-labelledby="shared-animation-title shared-animation-description">
-<title id="shared-animation-title">Two of three approvals</title>
-<desc id="shared-animation-description">Two of three people approve a payment. The third person is away, but the payment can still go through.</desc>
-<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">Alex</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">Away</text></g>
+<section id="signing-choices"><h2>Two ways to protect your bitcoin</h2><div class="signing-choices"><article class="signing-story"><h3>A stolen hardware-wallet key isn’t enough.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="devices-example" value="attack" aria-controls="attack-scene" checked>Stolen key</label><label><input type="radio" name="devices-example" value="payment" aria-controls="payment-scene">Your payment</label></fieldset><div class="signing-scene" id="attack-scene" data-scene="attack" data-step="3">
+<h4 class="signing-scene-title">Stolen hardware-wallet key</h4>
+<div class="signing-demo">
+<svg viewBox="0 0 360 220" role="img" aria-labelledby="attack-animation-title attack-animation-description">
+<title id="attack-animation-title">Stolen hardware-wallet key</title><desc id="attack-animation-description">An attacker gets the hardware wallet’s key and tries to spend. The iPhone has not approved, so the payment stays blocked and nothing is sent to Bitcoin.</desc>
+<path class="signing-wire" d="M90 111V120L180 155"/><g class="signing-person waiting" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow stolen" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person stolen" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><text class="signing-label stolen-label" y="52">Key stolen</text><g class="signing-warning"><circle cx="27" cy="-23" r="12"/><text x="27" y="-18">!</text></g></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
-<g class="signing-approved"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
+<g class="signing-finished"><path d="M126 173l13 13m0-13-13 13"/><text x="193" y="185">Blocked</text></g></g>
 </svg>
-<button class="signing-replay" type="button" aria-label="Replay shared savings animation" hidden>Replay ↻</button>
-</div><p class="signing-caption">Any two can pay. One can sit it out.</p><a href="/#savings">See how it works</a></article><article><p class="lede">Advanced</p><h3>Require a second key</h3><div class="signing-demo" data-step="3">
-<svg viewBox="0 0 360 230" role="img" aria-labelledby="second-key-animation-title second-key-animation-description">
-<title id="second-key-animation-title">Both keys required</title>
-<desc id="second-key-animation-description">The phone approves first, but the payment stays locked. The second key approves, and the payment can go through.</desc>
-<path class="signing-wire" d="M90 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M90 111V120L180 155"/><g class="signing-person first" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label" y="52">Phone</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person second" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cx="-8" cy="-6" r="10"/><path d="M0 1l18 18m-7-7 6-6m-1 11 6-6"/></g><text class="signing-label" y="52">Second key</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><span class="chain-token">No payment sent</span></div>
+</div>
+<p class="signing-caption">Your hardware wallet and your iPhone must both approve.</p>
+</div><div class="signing-scene" id="payment-scene" data-scene="payment" data-step="3">
+<h4 class="signing-scene-title">A payment you approve</h4>
+<div class="signing-demo">
+<svg viewBox="0 0 360 220" role="img" aria-labelledby="payment-animation-title payment-animation-description">
+<title id="payment-animation-title">A payment you approve</title><desc id="payment-animation-description">For a separate, normal payment, you check the address, amount, and fee on your iPhone. The iPhone and hardware wallet both sign. Bitcoin sees one ordinary signature, without revealing the two devices.</desc>
+<path class="signing-wire" d="M90 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M90 111V120L180 155"/><g class="signing-person first" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person second" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
-<g class="signing-approved"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
+<g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
 </svg>
-<button class="signing-replay" type="button" aria-label="Replay second key animation" hidden>Replay ↻</button>
-</div><p class="signing-caption">Both keys must approve.</p><p class="signing-note"><a href="/core-cosigner">2-of-3 signing tested with Bitcoin Core</a></p><a href="/advanced#second-device">See how it works</a></article></div><p><a href="/vaults">How shared wallets work</a></p></section>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><span class="chain-token">One ordinary signature</span></div>
+</div>
+<p class="signing-caption">Check the address, amount, and fee on your iPhone before approving.</p>
+</div><button class="signing-replay" type="button" aria-label="Replay A stolen hardware-wallet key isn’t enough." hidden>Replay ↻</button><p class="signing-links"><a href="/vaults#extra-device">Hardware compatibility</a> · <a href="/advanced#second-device">How it works</a></p></article><article class="signing-story"><h3>Share control without depending on everyone.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="shared-example" value="shared" aria-controls="shared-scene" checked>Shared savings</label><label><input type="radio" name="shared-example" value="borrowing" aria-controls="borrowing-scene">Borrowing</label></fieldset><div class="signing-scene" id="shared-scene" data-scene="shared" data-step="3">
+<h4 class="signing-scene-title">One person is away</h4>
+<div class="signing-demo">
+<svg viewBox="0 0 360 220" role="img" aria-labelledby="shared-animation-title shared-animation-description">
+<title id="shared-animation-title">One person is away</title><desc id="shared-animation-description">You and Alex approve while a third person is away. Any two of the three keys can approve. Spending reveals three public keys, the two-approval rule, and two signatures, but no names.</desc>
+<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Alex</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Away</text></g>
+<g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
+<g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
+<g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
+</svg>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span>2 required · 2 signatures</span></div>
+</div>
+<p class="signing-caption">Any two of three can approve.</p>
+</div><div class="signing-scene" id="borrowing-scene" data-scene="borrowing" data-step="3">
+<h4 class="signing-scene-title">Returning loan collateral</h4>
+<div class="signing-demo">
+<svg viewBox="0 0 360 220" role="img" aria-labelledby="borrowing-animation-title borrowing-animation-description">
+<title id="borrowing-animation-title">Returning loan collateral</title><desc id="borrowing-animation-description">A possible future lending arrangement. After repayment, you and the lender approve returning your bitcoin. The independent key agent does not need to participate. The lender and key agent could also move the bitcoin together.</desc>
+<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Lender</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Key agent</text></g>
+<g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
+<g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
+<g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Returned</text></g></g>
+</svg>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span>2 required · 2 signatures</span></div>
+</div>
+<p class="signing-caption">After repayment, you and the lender return the bitcoin.</p><p class="signing-note"><strong>Possible future use.</strong> A lender could provide stablecoins against this bitcoin. We have no lending partner yet. The lender and key agent could also move the funds together. <a href="/roadmap#signing-partners">About lending partners</a></p>
+</div><button class="signing-replay" type="button" aria-label="Replay Share control without depending on everyone." hidden>Replay ↻</button><p class="signing-links"><a href="/core-cosigner">2-of-3 signing tested with Bitcoin Core</a> · <a href="/vaults#shared-control">How it works</a></p></article></div>
+<button class="test-link" type="button" data-dialog="combined-signing" aria-controls="combined-signing" aria-haspopup="dialog">Use both together</button>
+<dialog id="combined-signing" aria-labelledby="combined-signing-title">
+<div class="dialog-heading"><h2 id="combined-signing-title">Protect your key in a shared wallet</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div>
+<div class="combined-signers">
+<div class="combined-you"><span>iPhone + hardware wallet</span><b>↓</b><strong>Your approval</strong></div>
+<div><span>Partner’s key</span><b>↓</b><strong>Partner’s approval</strong></div>
+<div><span>Third person’s key</span><b>↓</b><strong>Their approval</strong></div>
+</div>
+<p><strong>Any two columns can approve.</strong> Your column needs both your devices. The other two people can also approve together without you.</p>
+<p>On Bitcoin, your two devices appear as one key and one signature within the shared wallet’s three-key rule.</p>
+<p><a href="/vaults">How the two signing methods fit together</a></p>
+</dialog></section>
 <nav class="jump-links" aria-label="On this page"><a href="#setup">Set up your wallet</a> <a href="#receive">Receive bitcoin</a> <a href="#send">Send bitcoin</a> <a href="#people">Pay someone again</a> <a href="#savings">Save with other people</a> <a href="#recovery">Back up and restore</a> <a href="#controls">More options when you need them</a></nav>
 <section class="journey" id="setup">
 <h2>Set up your wallet</h2><p>Create a wallet and write down your recovery words. If you stop partway through, you can finish the backup when you return.</p>
