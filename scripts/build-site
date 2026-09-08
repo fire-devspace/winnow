@@ -119,7 +119,7 @@ def page(section, journeys, cases):
                 availability = "Advanced" if route == "/advanced" else "Shared savings"
                 heading = "Require a second key" if route == "/advanced" else journey["title"]
                 caption = "Both keys must approve." if route == "/advanced" else "Any two can pay. One can sit it out."
-                note = '<p class="signing-note">We haven’t tested hardware wallets yet.</p>' if route == "/advanced" else ""
+                note = '<p class="signing-note"><a href="/core-cosigner">2-of-3 signing tested with Bitcoin Core</a></p>' if route == "/advanced" else ""
                 options.append(f'<article><p class="lede">{availability}</p><h3>{escape(heading)}</h3>{signing_animation(route != "/advanced")}<p class="signing-caption">{caption}</p>{note}<a href="{route}#{journey["id"]}">See how it works</a></article>')
         choices = '<section id="signing-choices"><h2>Choose who can spend</h2><div class="signing-choices">' + "".join(options) + '</div><p><a href="/vaults">How shared wallets work</a></p></section>'
     return f"""<!doctype html>
