@@ -144,7 +144,8 @@ public struct Vault: Sendable {
                     throw VaultError.invalidDescriptor(
                         "this vault nests an aggregated key where a single cosigner is required")
                 }
-                guard case .extended = single.base, single.origin != nil else {
+                guard case let .extended(key, _) = single.base,
+                      key.privateKey == nil, single.origin != nil else {
                     throw VaultError.invalidDescriptor(
                         "every cosigner must be an extended public key carrying its origin")
                 }
@@ -153,7 +154,8 @@ public struct Vault: Sendable {
         case let .muSig2(participants, derivation):
             try requireSuffix(derivation, .scriptPath)
             for participant in participants {
-                guard case .extended = participant.base, participant.origin != nil else {
+                guard case let .extended(key, _) = participant.base,
+                      key.privateKey == nil, participant.origin != nil else {
                     throw VaultError.invalidDescriptor(
                         "every participant must be an extended public key carrying its origin")
                 }
@@ -753,7 +755,7 @@ public struct Vault: Sendable {
         public var index: UInt32
         /// Sorted compressed participant keys (aggregation order, BIP390).
         public var participants: [Data]
-        /// The root aggregate key (compressed) — the BIP373 field key.
+        /// The root aggregate key (compressed), identifying the participant list.
         public var aggregate: Data
         /// The internal key (x-only): root aggregate after the BIP328 path.
         public var internalKey: Data
@@ -761,8 +763,9 @@ public struct Vault: Sendable {
         public var tweaks: [Data]
         /// is_xonly per tweak: false for the path, true for the TapTweak.
         public var isXOnlyTweaks: [Bool]
-        /// The final tweaked aggregate key = the vault's output key (x-only).
-        public var outputKey: Data
+        /// The final compressed output key, identifying BIP373 nonces and partials.
+        public var signingKey: Data
+        public var outputKey: Data { Data(signingKey.dropFirst()) }
     }
 
     /// Computes the MuSig2 context for the vault coordinates, cross-checked
@@ -799,14 +802,15 @@ public struct Vault: Sendable {
         // The tr() output key tweak (no script tree in a MuSig2 vault).
         tweaks.append(Taproot.tweak(internalKey: internalKey, merkleRoot: nil))
         isXOnly.append(true)
-        let outputKey = try MuSig.aggregateXonly(publicKeys: sorted, tweaks: tweaks, isXOnlyTweaks: isXOnly)
+        let signingKey = try MuSig.aggregate(publicKeys: sorted, tweaks: tweaks, isXOnlyTweaks: isXOnly)
+        let outputKey = Data(signingKey.dropFirst())
         // Cross-check: the tweaked aggregate must be the descriptor's output key.
         guard try scriptPubKey(index: index, choice: choice) == Data([0x51, 0x20]) + outputKey else {
             throw VaultError.invalidDescriptor("musig tweak chain mismatch")
         }
         return MuSig2Context(choice: choice, index: index, participants: sorted, aggregate: aggregate,
                              internalKey: internalKey, tweaks: tweaks, isXOnlyTweaks: isXOnly,
-                             outputKey: outputKey)
+                             signingKey: signingKey)
     }
 
     /// The message cosigners sign for a MuSig2 vault input: the BIP341
@@ -853,7 +857,7 @@ public struct Vault: Sendable {
                 message: message, extraInput: extraInput)
             try psbt.attachMuSig2PubNonce(input: input,
                                           id: PSBT.MuSig2KeyID(participant: participant,
-                                                               aggregate: context.aggregate),
+                                                               aggregate: context.signingKey),
                                           nonce: publicNonce)
             secretNonces[participant] = secretNonce
         }
@@ -893,7 +897,7 @@ public struct Vault: Sendable {
         for (participant, secret) in try participantSecrets(context: context, master: master) {
             guard var secnonce = secretNonces[participant] else { continue }
             try psbt.signMuSig2(input: input,
-                                id: PSBT.MuSig2KeyID(participant: participant, aggregate: context.aggregate),
+                                id: PSBT.MuSig2KeyID(participant: participant, aggregate: context.signingKey),
                                 secretNonce: &secnonce, secretKey: secret, session: session)
             secretNonces[participant] = secnonce // zeroed by partialSign
             signed += 1

@@ -320,12 +320,17 @@ extension MuSig {
     /// key that appears in the Taproot output and that the final signature
     /// verifies against.
     public static func aggregateXonly(publicKeys: [Data], tweaks: [Data], isXOnlyTweaks: [Bool]) throws -> Data {
+        Data(try aggregate(publicKeys: publicKeys, tweaks: tweaks, isXOnlyTweaks: isXOnlyTweaks).dropFirst())
+    }
+
+    /// The tweaked compressed key, including the parity required by BIP373.
+    public static func aggregate(publicKeys: [Data], tweaks: [Data], isXOnlyTweaks: [Bool]) throws -> Data {
         guard tweaks.count == isXOnlyTweaks.count else { throw MuSig2Error.invalidTweak }
         var context = try keyAggContext(publicKeys: publicKeys)
         for (tweak, isXOnly) in zip(tweaks, isXOnlyTweaks) {
             context = try applyTweak(context, tweak: tweak, isXOnly: isXOnly)
         }
-        return context.xonlyAggregateKey
+        return context.aggregateKey
     }
 
     /// The BIP328 plain-tweak for one unhardened BIP32 step from the synthetic

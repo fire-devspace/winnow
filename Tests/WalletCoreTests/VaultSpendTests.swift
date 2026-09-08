@@ -384,6 +384,10 @@ struct VaultSpendTests {
             knownUTXOs: [utxo], ownedOutputCoordinates: ownedCoordinates,
                               chainTip: testChainTip)
         #expect(noncePSBT_A.inputs[0].musig2PubNonces.count == 1)
+        let output = try Taproot.tweakedOutputKey(internalKey: context.internalKey, merkleRoot: nil)
+        let signingKey = Data([output.parity ? 0x03 : 0x02]) + output.key
+        #expect(noncePSBT_A.inputs[0].musig2PubNonces.keys.first?.aggregate == signingKey)
+        #expect(signingKey != context.aggregate)
         #expect(secnoncesA.count == 1 && secnoncesB.count == 1)
 
         // Combine nonces, then round 2: each cosigner partial-signs the

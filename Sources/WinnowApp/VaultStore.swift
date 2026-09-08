@@ -6,40 +6,6 @@ import Foundation
 /// collides with the `BitcoinP2P` enum, so module qualification is no help).
 typealias BitcoinTransaction = Transaction
 
-/// A created vault as persisted by the app (JSON at `vaults.json`). Signing
-/// secrets never live here — vault spends load the wallet's master key from
-/// the KeyStore for the duration of the signing call, like `Wallet` does.
-struct VaultRecord: Codable, Equatable, Identifiable, Sendable {
-    /// The descriptor checksum — stable and unique per descriptor.
-    var id: String
-    var name: String
-    var descriptor: String
-    /// Filter-scan height when the vault was added; funds sent earlier than
-    /// this are not discovered (forward-only scanning, docs/read-side.md).
-    var createdAtHeight: UInt32
-    var nextReceiveIndex: UInt32 = 0
-    var nextChangeIndex: UInt32 = 0
-    /// Every vault coin row, spent ones included. Mutations go through this;
-    /// reads should use `utxos`, which hides the tombstones.
-    var allUtxos: [WalletUTXO] = []
-
-    /// The coins this vault actually has.
-    ///
-    /// Computed rather than stored so a spent row cannot reach the balance,
-    /// the spend screen, or `createSpend` by anyone forgetting to filter --
-    /// `VaultDetailView` passes this straight into coin selection (#127).
-    var utxos: [WalletUTXO] { allUtxos.filter { !$0.isSpent } }
-
-    var balance: Int64 { utxos.reduce(0) { $0 + $1.amount } }
-
-    /// The stored property is `allUtxos` while the on-disk key stays `utxos`,
-    /// so a vaults.json written before #127 loads unchanged.
-    private enum CodingKeys: String, CodingKey {
-        case id, name, descriptor, createdAtHeight, nextReceiveIndex, nextChangeIndex
-        case allUtxos = "utxos"
-    }
-}
-
 enum VaultStorageOpenResult: Equatable, Sendable {
     case missing
     case loaded
@@ -106,6 +72,28 @@ actor VaultStore {
     }
 
     var all: [VaultRecord] { records }
+
+    func backupRecords() throws -> [VaultRecord] {
+        guard !records.contains(where: { record in
+            record.allUtxos.contains {
+                $0.height == 0 || ($0.spent != nil && $0.spent?.height == nil)
+            }
+        }) else {
+            throw WalletError.invalidBundle("Wait for shared-account payments to confirm before saving a backup.")
+        }
+        return records
+    }
+
+    /// Restore public account state; signing keys and live nonces are separate.
+    func restore(_ restored: [VaultRecord]) throws {
+        try Self.validate(restored, network: network)
+        let previous = records
+        records = restored
+        do { try persist() } catch {
+            records = previous
+            throw error
+        }
+    }
 
     func record(id: String) -> VaultRecord? {
         records.first { $0.id == id }
@@ -379,7 +367,7 @@ actor VaultStore {
     private static let damagedStorageMessage =
         "Winnow found local vault data but could not safely read it. The file and protected keys were left untouched. Retry; if this continues, restore from a known-good wallet bundle or ask for help before changing anything."
 
-    private static func validate(_ records: [VaultRecord], network: BitcoinNetwork) throws {
+    static func validate(_ records: [VaultRecord], network: BitcoinNetwork) throws {
         var recordIDs = Set<String>()
         var outpoints = Set<Transaction.Outpoint>()
         var aggregate: Int64 = 0
@@ -421,9 +409,10 @@ actor VaultStore {
     private static func validateRecordCoins(_ record: VaultRecord, vault: Vault,
                                             outpoints: inout Set<Transaction.Outpoint>,
                                             aggregate: inout Int64) throws {
-        for utxo in record.utxos {
+        for utxo in record.allUtxos {
             guard utxo.txid.count == 32,
                   utxo.amount > 0, utxo.amount <= BitcoinAmount.maximum,
+                  utxo.spent.map({ $0.spentBy.count == 32 }) ?? true,
                   utxo.index < maximumWatchCount
             else {
                 throw VaultStorageError.invalidState("vault output metadata is invalid")
@@ -439,6 +428,9 @@ actor VaultStore {
             guard outpoints.insert(utxo.outpoint).inserted else {
                 throw VaultStorageError.invalidState("duplicate vault output")
             }
+            // Spent rows can return after a reorg, so validate their ownership
+            // too, but only live coins contribute to the balance ceiling.
+            if utxo.isSpent { continue }
             let sum = aggregate.addingReportingOverflow(utxo.amount)
             guard !sum.overflow, sum.partialValue <= BitcoinAmount.maximum else {
                 throw VaultStorageError.invalidState("vault balance is outside Bitcoin's monetary range")

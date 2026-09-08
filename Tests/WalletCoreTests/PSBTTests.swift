@@ -194,14 +194,77 @@ struct PSBTTests {
         var mutable = psbt
         #expect(throws: PSBTError.self) { try mutable.finalize() }
 
-        // Bad magic, v0 PSBT, duplicate keys.
+        // Bad magic, incomplete v0 PSBT, duplicate keys.
         #expect(throws: PSBTError.invalidMagic) { _ = try PSBT(serialized: Data([1, 2, 3, 4, 5])) }
         var v0Globals = Data([0x70, 0x73, 0x62, 0x74, 0xFF])
         v0Globals.append(contentsOf: [0x01, 0xFB, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]) // version = 0
-        #expect(throws: PSBTError.unsupportedVersion(0)) { _ = try PSBT(serialized: v0Globals) }
+        #expect(throws: PSBTError.missingField("v0 unsigned transaction")) { _ = try PSBT(serialized: v0Globals) }
         var duplicate = Data([0x70, 0x73, 0x62, 0x74, 0xFF])
         duplicate.append(contentsOf: [0x01, 0xFB, 0x01, 0x02, 0x01, 0xFB, 0x01, 0x02, 0x00])
         #expect(throws: PSBTError.duplicateKey(Data([0xFB]))) { _ = try PSBT(serialized: duplicate) }
+    }
+
+    @Test("v0 exchange preserves the payment, signing data, and unknown fields")
+    func v0Exchange() throws {
+        let fixture = try Fixture()
+        var tx = fixture.tx
+        tx.locktime = 4321
+        var psbt = try PSBT(unsignedTx: tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        let unknown = PSBT.KeyValue(type: 0xFC, keyData: Data([7]), value: Data([8, 9]))
+        psbt.globals.append(unknown)
+        psbt.inputs[0].pairs.append(unknown)
+        psbt.outputs[1].pairs.append(unknown)
+        try psbt.signKeyPath(input: 0, tweakedPrivateKey: fixture.tweakedKeys[0])
+        let restored = try PSBT(base64: psbt.base64V0())
+        #expect(try restored == PSBT(serialized: psbt.serialized))
+        #expect(try restored.unsignedTransaction() == tx)
+        #expect(restored.inputs[0].tapKeySignature == psbt.inputs[0].tapKeySignature)
+        var final = restored
+        try final.signKeyPath(input: 1, tweakedPrivateKey: fixture.tweakedKeys[1])
+        try final.finalize()
+        let finalRestored = try PSBT(base64: final.base64V0())
+        #expect(try finalRestored.extractedTransaction() == final.extractedTransaction())
+    }
+
+    @Test("v0 import rejects ambiguous transaction fields and signed unsigned-transactions")
+    func invalidV0Exchange() throws {
+        let fixture = try Fixture()
+        let original = try PSBT(unsignedTx: fixture.tx, inputs: fixture.inputs, outputs: fixture.outputs)
+        // Construct raw envelopes independently of the exporter.
+        func envelope(_ tx: Transaction) -> PSBT {
+            PSBT(globals: [.init(type: 0x00, value: tx.serialized(includeWitness: true))],
+                 inputs: original.inputs.map { .init(pairs: $0.pairs.filter { ![0x0E, 0x0F, 0x10].contains($0.type) }) },
+                 outputs: original.outputs.map { .init(pairs: $0.pairs.filter { ![0x03, 0x04].contains($0.type) }) })
+        }
+        let valid = envelope(fixture.tx)
+        #expect(try PSBT(serialized: valid.serialized) == original)
+        var repeatedType = valid
+        repeatedType.globals.append(.init(type: 0x00, keyData: Data([1]), value: Data([2])))
+        #expect(throws: PSBTError.self) { _ = try PSBT(serialized: repeatedType.serialized) }
+        for type: UInt8 in [0x02, 0x03, 0x04, 0x05, 0x06] {
+            var bad = valid
+            bad.globals.append(.init(type: type, value: Data([0])))
+            #expect(throws: PSBTError.self) { _ = try PSBT(serialized: bad.serialized) }
+        }
+        for type: UInt8 in [0x0E, 0x0F, 0x10, 0x11, 0x12] {
+            var bad = valid
+            bad.inputs[0].pairs.append(.init(type: type, value: Data(repeating: 0, count: type == 0x0E ? 32 : 4)))
+            #expect(throws: PSBTError.self) { _ = try PSBT(serialized: bad.serialized) }
+        }
+        for type: UInt8 in [0x03, 0x04] {
+            var bad = valid
+            bad.outputs[0].pairs.append(.init(type: type, value: Data(repeating: 0, count: 8)))
+            #expect(throws: PSBTError.self) { _ = try PSBT(serialized: bad.serialized) }
+        }
+        var signed = fixture.tx
+        signed.inputs[0].scriptSig = Data([0x51])
+        #expect(throws: PSBTError.self) { _ = try PSBT(serialized: envelope(signed).serialized) }
+        signed.inputs[0].scriptSig = Data()
+        signed.inputs[0].witness = [Data([1])]
+        #expect(throws: PSBTError.self) { _ = try PSBT(serialized: envelope(signed).serialized) }
+        var requirements = original
+        requirements.inputs[0].pairs.append(.init(type: 0x11, value: PSBT.uint32le(1234)))
+        #expect(throws: PSBTError.self) { _ = try requirements.base64V0() }
     }
 
     @Test("hostile PSBT lengths and fixed-width fields fail closed")

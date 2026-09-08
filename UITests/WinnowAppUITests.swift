@@ -1076,11 +1076,11 @@ final class WinnowAppUITests: XCTestCase {
             app.tabBars.buttons["People"].tap()
             return false
         }
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT…"]))
-        app.buttons["Create spend PSBT…"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create payment"]))
+        app.buttons["Create payment"].tap()
         app.typeInto("Destination address", try Self.fixtureAddress(0xE5))
         app.typeInto("Amount (sats)", "1000000")
-        let createButton = app.buttons["Create spend PSBT"]
+        let createButton = app.buttons["Prepare payment"]
         XCTAssertTrue(scrollUntilExists(app, createButton), "create button not reachable")
         createButton.tap()
         let psbtText = app.staticTexts.matching(
@@ -1101,7 +1101,7 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, signingVaultRow), "group vault row not reachable")
         signingVaultRow.tap()
         let signButton = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Sign / combine'")).firstMatch
+            NSPredicate(format: "label BEGINSWITH 'Continue signing'")).firstMatch
         XCTAssertTrue(scrollUntilExists(app, signButton))
         signButton.tap()
         XCTAssertTrue(app.buttons["psbtPasteButton"].waitForExistence(timeout: 20))
@@ -1110,7 +1110,7 @@ final class WinnowAppUITests: XCTestCase {
         // fresh launch may still be catching up its headers — the persisted
         // coin row proves nothing about the tip. Re-adding re-reviews at the
         // current height, which is exactly what a person would do.
-        let review = app.staticTexts["Review — what you are signing"]
+        let review = app.staticTexts["Check this payment"]
         poll(timeout: 240, interval: 5, "review accepted once the tip caught up") {
             app.buttons["addPSBTButton"].tap()
             _ = review.waitForExistence(timeout: 3)
@@ -1130,8 +1130,9 @@ final class WinnowAppUITests: XCTestCase {
             NSPredicate(format: "label BEGINSWITH 'Finalize'")).firstMatch
         XCTAssertTrue(scrollUntilExists(app, finalize), "finalize button missing")
         finalize.tap()
-        XCTAssertTrue(app.staticTexts["Broadcast"].waitForExistence(timeout: 60),
-                      "broadcast confirmation missing")
+        XCTAssertTrue(app.staticTexts["vaultPaymentSent"].waitForExistence(timeout: 60),
+                      "payment success screen missing")
+        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this proposal"].exists)
         Screenshots.capture(app, "32-group-broadcast", testCase: self)
 
         // 6. The node is the judge — patiently: the app broadcasts over P2P
@@ -1498,13 +1499,14 @@ final class WinnowAppUITests: XCTestCase {
     }
 
 
-    // A phone wallet plus an independent software signer. This proves the
-    // MuSig2 app exchange, not compatibility with any hardware-wallet model.
+    // The phone and Bitcoin Core each hold one key and exchange ordinary
+    // PSBT files. No test-side Winnow signer stands in for the second device.
     func test16MuSig2RequiresSecondDevice() async throws {
-        let external = try HDKey(seed: Data(UUID().uuidString.utf8))
-        let externalKey = try TestVaults.bareKeyExpression(master: external)
+        let external = try CoreSigner(wallet: "ui-musig-\(UUID().uuidString)")
+        let externalKey = external.publicExpression
         let ownKey = String(try Self.deviceKeyExpression().dropLast("/<0;1>/*".count))
         let vault = try Vault("tr(musig(\(ownKey),\(externalKey))/<0;1>/*)", network: .signet)
+        try external.importVault(vault)
         let name = "Extra device \(UUID().uuidString.prefix(6))"
         var app = launchApp(advanced: true)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["walletExtraDeviceButton"]))
@@ -1529,11 +1531,6 @@ final class WinnowAppUITests: XCTestCase {
         try await SignetMiner.ensureChainHeight(
             atLeast: (try BitcoinCLI.blockHeight(of: block)) + Int(Wallet.coinbaseMaturity) - 1)
         let coin = try XCTUnwrap(BitcoinCLI.unspents(scriptHex: script.hex).first { $0.txid == fundingTxid })
-        let utxo = WalletUTXO(txid: Data(Data(hex: coin.txid)!.reversed()), vout: coin.vout,
-                              amount: coin.amount, scriptPubKey: script, chain: .receive,
-                              index: 0, height: coin.height, isCoinbase: true)
-        let tip = UInt32(try BitcoinCLI.blockCount())
-        let coordinates = [Vault.OutputCoordinate(choice: 1, index: 0)]
         app = launchApp(advanced: true)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"]))
         app.buttons["walletSavings-\(name)"].tap()
@@ -1549,18 +1546,31 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
         XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key cannot spend these funds.")
         Screenshots.capture(app, "35-extra-device-policy", testCase: self)
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT…"]))
-        app.buttons["Create spend PSBT…"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["vaultBackupButton"]))
+        app.buttons["vaultBackupButton"].tap()
+        XCTAssertTrue(app.buttons["exportConfirmButton"].waitForExistence(timeout: 20))
+        app.buttons["exportConfirmButton"].tap()
+        let backupPreview = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "\"lastKnownHeight\"")).firstMatch
+        XCTAssertTrue(scrollUntilExists(app, backupPreview))
+        var backup = try ImportBundle.decode(json: backupPreview.label)
+        XCTAssertNil(backup.mnemonic, "the normal backup must not expose the phone key")
+        let backedUpAccount = try XCTUnwrap(backup.vaults?.first { $0.name == name })
+        XCTAssertEqual(backedUpAccount.descriptor, vault.descriptor.serialized())
+        XCTAssertEqual(backedUpAccount.utxos.count, 1)
+        app.buttons["Close"].tap()
+
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create payment"]))
+        app.buttons["Create payment"].tap()
         app.typeInto("Destination address", try Self.fixtureAddress(0xE5))
         app.typeInto("Amount (sats)", "1000000")
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["Create spend PSBT"]))
-        app.buttons["Create spend PSBT"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Prepare payment"]))
+        app.buttons["Prepare payment"].tap()
         let psbtOutput = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'cHNidP'")).firstMatch
         XCTAssertTrue(scrollUntilExists(app, psbtOutput))
         let unsigned = psbtOutput.label
         app.buttons["Done"].tap()
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["Sign / combine PSBTs…"]))
-        app.buttons["Sign / combine PSBTs…"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["Continue signing"]))
+        app.buttons["Continue signing"].tap()
 
         func combine(_ text: String) {
             XCTAssertTrue(scrollUntilExists(app, app.textFields["psbtField"], up: true))
@@ -1579,13 +1589,12 @@ final class WinnowAppUITests: XCTestCase {
         })
         let abandoned = psbtOutput.label
         app.buttons["Done"].tap()
-        app.buttons["Sign / combine PSBTs…"].tap()
+        app.buttons["Continue signing"].tap()
         combine(abandoned)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
         XCTAssertFalse(app.buttons["musigSignButton"].isEnabled, "reopening must not restore secret nonces")
-        app.buttons["Done"].tap()
-        app.buttons["Sign / combine PSBTs…"].tap()
-        combine(unsigned)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigRestartButton"]))
+        app.buttons["musigRestartButton"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigNonceButton"]))
         app.buttons["musigNonceButton"].tap()
         XCTAssertTrue(poll(timeout: 30, interval: 1, "fresh nonce after abandoning session") {
@@ -1593,26 +1602,32 @@ final class WinnowAppUITests: XCTestCase {
                 && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PubNonces.count) == 1
         })
 
-        let context = try vault.muSig2Context(choice: 0, index: 0)
-        var bothNonces = try PSBT(base64: psbtOutput.label)
-        var externalNonces = try vault.muSig2AttachNonce(
-            &bothNonces, input: 0, context: context, master: external,
-            knownUTXOs: [utxo], ownedOutputCoordinates: coordinates, chainTip: tip)
-        combine(bothNonces.base64)
+        // Core starts with the original proposal so it only contributes a
+        // nonce. The phone must still review and approve before either side
+        // can complete the payment.
+        let coreNonce = try external.process(PSBT(base64: unsigned))
+        XCTAssertEqual(coreNonce.inputs[0].musig2PubNonces.count, 1)
+        XCTAssertTrue(coreNonce.inputs[0].musig2PartialSigs.isEmpty)
+        let bothNonces = try PSBT(base64: psbtOutput.label).combined(with: [coreNonce])
+        combine(try bothNonces.base64V0())
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
         XCTAssertTrue(app.buttons["musigSignButton"].isEnabled)
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["Check this payment"], up: true))
+        Screenshots.capture(app, "36-extra-device-review", testCase: self)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
         app.buttons["musigSignButton"].tap()
         XCTAssertTrue(poll(timeout: 30, interval: 1, "phone partial signature") {
             self.scrollUntilExists(app, psbtOutput)
                 && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PartialSigs.count) == 1
         })
-        var signed = try PSBT(base64: psbtOutput.label)
+        let phoneSigned = try PSBT(base64: psbtOutput.label)
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["musigNextStep"], up: true))
+        Screenshots.capture(app, "37-extra-device-waiting", testCase: self)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigBroadcastButton"], up: true))
         XCTAssertFalse(app.buttons["musigBroadcastButton"].isEnabled, "phone alone must not spend")
-        try vault.muSig2Sign(&signed, input: 0, context: context, master: external,
-                            secretNonces: &externalNonces, knownUTXOs: [utxo],
-                            ownedOutputCoordinates: coordinates, chainTip: tip)
-        combine(signed.base64)
+        let signed = try external.process(phoneSigned)
+        XCTAssertEqual(signed.inputs[0].musig2PartialSigs.count, 2)
+        combine(try signed.base64V0())
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigBroadcastButton"]))
         XCTAssertTrue(app.buttons["musigBroadcastButton"].isEnabled)
         let before = Set(try BitcoinCLI.mempoolTxids())
@@ -1620,6 +1635,10 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(poll(timeout: 60, interval: 1, "MuSig2 spend accepted by Core") {
             ((try? Set(BitcoinCLI.mempoolTxids()).subtracting(before).isEmpty) ?? true) == false
         })
+        XCTAssertTrue(app.staticTexts["vaultPaymentSent"].waitForExistence(timeout: 60))
+        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this proposal"].exists)
+        XCTAssertFalse(app.buttons["musigBroadcastButton"].exists)
+        Screenshots.capture(app, "39-extra-device-sent", testCase: self)
         let txid = try XCTUnwrap(Set(BitcoinCLI.mempoolTxids()).subtracting(before).first)
         let tx = try BitcoinCLI.runObject(["getrawtransaction", txid, "true"])
         let inputs = try XCTUnwrap(tx["vin"] as? [[String: Any]])
@@ -1630,5 +1649,29 @@ final class WinnowAppUITests: XCTestCase {
             for: Self.fixtureAddress(0xD4), network: .signet))
         let spent = try BitcoinCLI.runJSON(["gettxout", fundingTxid, String(coin.vout)])
         XCTAssertTrue(spent == nil || spent is NSNull, "the funded output was not spent")
+        backup.mnemonic = Self.mnemonic // represents the separately saved words
+        let expectedChange = try XCTUnwrap(signed.outputs.first { output in
+            output.script == (try? vault.scriptPubKey(index: 0, choice: 1))
+        }?.amount)
+        app = launchApp(run: "musig-restore", reset: true,
+                        clipboard: try backup.serialized(), expectOnboarding: true, advanced: true)
+        app.buttons["importWalletButton"].tap()
+        XCTAssertTrue(app.buttons["importPasteButton"].waitForExistence(timeout: 20))
+        app.buttons["importPasteButton"].tap()
+        XCTAssertTrue(poll(timeout: 15, interval: 1, "backup pasted for restore") {
+            if app.buttons["Allow Paste"].exists { app.buttons["Allow Paste"].tap() }
+            return ((app.textViews["importJSONEditor"].value as? String) ?? "").contains("lastKnownHeight")
+        })
+        app.buttons["importVerifyButton"].tap()
+        XCTAssertTrue(app.staticTexts["Verification report"].waitForExistence(timeout: 180))
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["importContinueButton"]))
+        app.buttons["importContinueButton"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"]))
+        app.buttons["walletSavings-\(name)"].tap()
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultBalance"]))
+        let restoredBalance = app.staticTexts["vaultBalance"].label.filter(\.isNumber)
+        XCTAssertEqual(Int64(restoredBalance), expectedChange, "restoring replayed the old balance")
+        Screenshots.capture(app, "38-extra-device-restored", testCase: self)
+
     }
 }
