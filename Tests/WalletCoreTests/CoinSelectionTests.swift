@@ -354,10 +354,12 @@ struct CoinSelectionTests {
 
     /// A fee rate is bounded on both sides. Zero, negative, NaN and infinity
     /// would each underflow the fee and inflate change past the inputs;
-    /// anything above Core's relay ceiling silently burns the balance.
+    /// anything above Core's relay ceiling silently burns the balance. The
+    /// first representable rate past the ceiling is in the list, so the bound
+    /// is checked at its edge rather than near it.
     @Test("fee rates outside (0, 10000] are refused",
-          arguments: [0.0, -1.0, -5.0, -0.0001, 10_000.001, 10_001.0, 100_000.0,
-                      Double.nan, Double.infinity, -Double.infinity])
+          arguments: [0.0, -1.0, -5.0, -0.0001, (10_000.0).nextUp, 10_000.001, 10_001.0,
+                      100_000.0, Double.nan, Double.infinity, -Double.infinity])
     func feeRateBounds(_ rate: Double) {
         // Asserting the specific case matters: with the ceiling removed the
         // call still throws, but as insufficientFunds, because an absurd rate

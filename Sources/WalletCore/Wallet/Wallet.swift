@@ -1506,8 +1506,8 @@ public actor Wallet {
             // replacements come through here.
             try psbt.signKeyPath(
                 input: index,
-                tweakedPrivateKey: tweakedPrivateKey(master: master, chain: utxo.chain,
-                                                     index: utxo.index))
+                tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index,
+                                                     master: master))
         }
         try psbt.finalize()
         return (psbt, try psbt.extractedTransaction())
@@ -1545,7 +1545,7 @@ public actor Wallet {
 
     /// BIP86 tweaked private key for one of our addresses (key-path spend),
     /// derived from the `master` its caller loaded for this signing operation.
-    private func tweakedPrivateKey(master: HDKey, chain: AddressChain, index: UInt32) throws -> Data {
+    private func tweakedPrivateKey(chain: AddressChain, index: UInt32, master: HDKey) throws -> Data {
         let originPath = Self.originUnchecked(of: descriptor).path
         var key = master
         for step in originPath { key = try key.child(at: step) }
