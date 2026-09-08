@@ -140,6 +140,50 @@ struct CoinSelectionTests {
         #expect(selection.changeAmount == 240_000 - 200_000 - Int64(2 * vsize))
     }
 
+    /// The ceiling is on the transaction, not on the coin count, so it is
+    /// reached at wildly different input counts depending on what each input
+    /// has to prove: about 1,700 P2TR key-path spends, or about 200 vault
+    /// inputs carrying a 20-key multi_a witness.
+    @Test("a selection too large to relay is refused before anything is signed",
+          arguments: [66, 2_000])
+    func standardSizeCeiling(witnessBytesPerInput: Int) throws {
+        // The shape a one-payment send has: the payment plus change. Output
+        // *values* do not affect size, so the input count that first exceeds
+        // the ceiling can be found before the amounts are chosen.
+        let shape = [Transaction.Output(value: 0, scriptPubKey: p2tr),
+                     Transaction.Output(value: 0, scriptPubKey: p2tr)]
+        var pastCeiling = 1
+        while TransactionBuilder.signedVSize(inputCount: pastCeiling, outputs: shape,
+                                             witnessBytesPerInput: witnessBytesPerInput)
+            <= TransactionBuilder.maximumStandardVSize { pastCeiling += 1 }
+
+        // Equal coins, and a payment that only the last one covers, so the
+        // loop takes every coin offered. 200,000 sats each pays the fee the
+        // final input adds and still leaves non-dust change.
+        let coin: Int64 = 200_000
+        func spendEveryCoin(count: Int) throws -> Selection {
+            try CoinSelection.select(
+                utxos: (0 ..< count).map { utxo(coin, index: UInt32($0)) },
+                payments: [Payment(amount: Int64(count - 1) * coin, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1,
+                witnessBytesPerInput: witnessBytesPerInput)
+        }
+
+        // One input short of the ceiling, the selection is made, change and all.
+        let fits = try spendEveryCoin(count: pastCeiling - 1)
+        #expect(fits.selected.count == pastCeiling - 1)
+        #expect(fits.changeAmount != nil)
+
+        // One input past it, the selection is refused and carries the vsize
+        // it measured — and no signature is spent on bytes no peer would take.
+        let vsize = TransactionBuilder.signedVSize(inputCount: pastCeiling, outputs: shape,
+                                                   witnessBytesPerInput: witnessBytesPerInput)
+        #expect(throws: CoinSelectionError.transactionTooLarge(
+            vsize: vsize, limit: TransactionBuilder.maximumStandardVSize)) {
+            _ = try spendEveryCoin(count: pastCeiling)
+        }
+    }
+
     @Test("hostile amounts and malformed wallet coins fail without arithmetic traps")
     func hostileAmountsAndCoins() {
         let valid = utxo(1_000_000)
