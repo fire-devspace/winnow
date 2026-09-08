@@ -1499,6 +1499,7 @@ final class WinnowAppUITests: XCTestCase {
         app.tabBars.buttons["Send"].tap()
         app.typeInto("amountField", "20000")
         app.typeInto("destinationField", try Self.fixtureAddress(0xD5))
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["reviewButton"]))
         app.buttons["reviewButton"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["sendButton"], maxSwipes: 5))
         let before = Set(try BitcoinCLI.mempoolTxids())
