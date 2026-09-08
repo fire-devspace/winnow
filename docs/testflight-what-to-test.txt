@@ -4,7 +4,9 @@ Send a payment, then open it in Wallet and save the recipient. Rename them and r
 
 Open Receive and tap Share my card. Give it a name and share it with another device. There, open Send → Saved recipients → Add and paste the card. It should say “Fresh address each payment.” Pay twice and check that each review names the recipient and uses a different address. A saved fixed address should explain that repeated payments can be linked.
 
-Create shared savings from Wallet and choose the co-owners. Share the account card and add it on the other phone before funding it. Send a small amount, wait for confirmation, then use Ask for approval and Approve a request. Finish sends the payment once enough people have approved.
+Create shared savings from Wallet and choose the co-owners. Share the account card and add it on the other phone before funding it. Once funded, tap Send on the account or select it in the Send tab. Choose a saved recipient or paste an address, enter the amount, and review the account, address, amount, and fee. Continue to approvals should open the prepared request directly. Finish sends the payment once enough people have approved.
+
+Use the same Send screen for a phone-plus-Core account. Continue to approvals should open the second-signer screen with the payment already loaded. The phone alone must not be able to send. Exchange replies with Core, approve on both sides, and check that the payment is accepted.
 
 Beginner mode
 

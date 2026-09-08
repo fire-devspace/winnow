@@ -13,6 +13,7 @@ import UIKit
 /// partials are combined, aggregated → broadcast.
 struct VaultSignView: View {
     let recordID: String
+    var initialPSBT: PSBT?
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -104,6 +105,12 @@ struct VaultSignView: View {
                 }
             }
             .navigationTitle(broadcastTxid == nil ? "Approve payment" : "Payment")
+            .onAppear {
+                if let initialPSBT, working == nil {
+                    pasted = initialPSBT.base64
+                    addPasted()
+                }
+            }
             .task(id: trustedStateIdentity) {
                 refreshSpendReview()
             }
@@ -164,20 +171,10 @@ struct VaultSignView: View {
         let isVaultOwned: Bool
     }
 
-    private var hrp: String { model.network == .mainnet ? "bc" : "tb" }
-
     /// Best-effort scriptPubKey → address; falls back to hex for non-standard
     /// scripts so an unrecognized destination is shown, never hidden.
     private func destination(forScript script: Data) -> String {
-        guard script.count >= 4, let first = script.first else { return script.hex }
-        let version: Int? = first == 0x00 ? 0 : (first >= 0x51 && first <= 0x60 ? Int(first) - 0x50 : nil)
-        guard let version else { return script.hex }
-        let pushLength = Int(script[script.index(script.startIndex, offsetBy: 1)])
-        let program = Data(script.dropFirst(2))
-        guard program.count == pushLength, (2 ... 40).contains(program.count),
-              let address = try? SegwitAddress.encode(hrp: hrp, version: version, program: program)
-        else { return script.hex }
-        return address
+        AddressDecoder.address(for: script, network: model.network) ?? script.hex
     }
 
     /// Outputs the spend pays, materialized once when review succeeds rather
@@ -402,6 +399,7 @@ struct VaultSignView: View {
             reviewedOutputLines = outputLines(for: review)
             spendReviewError = nil
             working = candidate
+            output = try candidate.base64V0()
             if let working { model.journalPSBT(stage: "vault-psbt-combined", psbt: working) }
             pasted = ""
         } catch {

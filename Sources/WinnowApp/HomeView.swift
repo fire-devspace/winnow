@@ -17,6 +17,7 @@ struct FeeBumpReviewInputs: Equatable {
 /// History speaks in confirmed blocks only — a pending send we broadcast is
 /// labeled "awaiting confirmation", never "incoming" (docs/read-side.md §3.3).
 struct HomeView: View {
+    var sendFrom: (String) -> Void
     @Environment(AppModel.self) private var model
     @State private var showReceive = false
     @State private var showSharedSavings = false
@@ -48,9 +49,9 @@ struct HomeView: View {
                         if let vault = try? model.vault(for: record) {
                             NavigationLink {
                                 if vault.isScriptPath {
-                                    SharedSavingsDetailView(recordID: record.id)
+                                    SharedSavingsDetailView(recordID: record.id) { sendFrom(record.id) }
                                 } else {
-                                    VaultDetailView(recordID: record.id)
+                                    VaultDetailView(recordID: record.id) { sendFrom(record.id) }
                                 }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {

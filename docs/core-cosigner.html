@@ -58,8 +58,8 @@ bitcoin-cli -signet -rpcwallet=winnow-signer importdescriptors \
 
 <h2 id="spend">4. Approve a payment on both sides</h2>
 <ol>
-<li>In Winnow, open the account, choose <strong>Create payment</strong>, and enter the recipient and amount. Copy the request.</li>
-<li>Open <strong>Continue signing</strong> and add that request. Check the address, amount, and fee. Tap <strong>Prepare this phone</strong>.</li>
+<li>In Winnow, open the account and tap <strong>Send</strong>, or choose the account from the Send tab. Enter the recipient and amount.</li>
+<li>Tap <strong>Review payment</strong> and check the account, address, amount, and fee. Choose <strong>Continue to approvals</strong>, then tap <strong>Prepare this phone</strong>.</li>
 <li>Copy the request shown below the buttons to Core. Read its payment details, then process it:</li>
 </ol>
 <pre><code>bitcoin-cli -signet decodepsbt "&lt;request&gt;"
@@ -75,7 +75,7 @@ bitcoin-cli -signet -rpcwallet=winnow-signer \
 <img src="screenshots/36-extra-device-review.png" width="1206" height="2622" loading="lazy" alt="Payment review showing the recipient, change, and fee before approval.">
 <img src="screenshots/37-extra-device-waiting.png" width="1206" height="2622" loading="lazy" alt="After the phone approves, Winnow asks for the other signer’s reply. Sending remains unavailable.">
 <img src="screenshots/39-extra-device-sent.png" width="1206" height="2622" loading="lazy" alt="Payment sent, with its transaction ID and a button to close the screen.">
-<figcaption>Check the payment, exchange approvals, then send. These screens come from the same <a href="https://github.com/winnowwallet/winnow/actions/runs/34253766409">app test run</a>.</figcaption>
+<figcaption>Check the payment, exchange approvals, then send. See the <a href="https://github.com/winnowwallet/winnow/blob/main/docs/screenshots/README.md">capture notes</a> for the app revision and test evidence.</figcaption>
 </figure>
 
 <h2 id="backups">5. Keep a backup of both sides</h2>

@@ -15,6 +15,8 @@ struct SendReviewInputs: Equatable {
     /// derived at, so a review made for an earlier address is never reused.
     var personID: String?
     var paymentIndex: UInt32?
+    var accountID: String?
+    var walletID: String?
 
     var trimmedDestination: String {
         destination.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -30,6 +32,14 @@ struct SendReviewInputs: Equatable {
 /// ("seen in block N").
 struct SendView: View {
     @Environment(AppModel.self) private var model
+    @Binding var accountID: String?
+
+    private struct Approval: Identifiable {
+        let record: VaultRecord
+        let psbt: PSBT
+        var id: String { record.id }
+    }
+    @State private var approval: Approval?
 
     @State private var selectedPersonID: String?
     @State private var showRecipients = false
@@ -64,7 +74,8 @@ struct SendView: View {
                          overrideText: model.advancedMode ? overrideText : "",
                          network: model.network,
                          personID: selectedPerson?.id,
-                         paymentIndex: selectedPerson?.nextPaymentIndex)
+                         paymentIndex: selectedPerson?.nextPaymentIndex,
+                         accountID: accountID, walletID: model.walletID)
     }
 
     private var canReview: Bool {
@@ -109,6 +120,13 @@ struct SendView: View {
                     destination = ""
                 }
             }
+            .sheet(item: $approval, onDismiss: reset) { approval in
+                if (try? model.vault(for: approval.record).isScriptPath) == true {
+                    ApprovalView(recordID: approval.record.id, initialPSBT: approval.psbt)
+                } else {
+                    VaultSignView(recordID: approval.record.id, initialPSBT: approval.psbt)
+                }
+            }
             .task(id: feeInputs) {
                 let inputs = reviewInputs
                 resolvedRate = await model.resolvedFeeRate(
@@ -119,7 +137,12 @@ struct SendView: View {
             }
             .onChange(of: reviewInputs) { _, _ in
                 // Edits invalidate authorization, but never rewrite a receipt.
-                if sentTxid == nil { preview = nil }
+                if sentTxid == nil, !sending { preview = nil }
+            }
+            .onChange(of: accountID) { _, _ in reset() }
+            .onChange(of: model.walletID) { _, _ in accountID = nil; reset() }
+            .onChange(of: model.vaults.map(\.id)) { _, ids in
+                if let accountID, !ids.contains(accountID) { self.accountID = nil }
             }
             .onChange(of: model.status.history) { _, history in
                 guard let sentTxid, confirmedHeight == nil,
@@ -132,6 +155,19 @@ struct SendView: View {
 
     private var paymentForm: some View {
         Group {
+            if !model.vaults.isEmpty {
+                Section("From") {
+                    Picker("Account", selection: $accountID) {
+                        Text("Everyday wallet").tag(String?.none)
+                        ForEach(model.vaults) { record in
+                            Text(record.name).tag(Optional(record.id))
+                        }
+                    }
+                    .accessibilityIdentifier("sendAccountPicker")
+                    LabeledContent("Available", value: satsText(
+                        model.vaults.first { $0.id == accountID }?.balance ?? model.status.balance))
+                }
+            }
             Section("To") {
                 if let person = selectedPerson {
                     HStack {
@@ -218,6 +254,21 @@ struct SendView: View {
 
     private func paymentReview(_ preview: AppModel.SendPreview) -> some View {
         Group {
+            if case let .vault(record, _) = preview.source {
+                Section("From") {
+                    Text(record.name).accessibilityIdentifier("reviewAccount")
+                    if let vault = try? model.vault(for: record) {
+                        Text(vault.isScriptPath
+                             ? "Any \(vault.threshold) of \(vault.signerCount) keys must approve."
+                             : "Every signing device must approve.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if !model.vaults.isEmpty {
+                Section("From") {
+                    Text("Everyday wallet").accessibilityIdentifier("reviewAccount")
+                }
+            }
             Section("To") {
                 if let recipient = preview.recipient {
                     Text(recipient.name)
@@ -228,7 +279,7 @@ struct SendView: View {
             paymentAmounts(preview)
             reviewWarnings(preview)
             Section {
-                Button(sending ? "Sending…" : "Send payment") { send() }
+                Button(actionTitle(preview)) { send() }
                     .accessibilityIdentifier("sendButton")
                     .disabled(sending)
                 Button("Edit payment") {
@@ -247,6 +298,14 @@ struct SendView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func actionTitle(_ preview: AppModel.SendPreview) -> String {
+        if sending { return "Working…" }
+        switch preview.source {
+        case .wallet: return "Send payment"
+        case .vault: return "Continue to approvals"
         }
     }
 
@@ -359,11 +418,12 @@ struct SendView: View {
                 let override = Double(requested.overrideText.trimmingCharacters(in: .whitespaces))
                 let candidate = if let person {
                     try await model.previewSend(to: person, amount: amount,
-                                                priority: requested.priority, override: override)
+                                                priority: requested.priority, override: override,
+                                                accountID: requested.accountID)
                 } else {
                     try await model.previewSend(
                         destination: requested.destination, amount: amount,
-                        priority: requested.priority, override: override)
+                        priority: requested.priority, override: override, accountID: requested.accountID)
                 }
                 guard requested == reviewInputs else { return }
                 preview = candidate
@@ -381,11 +441,24 @@ struct SendView: View {
         // check just keeps an accidental second tap from surfacing an error
         // banner instead of doing nothing.
         guard let preview, !sending else { return }
+        let requested = reviewInputs
         sending = true
         error = nil
         Task {
             do {
+                if case let .vault(record, psbt) = preview.source {
+                    try await model.prepareVaultApproval(preview)
+                    if requested.accountID == accountID, requested.walletID == model.walletID {
+                        approval = Approval(record: record, psbt: psbt)
+                    }
+                    sending = false
+                    return
+                }
                 let txid = try await model.send(preview: preview)
+                guard requested.accountID == accountID, requested.walletID == model.walletID else {
+                    sending = false
+                    return
+                }
                 sentTxid = txid
                 // Paying a person advances their address index during send().
                 // Keep the authorized snapshot as the receipt after that edit.
