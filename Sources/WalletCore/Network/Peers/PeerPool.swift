@@ -690,7 +690,8 @@ public actor PeerPool {
             PeerCandidate(endpoint: $0, source: knownSource[$0] ?? .persisted)
         }
         if let data = try? JSONEncoder().encode(PersistedPeers(Array(stored))) {
-            try? data.write(to: peersFileURL, options: .atomic)
+            try? data.write(to: peersFileURL,
+                            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         }
     }
 }

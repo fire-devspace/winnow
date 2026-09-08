@@ -474,7 +474,8 @@ public actor HeaderChain {
         for header in headers { data.append(header.serialized) }
         // .atomic writes to a temp file then renames — safe mid-write crash.
         do {
-            try data.write(to: storageURL, options: .atomic)
+            try data.write(to: storageURL,
+                           options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
             throw HeaderChainError.storageUnavailable(
                 "could not save the header file: \(error.localizedDescription)")

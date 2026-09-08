@@ -429,7 +429,9 @@ extension Wallet {
         let wallet = try Wallet(network: network, descriptor: descriptor, accountKey: accountKey,
                                 keyStore: keyStore, storageURL: storageURL, state: state)
         if let storageURL {
-            try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: storageURL,
+                           options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         }
         return wallet
     }
