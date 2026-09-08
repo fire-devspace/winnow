@@ -12,6 +12,8 @@ public enum FilterSyncError: LocalizedError, Equatable, Sendable {
     case filterHeaderMismatch(height: UInt32)
     /// A cfilter arrived for a block we did not ask about.
     case unexpectedBlockHash
+    /// A `sync` was asked for while one was already running on this instance.
+    case syncAlreadyRunning
 
     public var errorDescription: String? {
         switch self {
@@ -27,6 +29,8 @@ public enum FilterSyncError: LocalizedError, Equatable, Sendable {
             "A compact filter did not match its authenticated header at block \(height)."
         case .unexpectedBlockHash:
             "A Bitcoin peer returned a compact filter for a block Winnow did not request."
+        case .syncAlreadyRunning:
+            "Winnow is already scanning compact filters. The scan in progress will finish on its own."
         }
     }
 }
@@ -89,7 +93,9 @@ public struct BlockMatch: Sendable, Equatable {
 ///    `filtersPerChunk` and released chunk by chunk; each filter must
 ///    reproduce the pinned header chain given the block hash from our
 ///    PoW-checked header chain — this is what anchors filters to the block
-///    chain.
+///    chain. A chunk is bounded in bytes as well as in messages
+///    (`chunkByteBound`), because nothing in it is checked until all of it
+///    has arrived, and a peer that exceeds the bound is dropped mid-burst.
 /// 5. Each filter is matched locally against the watch list with BitcoinCore's
 ///    GCSFilter; on a hit the full block is fetched (getdata MSG_WITNESS_BLOCK),
 ///    its hash verified, and handed to `onMatch`.
@@ -104,6 +110,19 @@ public struct BlockMatch: Sendable, Equatable {
 /// A run scans to the chain tip unless the caller passes `maxBlocks`, which
 /// stops it that many blocks past the frontier; the next run resumes from the
 /// persisted frontier.
+///
+/// **One run at a time.** A `sync` while one is already running on this
+/// instance throws `FilterSyncError.syncAlreadyRunning` immediately, having
+/// changed nothing. Being an actor is not enough on its own: every step above
+/// awaits the network or the caller's `onMatch`, and a second call is free to
+/// run during those suspensions. Two passes then share one pool and one
+/// progress record — peer replies go to whichever collector expects the
+/// command first, so each pass reads filters the other asked for, and a pass
+/// that started before a reorg can persist a frontier over the rollback the
+/// other one just did, leaving the wallet scanning forward from an orphaned
+/// branch (the failure step 1a exists to prevent). Refusing costs a caller
+/// nothing: the run in progress covers the same blocks, and the scheduler
+/// that asked can ask again when it ends.
 public actor FilterSync {
     public enum PersistenceState: Equatable, Sendable {
         case disabled
@@ -123,6 +142,40 @@ public actor FilterSync {
     /// a whole batch. At 100 the burst a peer can put in memory before any of
     /// it is matched is a tenth of what it was.
     public static let defaultFiltersPerChunk: UInt32 = 100
+
+    /// The most bytes one `cfilter` message may carry before the peer sending
+    /// it is refused, and the unit `chunkByteBound` multiplies out.
+    ///
+    /// Derived, because nothing already stated bounds it usefully.
+    /// `GCSFilter.maxEncodedSize` is the decoder's resource ceiling and is
+    /// 4,000,000 — the same number as `MessageFramer.maxPayloadSize`, so a
+    /// burst bounded by it is bounded by exactly what the framer already
+    /// enforced, message by message, and 100 of those is 400 MB.
+    ///
+    /// A BIP158 basic filter is bounded by the block it summarises. The
+    /// element set is one entry per non-OP_RETURN output plus one per spent
+    /// prevout script, and a block of at most 4,000,000 serialized bytes
+    /// (Core's MAX_BLOCK_SERIALIZED_SIZE, which is also the protocol message
+    /// maximum) cannot hold more than 4,000,000 / 9 ≈ 444,444 outputs, the
+    /// smallest output being 8 value bytes and a 1-byte empty script; inputs
+    /// are 41 bytes each and so bound the count lower still. Golomb-Rice at
+    /// P=19 spends 19 remainder bits plus a unary terminator per element, and
+    /// the quotients over the whole sorted set sum to at most n·M / 2^19 ≈
+    /// 1.5n bits, so an n-element filter is under 21.5n bits — about 2.7n
+    /// bytes, or ~1.19 MB at the maximum n. This rounds that up, and stays
+    /// far above the 15–20 KB a real full block actually produces.
+    ///
+    /// It is a resource bound, deliberately not a plausibility one: refusing
+    /// at anything near what honest peers send would drop them on the first
+    /// unusual block, and that is a worse failure than holding 1.25 MB.
+    public static let maxFilterMessageBytes = 1_250_000
+
+    /// How many bytes a chunk of `filters` cfilters may total. The bound
+    /// travels with the request, so a short final chunk is bounded by its own
+    /// length rather than by the chunk size the run was configured with.
+    static func chunkByteBound(filters: Int) -> Int {
+        filters * maxFilterMessageBytes
+    }
 
     /// Persisted sync progress.
     public struct Progress: Codable, Sendable, Equatable {
@@ -159,6 +212,11 @@ public actor FilterSync {
     private let storageURL: URL?
     public nonisolated let persistenceState: PersistenceState
     private var progress: Progress
+    /// Whether a `sync` is between its first line and its last. Set and
+    /// cleared on the actor, so no second call can observe it half-set; see
+    /// the "one run at a time" paragraph above for what the second call would
+    /// otherwise do.
+    private var isSyncing = false
 
     private static let maximumProgressBytes = 128 * 1_024 * 1_024
     private static let maximumPinnedHeaders = 2_000_000
@@ -218,6 +276,13 @@ public actor FilterSync {
                      maxBlocks: UInt32? = nil,
                      onReorg: (@Sendable (UInt32) async throws -> Void)? = nil,
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
+        // Before anything else, and cleared on every exit path — a throw from
+        // the middle of a run must not leave the instance refusing every
+        // later sync.
+        guard !isSyncing else { throw FilterSyncError.syncAlreadyRunning }
+        isSyncing = true
+        defer { isSyncing = false }
+
         var peers = await pool.connectedPeers()
         guard !peers.isEmpty else {
             // Same distinction as `PeerPool.syncHeaders`: since transport
@@ -736,6 +801,11 @@ public actor FilterSync {
     /// The height map is built per chunk rather than per batch, so a filter
     /// for some other block of the same batch is a mismatch here instead of an
     /// early delivery — a chunk is answered by the chunk that was asked for.
+    ///
+    /// The chunk's byte bound is what makes the message count a memory bound
+    /// too. Everything below runs after `requestMany` returns, so until then
+    /// the only thing standing between a hostile peer and `count` maximum-size
+    /// messages is the bound handed to it.
     private func scanChunk(chunkStart: UInt32, chunkStop: UInt32, peer: PeerConnection,
                            watchScripts: [Data],
                            filterHeaders: [String: String],
@@ -746,9 +816,23 @@ public actor FilterSync {
             throw FilterSyncError.badPeerResponse("missing header at \(chunkStop)")
         }
         let count = Int(chunkStop - chunkStart + 1)
-        let responses = try await peer.requestMany(
-            .getcfilters(GetCFiltersRequest(startHeight: chunkStart, stopHash: stopHash)),
-            expecting: "cfilter", count: count, timeout: Self.chunkTimeout(filters: count))
+        let responses: [PeerMessage]
+        do {
+            responses = try await peer.requestMany(
+                .getcfilters(GetCFiltersRequest(startHeight: chunkStart, stopHash: stopHash)),
+                expecting: "cfilter", count: count,
+                maxTotalBytes: Self.chunkByteBound(filters: count),
+                timeout: Self.chunkTimeout(filters: count))
+        } catch let error as PeerError where !error.isTransport {
+            // A burst past its byte bound is a data fault, and is judged like
+            // every other one here: the peer is dropped for the session
+            // rather than cooled off. Nothing was applied — a chunk's filters
+            // are matched only after the whole chunk has arrived — so the
+            // batch fails having changed nothing, the same as a filter that
+            // does not reproduce its header.
+            await pool.misbehaving(peer, reason: error.localizedDescription)
+            throw error
+        }
 
         var heightByHash: [Data: UInt32] = [:]
         for height in chunkStart ... chunkStop {

@@ -95,6 +95,41 @@ struct FileProtectionTests {
         #expect(try Self.protectionClass(of: url) == Self.named, "after an append")
     }
 
+    /// The other half of that: a header file this build did not write.
+    ///
+    /// A file created before the class was named — by an older build, or by a
+    /// restore that put it there — has whatever class it inherited, and the
+    /// append path opens it and writes into it rather than replacing it, so
+    /// no later save ever names one. A synced wallet only appends, so the
+    /// weaker class was permanent. Loading the chain is where it is named.
+    ///
+    /// The marker class is re-applied to the file itself here, which is what
+    /// makes this different from the case above: there, the full save had
+    /// already named the class the append inherits.
+    @Test("a header file created without the class is migrated on load, and the append keeps it")
+    func headerFileMigratesItsProtectionClass() async throws {
+        let url = try Self.markedFileURL("headers.dat")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let synthetic = makeSyntheticChain(length: 3, watchHeight: 1)
+        let first = try HeaderChain(params: synthetic.params, storageURL: url)
+        _ = try await first.connect([synthetic.blocks[1].header])
+
+        // The pre-upgrade shape: a real header file carrying a class nothing
+        // in this library asks for.
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete],
+                                              ofItemAtPath: url.path)
+        try #require(Self.protectionClass(of: url) == Self.marker)
+
+        // Reopening loads it, and the next batch takes the append path —
+        // the path that writes into the file instead of replacing it.
+        let reopened = try HeaderChain(params: synthetic.params, storageURL: url)
+        #expect(try Self.protectionClass(of: url) == Self.named, "named on load")
+        #expect(try await reopened.connect([synthetic.blocks[2].header]).appended == 1)
+        #expect(try Self.protectionClass(of: url) == Self.named, "and kept by the append")
+        #expect(await reopened.height == 2)
+    }
+
     @Test("the peers file is protected")
     func peersFile() async throws {
         let url = try Self.markedFileURL("peers.json")

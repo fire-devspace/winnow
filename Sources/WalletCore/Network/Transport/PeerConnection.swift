@@ -117,7 +117,13 @@ public actor PeerConnection {
     private struct PendingCollector {
         let command: String
         let expected: Int
+        /// Payload bytes this burst may total before it is refused, or nil
+        /// for a caller that does not bound it.
+        let maxTotalBytes: Int?
         var received: [PeerMessage]
+        /// Payload bytes accepted so far, counted as each message is framed
+        /// rather than after the burst is complete.
+        var receivedBytes: Int
         let continuation: CheckedContinuation<[PeerMessage], Error>
     }
 
@@ -372,7 +378,19 @@ public actor PeerConnection {
 
     /// Sends a request and collects `count` responses of one command
     /// (e.g. the `cfilter` burst answering `getcfilters`).
+    ///
+    /// `maxTotalBytes` bounds the whole burst, not one message of it. The
+    /// framer already refuses any single payload above
+    /// `MessageFramer.maxPayloadSize`, but a burst is `count` of those, and
+    /// nothing here looks at any of it until all of it has arrived: at the
+    /// filter chunk's `count` of 100 a peer could put 400 MB in memory before
+    /// the first byte was checked. The bound is counted as each message is
+    /// framed, so the burst fails on the message that crosses it rather than
+    /// after the last one, and the peer is torn down as a protocol violation
+    /// — which is what it is. Nil leaves a caller unbounded, which is what
+    /// every caller had before.
     public func requestMany(_ message: PeerMessage, expecting command: String, count: Int,
+                            maxTotalBytes: Int? = nil,
                             timeout: Duration = .seconds(60)) async throws -> [PeerMessage] {
         precondition(count > 0)
         // Same rule as `request`: a burst that timed out mid-delivery leaves
@@ -382,7 +400,8 @@ public actor PeerConnection {
         let id = UUID()
         scheduleTimeout(for: id, timeout: timeout)
         do {
-            async let collected = collect(id: id, command: command, count: count)
+            async let collected = collect(id: id, command: command, count: count,
+                                          maxTotalBytes: maxTotalBytes)
             try await send(message)
             let result = try await collected
             timeoutTasks.removeValue(forKey: id)?.cancel()
@@ -397,16 +416,42 @@ public actor PeerConnection {
     /// Registers a response collector; resolves once `count` messages of
     /// `command` have arrived (or the timeout from `requestMany` fires).
     /// Drains any matching backlog entries first.
-    private func collect(id: UUID, command: String, count: Int) async throws -> [PeerMessage] {
+    ///
+    /// Backlog entries count against `maxTotalBytes` like anything else. They
+    /// are messages this peer sent, and a burst assembled half from the
+    /// backlog would otherwise be bounded only by the half that arrived late.
+    private func collect(id: UUID, command: String, count: Int,
+                         maxTotalBytes: Int?) async throws -> [PeerMessage] {
         var received: [PeerMessage] = []
+        var receivedBytes = 0
         while received.count < count, let index = backlog.firstIndex(where: { $0.command == command }) {
-            received.append(backlog.remove(at: index))
+            let message = backlog.remove(at: index)
+            receivedBytes += message.payload.count
+            received.append(message)
+        }
+        if let maxTotalBytes, receivedBytes > maxTotalBytes {
+            let violation = Self.burstTooLarge(command: command, bytes: receivedBytes,
+                                               limit: maxTotalBytes)
+            teardown(error: violation)
+            throw violation
         }
         guard received.count < count else { return received }
         return try await withCheckedThrowingContinuation { continuation in
-            collectors[id] = PendingCollector(command: command, expected: count, received: received,
+            collectors[id] = PendingCollector(command: command, expected: count,
+                                              maxTotalBytes: maxTotalBytes, received: received,
+                                              receivedBytes: receivedBytes,
                                               continuation: continuation)
         }
+    }
+
+    /// The refusal a burst past its byte bound produces. A protocol
+    /// violation, not a transport failure: an honest peer answers a request
+    /// for `count` messages with `count` messages of a size the request
+    /// already implies, so exceeding the bound is the peer being unusable
+    /// rather than the link being slow — the distinction `isTransport` draws,
+    /// and the one that decides between a cooldown and a ban.
+    private static func burstTooLarge(command: String, bytes: Int, limit: Int) -> PeerError {
+        .protocolViolation("\(command) burst of \(bytes) bytes exceeds the \(limit)-byte bound")
     }
 
     /// Manual ping: sends a nonce and waits for any pong.
@@ -520,6 +565,7 @@ public actor PeerConnection {
                 framer.append(chunk)
                 while let (command, payload) = try framer.nextMessage() {
                     await handleInbound(command: command, payload: payload)
+                    if didTeardown { return }
                 }
             } catch {
                 teardown(error: error)
@@ -529,6 +575,7 @@ public actor PeerConnection {
     }
 
     private func handleInbound(command: String, payload: Data) async {
+        let payloadBytes = payload.count
         let message: PeerMessage
         do {
             message = try PeerMessage.decode(command: command, payload: payload)
@@ -562,6 +609,20 @@ public actor PeerConnection {
         }
         if let (id, collector) = collectors.first(where: { $0.value.command == command }) {
             var collector = collector
+            collector.receivedBytes += payloadBytes
+            if let limit = collector.maxTotalBytes, collector.receivedBytes > limit {
+                // Refused here, on the message that crossed the bound, so the
+                // rest of the burst is never read: the collector is resolved
+                // first and the connection torn down after, which fails every
+                // other waiter with the same violation.
+                collectors.removeValue(forKey: id)
+                timeoutTasks.removeValue(forKey: id)?.cancel()
+                let violation = Self.burstTooLarge(command: command,
+                                                   bytes: collector.receivedBytes, limit: limit)
+                collector.continuation.resume(throwing: violation)
+                teardown(error: violation)
+                return
+            }
             collector.received.append(message)
             if collector.received.count >= collector.expected {
                 collectors.removeValue(forKey: id)

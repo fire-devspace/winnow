@@ -148,6 +148,7 @@ public actor HeaderChain {
                     "could not read the header file: \(error.localizedDescription)")
             }
             try Self.checkStoredStart(loaded.baseHeight, headers: loaded.headers, wanted: checkpoint)
+            Self.nameProtectionClass(of: storageURL)
             headers = loaded.headers
             chainwork = loaded.chainwork
             heightByHash = loaded.heightByHash
@@ -472,6 +473,35 @@ public actor HeaderChain {
         persistedCount = headers.count
     }
 
+    /// Names the data protection class on a header file this build did not
+    /// write, so an append inherits it instead of keeping a weaker one.
+    ///
+    /// `persist` names the class on every full write, but `persistAppended`
+    /// opens the existing file and writes into it, and opening a file never
+    /// changes its attributes. A file created before the class was named —
+    /// or created under whatever class its directory hands out — therefore
+    /// kept that class for as long as the chain only ever grew, which after
+    /// the first sync is for good: the append path is the one a synced wallet
+    /// takes on every batch. Running once on load costs one attribute write
+    /// per launch and closes it.
+    ///
+    /// Best effort, deliberately. A platform that records no protection class
+    /// reports none here and is left alone, which is a no-op rather than a
+    /// throw; and failing to set a class must not stop a wallet from opening
+    /// headers it can already read.
+    private static func nameProtectionClass(of url: URL) {
+        let named = FileProtectionType.completeUntilFirstUserAuthentication
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let recorded = attributes[.protectionKey]
+        else { return }
+        // Foundation hands the attribute back as the bridged string on some
+        // platforms and as the wrapper on others; compare the raw value so
+        // neither shape reads as "different" and rewrites on every launch.
+        let current = (recorded as? String) ?? (recorded as? FileProtectionType)?.rawValue
+        guard let current, current != named.rawValue else { return }
+        try? FileManager.default.setAttributes([.protectionKey: named], ofItemAtPath: url.path)
+    }
+
     /// Writes only the headers appended since the last save.
     ///
     /// Rewriting the whole file on every batch is what made mainnet header
@@ -491,6 +521,10 @@ public actor HeaderChain {
     ///
     /// Falls back to a full rewrite whenever the file is not in the state this
     /// assumes — a different persisted count, or no file at all.
+    ///
+    /// It names no protection class, because it writes into a file that
+    /// already exists: either one `persist` created and named, or one
+    /// `nameProtectionClass` named when the chain was loaded.
     private func persistAppended(from oldCount: Int) throws {
         guard let storageURL else { return }
         guard oldCount == persistedCount, oldCount > 0,

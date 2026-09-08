@@ -403,6 +403,191 @@ struct FilterSyncTests {
         #expect(ragged.progress.nextScanHeight == 8)
     }
 
+    /// The chunk bounds messages; this bounds bytes. Nothing in a chunk is
+    /// looked at until all of it has arrived, so the message count alone caps
+    /// a hostile burst at `count` times the protocol maximum — 400 MB at the
+    /// default chunk size — before the first filter is checked.
+    ///
+    /// Asserted at the transport, where the bound lives: an honest burst of
+    /// the same three filters passes under a generous bound, and the same
+    /// request under a bound of one byte fails on the first message with a
+    /// protocol violation rather than sitting there until the timeout.
+    @Test("requestMany refuses a burst past its byte bound and drops the peer")
+    func requestManyBoundsTheBurstInBytes() async throws {
+        let synthetic = makeSyntheticChain(length: 3, watchHeight: 3)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let peer = PeerConnection(endpoint: await node.endpoint, params: synthetic.params)
+        try await peer.connect()
+        let request = PeerMessage.getcfilters(
+            GetCFiltersRequest(startHeight: 1, stopHash: synthetic.blocks[3].hash))
+
+        // Honest first, so the failure below cannot be the node refusing to
+        // serve: three filters, well under a bound a real chunk would use.
+        let honest = try await peer.requestMany(request, expecting: "cfilter", count: 3,
+                                                maxTotalBytes: FilterSync.chunkByteBound(filters: 3),
+                                                timeout: .seconds(30))
+        #expect(honest.count == 3)
+
+        var thrown: (any Error)?
+        do {
+            _ = try await peer.requestMany(request, expecting: "cfilter", count: 3,
+                                           maxTotalBytes: 1, timeout: .seconds(30))
+        } catch {
+            thrown = error
+        }
+        guard case let .protocolViolation(reason)? = thrown as? PeerError else {
+            Issue.record("expected a protocol violation, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("cfilter burst"))
+        // Torn down, not merely failed: the burst it was still sending must
+        // not go on filling memory after the request that bounded it is gone.
+        #expect(await !peer.isConnected)
+    }
+
+    /// The same bound one layer up, where a scan meets it: a peer answering
+    /// the chunk it was asked for, in the right count and the right shape,
+    /// with messages far larger than a filter can be.
+    ///
+    /// The padding keeps the commitments honest, so nothing the client
+    /// computes for itself contradicts this peer — the filters it sends would
+    /// fail their header check, but that check runs after the whole chunk has
+    /// arrived, which is precisely what the byte bound has to beat. Two
+    /// filters of 2 MB against a bound of two times
+    /// `maxFilterMessageBytes` means the second message crosses it and the
+    /// chunk never completes.
+    @Test("a peer whose filter chunk is too large is refused mid-burst and dropped for the session")
+    func oversizedFilterChunkIsRefused() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        // An honest node on the same chain and the same chunk size still
+        // scans it end to end: the bound refuses size, not chunking.
+        let honest = try await scanWholeChain(synthetic, filtersPerChunk: 2)
+        #expect(honest.progress.nextScanHeight == 7)
+        #expect(honest.matches.map(\.height) == [3])
+
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks,
+                                oversizedFilterBytes: 2_000_000)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let endpoint = await node.endpoint
+        let pool = PeerPool(params: synthetic.params, peerCount: 1, manualPeers: [endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("oversized-progress.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1,
+                                  filtersPerChunk: 2)
+
+        var thrown: (any Error)?
+        do {
+            try await sync.sync(watchScripts: [synthetic.watchScript]) { _ in }
+        } catch {
+            thrown = error
+        }
+        guard case let .protocolViolation(reason)? = thrown as? PeerError else {
+            Issue.record("expected a protocol violation, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("cfilter burst"))
+
+        // Judged as a data fault, like a filter that does not reproduce its
+        // header: dropped for the session rather than cooled off.
+        #expect(await pool.connectedPeers().isEmpty)
+        #expect(await pool.rejectionReason(endpoint)?.contains("cfilter burst") == true)
+        #expect(await pool.coolingEndpoints.isEmpty)
+
+        // And the batch changed nothing: no frontier moved, nothing was saved.
+        #expect(await sync.nextScanHeight == 1)
+        #expect(!FileManager.default.fileExists(atPath: progressFile.path))
+    }
+
+    /// Being an actor bounds what runs *at once*, not what interleaves: every
+    /// step of `sync` awaits the network or the caller's `onMatch`, and a
+    /// second call is free to run during those suspensions. Both passes then
+    /// share one pool and one progress record, and a peer's reply goes to
+    /// whichever collector expects the command first.
+    ///
+    /// The first run is parked inside `onMatch` — one of exactly those
+    /// suspensions — so the second call lands in the window that used to
+    /// interleave. It has to be refused there and then, having done nothing,
+    /// and the run it collided with has to finish as though it had never
+    /// happened: the same matches and the same saved progress a single pass
+    /// over this chain leaves.
+    @Test("a second sync during the first is refused, and the first is untouched")
+    func concurrentSyncIsRefused() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let expected = try await scanWholeChain(synthetic, filtersPerChunk: 2)
+
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("concurrent-progress.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1,
+                                  filtersPerChunk: 2)
+
+        let gate = SyncGate()
+        let collector = MatchCollector()
+        let watchScript = synthetic.watchScript
+        let first = Task { () -> Result<Void, any Error> in
+            let outcome: Result<Void, any Error>
+            do {
+                try await sync.sync(watchScripts: [watchScript]) { match in
+                    collector.add(match)
+                    await gate.reachMatch()
+                    await gate.waitForRelease()
+                }
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+            // A run that ended without ever matching opens the gate too, so a
+            // broken first pass fails this test on an assertion instead of
+            // parking it on a wait that will never be resumed.
+            await gate.reachMatch()
+            return outcome
+        }
+        await gate.waitForMatch()
+
+        var thrown: (any Error)?
+        do {
+            try await sync.sync(watchScripts: [synthetic.watchScript]) { _ in
+                Issue.record("the refused sync must not scan anything")
+            }
+        } catch {
+            thrown = error
+        }
+        #expect(thrown as? FilterSyncError == .syncAlreadyRunning)
+        // Refused before any side effect: the frontier is still where the
+        // first run left it, mid-batch and unsaved.
+        #expect(await sync.nextScanHeight == 1)
+        #expect(!FileManager.default.fileExists(atPath: progressFile.path))
+
+        await gate.release()
+        try await first.value.get()
+        #expect(collector.matches.map(\.height) == expected.matches.map(\.height))
+        #expect(await sync.nextScanHeight == 7)
+        let saved = try JSONDecoder().decode(FilterSync.Progress.self,
+                                             from: Data(contentsOf: progressFile))
+        #expect(saved == expected.progress)
+
+        // And the flag is cleared on the way out, so the next scan runs.
+        try await sync.sync(watchScripts: [synthetic.watchScript]) { _ in }
+    }
+
     @Test("the scan ceiling counts from the frontier, stops at the tip, and never traps")
     func scanCeilingArithmetic() {
         #expect(FilterSync.scanCeiling(frontier: 100, maxBlocks: 10, tip: 1_000) == 109)
@@ -1045,5 +1230,38 @@ struct FilterSyncTests {
         let message = CFilterMessage(blockHash: vector.blockHash, filter: vector.filter)
         let decoded = try PeerMessage.decode(command: "cfilter", payload: message.serialized)
         #expect(decoded == .cfilter(message))
+    }
+}
+
+/// Parks a sync inside its `onMatch` until the test lets it go, so a second
+/// call can be made while the first is genuinely suspended mid-run. Polling
+/// for that window would make the test a race; this makes it an ordering.
+private actor SyncGate {
+    private var matched = false
+    private var matchWaiter: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    /// Called from `onMatch`: the run has reached the parking spot.
+    func reachMatch() {
+        matched = true
+        matchWaiter?.resume()
+        matchWaiter = nil
+    }
+
+    func waitForMatch() async {
+        guard !matched else { return }
+        await withCheckedContinuation { matchWaiter = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
     }
 }

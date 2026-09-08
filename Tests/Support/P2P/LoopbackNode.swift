@@ -24,6 +24,14 @@ public actor LoopbackNode {
     public let withholdHeaders: Bool
     /// When set, the filter served for this height is bit-flipped (lying node).
     public let corruptFilterAtHeight: Int?
+    /// When set, every cfilter is padded out to this many bytes while the
+    /// commitments the node announces stay honest: a peer that answers the
+    /// chunk it was asked for, in the right shape and the right count, with
+    /// messages far larger than a filter can be. Nothing the client verifies
+    /// runs until the whole chunk has arrived, so only the request's byte
+    /// bound can refuse it — and it has to do so mid-burst, which is what
+    /// makes this different from a corrupt filter.
+    public let oversizedFilterBytes: Int?
     /// Serves filter *commitments* that disagree with the honest chain while
     /// keeping block headers honest — a peer lying about BIP157 filter
     /// headers rather than about the chain itself. This is the shape the
@@ -93,7 +101,7 @@ public actor LoopbackNode {
 
     public init(params: NetworkParams, services: UInt64 = PeerConnection.nodeCompactFilters,
          chain: [Block] = [], withholdHeaders: Bool = false,
-         corruptFilterAtHeight: Int? = nil,
+         corruptFilterAtHeight: Int? = nil, oversizedFilterBytes: Int? = nil,
          lieAboutFilterCommitments: Bool = false, lieSalt: UInt8 = 0xFF,
          cfcheckptStopHashOverride: Data? = nil, cfcheckptLieAtHeight: Int? = nil,
          cfcheckptEntryLimit: Int? = nil, cfcheckptExtraEntries: Int = 0,
@@ -107,6 +115,7 @@ public actor LoopbackNode {
         self.chain = chain
         self.withholdHeaders = withholdHeaders
         self.corruptFilterAtHeight = corruptFilterAtHeight
+        self.oversizedFilterBytes = oversizedFilterBytes
         self.lieAboutFilterCommitments = lieAboutFilterCommitments
         self.lieSalt = lieSalt
         self.cfcheckptStopHashOverride = cfcheckptStopHashOverride
@@ -407,6 +416,12 @@ public actor LoopbackNode {
                 var filter = filters[height]
                 if height == corruptFilterAtHeight, !filter.isEmpty {
                     filter[filter.count - 1] ^= 0xFF // serve a lying filter
+                }
+                if let oversizedFilterBytes, filter.count < oversizedFilterBytes {
+                    // Padding, not a different filter: the bytes after the
+                    // real ones are never read, because the client refuses
+                    // the burst on its size before it verifies anything.
+                    filter.append(Data(repeating: 0, count: oversizedFilterBytes - filter.count))
                 }
                 try await send(.cfilter(CFilterMessage(blockHash: chain[height].hash,
                                                        filter: filter)))
