@@ -97,7 +97,10 @@ public struct BlockMatch: Sendable, Equatable {
 /// 6. Progress (next scan height + pinned filter headers) is persisted after
 ///    every batch whose boundary comparison passed. A batch that fails it
 ///    delivers no match and persists nothing, so no store ever carries
-///    effects from a batch whose commitments were refused.
+///    effects from a batch whose commitments were refused. What is written is
+///    pruned to the headers a later check can still ask for: every checkpoint
+///    boundary, and the run of recent heights a reorg could rewind into
+///    (`prunedFilterHeaders`).
 public actor FilterSync {
     public enum PersistenceState: Equatable, Sendable {
         case disabled
@@ -296,8 +299,11 @@ public actor FilterSync {
                                   filterHeaders: proposedHeaders,
                                   onMatch: onMatch)
             var candidate = progress
-            candidate.filterHeaders = proposedHeaders
             candidate.nextScanHeight = batchStop + 1
+            // The whole batch was needed to verify the batch; only the part a
+            // later check can still ask for is kept.
+            candidate.filterHeaders = Self.prunedFilterHeaders(
+                proposedHeaders, frontier: candidate.nextScanHeight)
             try persist(candidate)
             progress = candidate
         }
@@ -842,6 +848,51 @@ public actor FilterSync {
         guard candidate != progress else { return }
         try persist(candidate)
         progress = candidate
+    }
+
+    /// The pinned filter headers a frontier can still be asked for, and
+    /// nothing else. Sync prunes to this before every persist, so the store
+    /// stops growing with the chain: a genesis-rooted mainnet wallet keeps a
+    /// few thousand headers instead of one per block scanned, and the file is
+    /// re-encoded and rewritten at that size for the rest of the sync.
+    ///
+    /// Three classes are kept, and the reason for each is a check that would
+    /// otherwise stop running:
+    ///
+    /// - Every checkpoint boundary, forever. `checkPinnedBoundaries` compares
+    ///   each one against `cfcheckpt` on every sync, and it compares only the
+    ///   heights that are pinned — dropping a boundary would retire a
+    ///   comparison silently rather than fail it. They cost one header per
+    ///   1,000 blocks.
+    /// - The anchor at `frontier - 1`, which the next batch's
+    ///   `anchorPreviousHeader` requires to refuse a peer whose announced
+    ///   chain does not continue ours.
+    /// - Every height back to the boundary below the last one, so a reorg
+    ///   rolled back into that range still finds a pinned anchor at the fork
+    ///   instead of taking a peer's word for it. That run is one to two whole
+    ///   checkpoint intervals — a thousand blocks at its shallowest, far past
+    ///   the depth of any reorg Bitcoin has recorded. Below it the store
+    ///   re-anchors the way a fresh install does, and the boundaries are what
+    ///   keep that bounded: a fabricated chain is compared against a pinned
+    ///   boundary within the next thousand blocks.
+    ///
+    /// Fails closed on the anchor: if `frontier - 1` is not pinned, nothing is
+    /// pruned at all. A store already missing its anchor is not one to prune
+    /// further — the pruning would be reasoning about a chain it cannot verify
+    /// it has, which is the one state this must never produce.
+    ///
+    /// Pure, so the policy is testable without a network.
+    static func prunedFilterHeaders(_ headers: [String: String],
+                                    frontier: UInt32) -> [String: String] {
+        guard frontier > 0 else { return headers }
+        let anchor = frontier - 1
+        guard headers[String(anchor)] != nil else { return headers }
+        let lastBoundary = (anchor / checkpointInterval) * checkpointInterval
+        let keepFrom = lastBoundary < checkpointInterval ? 0 : lastBoundary - checkpointInterval
+        return headers.filter { key, _ in
+            guard let height = UInt32(key) else { return false }
+            return height >= keepFrom || (height > 0 && height % checkpointInterval == 0)
+        }
     }
 
     /// Test seam: sets progress directly so a rollback can be exercised without
