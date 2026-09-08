@@ -5,6 +5,9 @@
 FilterSync asks peers for compact filters and retrieves matching blocks.
 It lets the wallet find its confirmed payments without sending its addresses
 to a remote indexer. Persisted progress and reorg rollback keep recovery usable.
+A batch's matches and progress are committed only after the checkpoint headers
+that batch pins agree with the peers' cfcheckpt answer, so a refused batch
+leaves every store where it was.
 
 [The app](../../../WinnowApp/AppModel.swift) coordinates scanning with
 [wallet state](../../Wallet/README.md),

@@ -840,7 +840,10 @@ final class AppModel {
             status.lastSyncError = nil
         } catch {
             // A later batch may have thrown after earlier ones persisted
-            // in FilterSync. Keep WalletState from lagging that progress.
+            // in FilterSync. Those earlier batches each passed their own
+            // checkpoint comparison before anything above ran for them, so
+            // their progress is verified and worth keeping — the batch that
+            // threw applied nothing. Keep WalletState from lagging it.
             try? await wallet.recordScanHeight(await filters.nextScanHeight)
             status.lastSyncError = error.localizedDescription
         }
