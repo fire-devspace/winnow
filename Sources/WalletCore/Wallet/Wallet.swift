@@ -614,7 +614,9 @@ public actor Wallet {
         try keyStore.store(.mnemonic(mnemonic), for: wallet.id)
         do {
             if let storageURL {
-                try JSONEncoder().encode(state).write(to: storageURL, options: .atomic)
+                let data = try JSONEncoder().encode(state)
+                try data.write(to: storageURL,
+                               options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
         } catch {
             // Wallet creation is one logical operation: do not leave a
@@ -1655,6 +1657,7 @@ public actor Wallet {
     private func persist(_ candidate: WalletState) throws {
         guard let storageURL else { return }
         let data = try JSONEncoder().encode(candidate)
-        try data.write(to: storageURL, options: .atomic)
+        try data.write(to: storageURL,
+                       options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }
