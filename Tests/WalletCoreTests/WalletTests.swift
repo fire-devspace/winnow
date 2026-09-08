@@ -205,6 +205,39 @@ struct WalletTests {
         #expect(await wallet.history.contains { $0.txid == prepared.built.transaction.txid })
     }
 
+    @Test("signing derives the master key once per send, and every input still verifies")
+    func signDerivesMasterOncePerSend() async throws {
+        let keyStore = CountingKeyStore()
+        let (wallet, _) = try await fundedWallet(keyStore: keyStore, coins: [
+            (.receive, 0, 100_000, 100), (.receive, 1, 60_000, 101), (.receive, 2, 40_000, 102),
+        ])
+        let loadsBefore = keyStore.loads
+
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 180_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+
+        // Three inputs, one KeyStore read: the master key is derived for the
+        // signing operation, not once for each input it signs.
+        #expect(prepared.built.transaction.inputs.count == 3)
+        #expect(keyStore.loads - loadsBefore == 1)
+
+        // The shared master still yields each input's own key: every witness
+        // verifies against the output key its scriptPubKey commits to.
+        let signed = prepared.built.transaction
+        let spentOutputs = try prepared.built.psbt.spentOutputs()
+        for index in signed.inputs.indices {
+            let sighash = try SighashBIP341.sighash(tx: signed, inputIndex: index,
+                                                    spentOutputs: spentOutputs, hashType: .default)
+            let outputKey = P256K.Schnorr.XonlyKey(
+                dataRepresentation: spentOutputs[index].scriptPubKey.suffix(32))
+            let signature = try P256K.Schnorr.SchnorrSignature(
+                dataRepresentation: signed.inputs[index].witness[0])
+            var message = [UInt8](sighash)
+            #expect(outputKey.isValid(signature, for: &message), "input \(index) must verify")
+        }
+    }
+
     @Test("fee bump keeps inputs/payments, satisfies BIP125 fees, signs, and persists")
     func feeBump() async throws {
         let url = tempFileURL("wallet.json")
