@@ -144,7 +144,8 @@ public struct Vault: Sendable {
                     throw VaultError.invalidDescriptor(
                         "this vault nests an aggregated key where a single cosigner is required")
                 }
-                guard case .extended = single.base, single.origin != nil else {
+                guard case let .extended(key, _) = single.base,
+                      key.privateKey == nil, single.origin != nil else {
                     throw VaultError.invalidDescriptor(
                         "every cosigner must be an extended public key carrying its origin")
                 }
@@ -153,7 +154,8 @@ public struct Vault: Sendable {
         case let .muSig2(participants, derivation):
             try requireSuffix(derivation, .scriptPath)
             for participant in participants {
-                guard case .extended = participant.base, participant.origin != nil else {
+                guard case let .extended(key, _) = participant.base,
+                      key.privateKey == nil, participant.origin != nil else {
                     throw VaultError.invalidDescriptor(
                         "every participant must be an extended public key carrying its origin")
                 }

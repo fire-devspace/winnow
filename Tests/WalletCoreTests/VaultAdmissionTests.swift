@@ -278,6 +278,24 @@ struct VaultAdmissionTests {
         #expect(draft.cosigners.count == 1)
     }
 
+    @Test("restored signing accounts refuse private cosigner keys", arguments: [false, true])
+    func restoredPrivateKeyRefused(muSig2: Bool) throws {
+        let masters = try TestVaults.masters()
+        let account = try masters[0].derived(path: "m/86'/1'/0'")
+        let keys = try masters.prefix(2).map { try TestVaults.keyExpression(master: $0) }
+        let publicText = muSig2
+            ? "tr(musig(\(keys.map { String($0.dropLast("/<0;1>/*".count)) }.joined(separator: ",")))/<0;1>/*)"
+            : "tr(\(Self.nums()),sortedmulti_a(2,\(keys.joined(separator: ","))))"
+        _ = try Vault(publicText, network: .signet)
+        let privateText = publicText.replacingOccurrences(
+            of: account.neutered.serialized(network: .testnet),
+            with: account.serialized(network: .testnet))
+        #expect(privateText != publicText)
+        #expect(throws: VaultError.self) {
+            _ = try Vault(privateText, network: .signet)
+        }
+    }
+
     // MARK: - Vault signer independence
     //
     // `Vault.multiADescriptor` refuses a repeated cosigner while *building* a
