@@ -238,6 +238,41 @@ struct WalletTests {
         }
     }
 
+    @Test("a signed transaction past the standard size limit is refused after signing")
+    func standardSizeCeiling() throws {
+        let output = Transaction.Output(value: 100_000, scriptPubKey: TestScripts.p2trDestination)
+        func signed(inputs: Int) -> Transaction {
+            // A P2TR key-path witness: one 64-byte SIGHASH_DEFAULT signature.
+            Transaction(version: 2, inputs: (0 ..< inputs).map {
+                Transaction.Input(
+                    previousOutput: Transaction.Outpoint(txid: Data(repeating: 0x11, count: 32),
+                                                         vout: UInt32($0)),
+                    scriptSig: Data(), sequence: TransactionBuilder.defaultSequence,
+                    witness: [Data(repeating: 0x22, count: 64)])
+            }, outputs: [output], locktime: 0)
+        }
+        var pastCeiling = 1
+        while TransactionBuilder.signedVSize(inputCount: pastCeiling, outputs: [output])
+            <= TransactionBuilder.maximumStandardVSize { pastCeiling += 1 }
+
+        // The guard measures the signed bytes where coin selection estimates
+        // them. For the key-path spends this wallet makes the two agree
+        // exactly, which is why the boundary is built here rather than sent
+        // through buildSend — selection refuses it one step earlier.
+        let fits = signed(inputs: pastCeiling - 1)
+        #expect(TransactionBuilder.vsize(of: fits)
+            == TransactionBuilder.signedVSize(inputCount: pastCeiling - 1, outputs: [output]))
+        #expect(throws: Never.self) { try Wallet.checkStandardSize(fits) }
+
+        let over = signed(inputs: pastCeiling)
+        let vsize = TransactionBuilder.vsize(of: over)
+        #expect(vsize > TransactionBuilder.maximumStandardVSize)
+        #expect(throws: WalletError.transactionTooLarge(
+            vsize: vsize, limit: TransactionBuilder.maximumStandardVSize)) {
+            try Wallet.checkStandardSize(over)
+        }
+    }
+
     @Test("fee bump keeps inputs/payments, satisfies BIP125 fees, signs, and persists")
     func feeBump() async throws {
         let url = tempFileURL("wallet.json")

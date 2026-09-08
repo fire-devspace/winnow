@@ -10,6 +10,10 @@ public enum WalletError: Error, Equatable, LocalizedError {
     case noPayments
     /// The built transaction lost its change output (should not happen).
     case changeOutputMissing
+    /// The signed transaction is past Bitcoin Core's standard size limit, so
+    /// no peer would relay it. Coin selection refuses this earlier, on its
+    /// estimate; this measures the bytes that were actually signed.
+    case transactionTooLarge(vsize: Int, limit: Int)
     /// A seed-bearing export was requested, but the secret is an xprv (or
     /// missing) rather than a BIP39 mnemonic. Refusing is safer than emitting
     /// a bundle that looks spendable and is not.
@@ -45,6 +49,8 @@ public enum WalletError: Error, Equatable, LocalizedError {
             "Nothing to send."
         case .changeOutputMissing:
             "The built transaction lost its change output."
+        case let .transactionTooLarge(vsize, limit):
+            "The signed transaction is \(vsize) vbytes, above the \(limit)-vbyte relay maximum."
         case .mnemonicUnavailable:
             "This wallet has no recovery phrase to export — it was imported from an extended key, not a BIP39 mnemonic."
         case .exportWhilePending:
@@ -1143,12 +1149,31 @@ public actor Wallet {
         let (psbt, signed) = try sign(transaction: tx, selected: selection.selected,
                                       changeIndex: changeOutputIndex.map { _ in changeIndex },
                                       changeOutputIndex: changeOutputIndex)
+        try Self.checkStandardSize(signed)
 
         let built = BuiltTransaction(psbt: psbt, transaction: signed, fee: selection.fee,
                                      changeAmount: selection.changeAmount)
         return PreparedSend(built: built, selected: selection.selected, change: change,
                             changeIndex: changeIndex,
                             changeOutputIndex: changeOutputIndex.map(UInt32.init), fee: selection.fee)
+    }
+
+    /// Refuses a transaction past Bitcoin Core's standard size limit, measured
+    /// on the signed bytes rather than on the estimate coin selection used.
+    ///
+    /// `CoinSelection.select` applies the same ceiling to its estimate, which
+    /// is where a person meets this rule and where it costs no signature. This
+    /// is the invariant on the way out: the broadcaster announces and returns
+    /// whether or not a peer took the transaction, and `commit` then marks
+    /// every selected coin spent, so a transaction nothing will relay strands
+    /// those coins in a locally-spent, on-chain-unspent limbo that
+    /// forward-only scanning cannot repair.
+    static func checkStandardSize(_ transaction: Transaction) throws {
+        let vsize = TransactionBuilder.vsize(of: transaction)
+        guard vsize <= TransactionBuilder.maximumStandardVSize else {
+            throw WalletError.transactionTooLarge(
+                vsize: vsize, limit: TransactionBuilder.maximumStandardVSize)
+        }
     }
 
     /// Commits a prepared send to wallet state: the spent UTXOs leave the

@@ -7,6 +7,9 @@ public enum CoinSelectionError: Error, Equatable {
     case invalidFeeRate(Double)
     /// A payment output is below the dust relay threshold and would not relay.
     case dustOutput(value: Int64, threshold: Int64)
+    /// The selection needs more inputs than a standard-sized transaction can
+    /// carry, so the transaction spending them would not relay either.
+    case transactionTooLarge(vsize: Int, limit: Int)
     /// A payment or stored coin is outside Bitcoin's monetary range.
     case invalidAmount(Int64)
     /// The same outpoint appeared more than once in the spendable set.
@@ -30,6 +33,9 @@ extension CoinSelectionError: LocalizedError {
         case let .invalidFeeRate(rate): "Invalid fee rate: \(rate) sat/vB."
         case let .dustOutput(value, threshold):
             "The \(value)-sat payment is below the \(threshold)-sat relay minimum."
+        case let .transactionTooLarge(vsize, limit):
+            "Spending these coins takes a \(vsize)-vbyte transaction, above the \(limit)-vbyte relay "
+                + "maximum. Send a smaller amount, or combine coins into fewer, larger ones first."
         case let .invalidAmount(amount): "Invalid Bitcoin amount: \(amount) sats."
         case .duplicateUTXO: "The wallet contains the same coin more than once. Rescan before spending."
         case .invalidOutpoint: "A wallet coin has an invalid transaction ID. Rescan before spending."
@@ -132,7 +138,11 @@ public enum CoinSelection {
         }
 
         let change = total - target - feeWithChange
-        if change >= dustThreshold(scriptPubKey: changeScriptPubKey) {
+        let withChange = change >= dustThreshold(scriptPubKey: changeScriptPubKey)
+        try checkStandardSize(inputCount: selected.count,
+                              outputs: withChange ? paymentOutputs + [changeOutput] : paymentOutputs,
+                              witnessBytesPerInput: witnessBytesPerInput)
+        if withChange {
             return Selection(selected: selected, fee: feeWithChange, changeAmount: change)
         }
         // Change is dust (or exactly zero): no change output; the remainder
@@ -183,6 +193,24 @@ public enum CoinSelection {
             target = sum
         }
         return target
+    }
+
+    /// Refuses a selection whose transaction would exceed Bitcoin Core's
+    /// standard size limit — no peer relays one, so signing it only strands
+    /// the coins it spends. Sized for the shape the caller will build, which
+    /// is why it runs after the change decision rather than inside the loop.
+    ///
+    /// It runs after the insufficient-funds guard too: a wallet that cannot
+    /// cover the payment at all is short of money, not short of room, and
+    /// should be told so.
+    private static func checkStandardSize(inputCount: Int, outputs: [Transaction.Output],
+                                          witnessBytesPerInput: Int) throws {
+        let vsize = TransactionBuilder.signedVSize(inputCount: inputCount, outputs: outputs,
+                                                   witnessBytesPerInput: witnessBytesPerInput)
+        guard vsize <= TransactionBuilder.maximumStandardVSize else {
+            throw CoinSelectionError.transactionTooLarge(
+                vsize: vsize, limit: TransactionBuilder.maximumStandardVSize)
+        }
     }
 
     /// Every candidate coin is well-formed and no outpoint repeats.
