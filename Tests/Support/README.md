@@ -25,7 +25,7 @@ configuration and under Xcode.
 
 | File | Contents |
 | --- | --- |
-| `InMemoryKeyStore.swift` | Test-only secret storage, outside the production Keychain implementation |
+| `InMemoryKeyStore.swift` | Test-only secret storage, outside the production Keychain implementation, plus `CountingKeyStore` (the same store, counting its `load` calls) |
 | `Vectors.swift` | `Vectors.data/string/json/decode` (each target passes its own `Bundle.module`), `VectorError`, `ttTags`, the shared BIP158 and BIP387/BIP390 vector loaders |
 | `TempFiles.swift` | `TempDir` (removed on deinit) and `tempFileURL(_:)` under one per-process root |
 | `SeededRandom.swift` | `SeededRandom` (SplitMix64) with the `int`/`count`/`below`/`pick`/`bytes` draws |

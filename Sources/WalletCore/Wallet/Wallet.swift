@@ -1434,13 +1434,19 @@ public actor Wallet {
                                                        originPath: origin.path))
         }
         var psbt = try PSBT(unsignedTx: transaction, inputs: inputInfo, outputs: outputInfo)
+        // One KeyStore read and one seed derivation for the whole operation,
+        // handed down to each input the way the vault entries take `master`
+        // (`Vault.partialSign`), rather than a PBKDF2 run per input. The key
+        // still lives no longer than this call.
+        let master = try masterKey()
         for (index, utxo) in selected.enumerated() {
             // BIP86 key-path spend: the output key is the account key tweaked
             // by the coin's own chain/index coordinates. Both sends and
             // replacements come through here.
             try psbt.signKeyPath(
                 input: index,
-                tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index))
+                tweakedPrivateKey: tweakedPrivateKey(master: master, chain: utxo.chain,
+                                                     index: utxo.index))
         }
         try psbt.finalize()
         return (psbt, try psbt.extractedTransaction())
@@ -1465,8 +1471,8 @@ public actor Wallet {
         return origin
     }
 
-    /// The master key from the KeyStore — loaded just for the duration of a
-    /// derivation or signing call, never held in wallet state.
+    /// The master key from the KeyStore — loaded just for the duration of one
+    /// signing operation, never held in wallet state.
     private func masterKey() throws -> HDKey {
         switch try keyStore.load(walletID: id) {
         case let .mnemonic(words):
@@ -1476,11 +1482,11 @@ public actor Wallet {
         }
     }
 
-    /// BIP86 tweaked private key for one of our addresses (key-path spend).
-    /// The secret is loaded from the KeyStore just for this call.
-    private func tweakedPrivateKey(chain: AddressChain, index: UInt32) throws -> Data {
+    /// BIP86 tweaked private key for one of our addresses (key-path spend),
+    /// derived from the `master` its caller loaded for this signing operation.
+    private func tweakedPrivateKey(master: HDKey, chain: AddressChain, index: UInt32) throws -> Data {
         let originPath = Self.originUnchecked(of: descriptor).path
-        var key = try masterKey()
+        var key = master
         for step in originPath { key = try key.child(at: step) }
         key = try key.child(at: UInt32(chain.rawValue)).child(at: index)
         guard let secret = key.privateKey else {
