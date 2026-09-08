@@ -44,6 +44,41 @@ a{color:var(--seed);text-decoration:none}
 a:hover{text-decoration:underline;text-underline-offset:3px}
 :focus-visible{outline:2px solid var(--mark);outline-offset:3px;border-radius:5px}
 
+/* Two short signing explanations on the homepage. */
+.signing-choices .lede{margin:0 0 .3rem}
+.signing-choices h3{margin:.3rem 0 .7rem}
+.signing-demo{position:relative;margin-top:1.2rem;background:var(--paper-2);border-radius:1rem;padding:.8rem .4rem 2.2rem}
+.signing-demo svg{display:block;width:100%;height:auto;overflow:visible}
+.signing-wire,.signing-flow{fill:none;stroke:var(--rule-2);stroke-width:2}
+.signing-flow{stroke:var(--good);stroke-width:3;stroke-dasharray:1;stroke-dashoffset:1}
+.signing-node{fill:var(--paper);stroke:var(--rule-2);stroke-width:2}
+.signing-icon{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.signing-label{fill:var(--ink-2);font:15px var(--sans);text-anchor:middle}
+.signing-person.absent .signing-node{stroke-dasharray:4 4}
+.signing-person.absent .signing-icon{stroke:var(--ink-3)}
+.signing-check{opacity:0}
+.signing-check circle{fill:var(--good)}
+.signing-check path{fill:none;stroke:var(--paper);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.signing-payment rect{fill:var(--paper);stroke:var(--rule-2);stroke-width:2}
+.signing-payment text{fill:var(--ink-2);font:600 16px var(--sans);text-anchor:middle}
+.signing-payment path{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.signing-approved{opacity:0}
+.signing-approved path{stroke:var(--good);stroke-width:3}
+.signing-approved text{fill:var(--good)}
+.signing-demo:not([data-step="0"]) .signing-flow.first,
+.signing-demo:is([data-step="2"],[data-step="3"]) .signing-flow.second{stroke-dashoffset:0}
+.signing-demo:not([data-step="0"]) .signing-person.first .signing-check,
+.signing-demo:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-check,
+.signing-demo[data-step="3"] .signing-approved{opacity:1}
+.signing-demo:not([data-step="0"]) .signing-person.first .signing-node,
+.signing-demo:is([data-step="2"],[data-step="3"]) .signing-person.second .signing-node,
+.signing-demo[data-step="3"] .signing-payment rect{stroke:var(--good)}
+.signing-demo[data-step="3"] .signing-locked{opacity:0}
+.signing-demo.is-playing .signing-flow{transition:stroke-dashoffset .65s ease}
+.signing-demo.is-playing :is(.signing-check,.signing-locked,.signing-approved){transition:opacity .2s ease}
+.signing-replay{position:absolute;bottom:.2rem;right:.8rem;min-height:44px;border:0;background:none;color:var(--seed);font:inherit;font-size:.85rem;cursor:pointer}
+.signing-choices .signing-caption{font-weight:600;color:var(--ink);margin:.85rem 0 .35rem}
+.signing-choices .signing-note{font-size:.85rem;margin:.35rem 0}
 /* ── page chrome ─────────────────────────────────────────── */
 
 .topbar{

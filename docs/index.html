@@ -7,7 +7,7 @@
 <title>A Bitcoin wallet for your iPhone. — Winnow</title>
 <meta name="description" content="Send and receive bitcoin, keep track of payments, and save with other people.">
 <link rel="canonical" href="https://winnowwallet.com/">
-<link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="site.css"><script src="signing.js" defer></script>
 <style>
 main{max-width:64rem} .journey{display:flow-root;padding-bottom:1.2rem}
 .app-shot{float:right;width:min(34%,220px);height:auto;margin:0 0 1.5rem 2rem;border:1px solid var(--rule);border-radius:1.4rem}
@@ -40,7 +40,27 @@ dialog a{overflow-wrap:anywhere}
 <p class="lede">Send and receive bitcoin, keep track of payments, and save with other people.</p>
 <p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Try it on TestFlight</a></p>
 <p>Your wallet connects directly to the Bitcoin network. Your private keys stay on your phone unless you choose to export them.</p>
-<section id="signing-choices"><h2>Choose who can spend</h2><div class="signing-choices"><article><p class="lede">Shared savings</p><h3>Save with other people</h3><p>Choose who shares the wallet and how many approvals a payment needs. With two approvals out of three, one person can be away and the other two can still pay.</p><a href="/#savings">See how it works</a></article><article><p class="lede">Advanced</p><h3>Require a second key</h3><p>Require both your phone’s key and a second key to approve a payment. We haven’t tested hardware wallets yet.</p><a href="/advanced#second-device">See how it works</a></article></div><p><a href="/vaults">How shared wallets work</a></p></section>
+<section id="signing-choices"><h2>Choose who can spend</h2><div class="signing-choices"><article><p class="lede">Shared savings</p><h3>Save with other people</h3><div class="signing-demo" data-step="3">
+<svg viewBox="0 0 360 230" role="img" aria-labelledby="shared-animation-title shared-animation-description">
+<title id="shared-animation-title">Two of three approvals</title>
+<desc id="shared-animation-description">Two of three people approve a payment. The third person is away, but the payment can still go through.</desc>
+<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">Alex</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label" y="52">Away</text></g>
+<g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
+<g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
+<g class="signing-approved"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
+</svg>
+<button class="signing-replay" type="button" aria-label="Replay shared savings animation" hidden>Replay ↻</button>
+</div><p class="signing-caption">Any two can pay. One can sit it out.</p><a href="/#savings">See how it works</a></article><article><p class="lede">Advanced</p><h3>Require a second key</h3><div class="signing-demo" data-step="3">
+<svg viewBox="0 0 360 230" role="img" aria-labelledby="second-key-animation-title second-key-animation-description">
+<title id="second-key-animation-title">Both keys required</title>
+<desc id="second-key-animation-description">The phone approves first, but the payment stays locked. The second key approves, and the payment can go through.</desc>
+<path class="signing-wire" d="M90 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M90 111V120L180 155"/><g class="signing-person first" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label" y="52">Phone</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person second" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cx="-8" cy="-6" r="10"/><path d="M0 1l18 18m-7-7 6-6m-1 11 6-6"/></g><text class="signing-label" y="52">Second key</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g>
+<g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
+<g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
+<g class="signing-approved"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
+</svg>
+<button class="signing-replay" type="button" aria-label="Replay second key animation" hidden>Replay ↻</button>
+</div><p class="signing-caption">Both keys must approve.</p><p class="signing-note">We haven’t tested hardware wallets yet.</p><a href="/advanced#second-device">See how it works</a></article></div><p><a href="/vaults">How shared wallets work</a></p></section>
 <nav class="jump-links" aria-label="On this page"><a href="#setup">Set up your wallet</a> <a href="#receive">Receive bitcoin</a> <a href="#send">Send bitcoin</a> <a href="#people">Pay someone again</a> <a href="#savings">Save with other people</a> <a href="#recovery">Back up and restore</a> <a href="#controls">More options when you need them</a></nav>
 <section class="journey" id="setup">
 <h2>Set up your wallet</h2><p>Create a wallet and write down your recovery words. If you stop partway through, you can finish the backup when you return.</p>

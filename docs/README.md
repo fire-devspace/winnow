@@ -9,6 +9,9 @@ technical guides and site.css so those explanations are available offline.
 [The journey inventory](journeys.json) and
 [app test source](../UITests/README.md) feed [build-site](../scripts/build-site),
 which generates home and Advanced pages. Other pages are authored directly.
+[signing.js](signing.js) plays the homepage’s two signing illustrations once,
+with replay controls and a still version for reduced motion. The drawings come
+from the page generator and use [site.css](site.css); no animation library is needed.
 [The roadmap](roadmap.html) separates planned work from current behavior.
 [Architecture](architecture.html) links directly to the focused technical guides.
 Those HTML files are the maintained explanations; no separate paper or paper
