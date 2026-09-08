@@ -3,8 +3,9 @@
 # Wallet decisions and recovery tests
 
 These tests protect balances, coin selection, fees, key storage, imports,
-transaction signing, people, vaults, and reorg recovery. They exercise the shared
-wallet rules used by the GUI instead of reproducing those rules in app tests.
+transaction signing, people, vaults, reorg recovery, and the data protection
+class of every file the library writes. They exercise the shared wallet rules
+used by the GUI instead of reproducing those rules in app tests.
 
 The same target includes [network tests](Network/README.md)
 and loads [reference vectors](Vectors/README.md) through

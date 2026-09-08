@@ -57,9 +57,10 @@ struct FileProtectionTests {
         let wallet = try makeTestWallet(storageURL: url, keyStore: InMemoryKeyStore())
         #expect(try Self.protectionClass(of: url) == Self.named, "the file wallet creation writes")
 
-        // Deleted so the save writes a new file rather than replacing one that
-        // already carries the class: an atomic write keeps the destination's
-        // class when it names none, so overwriting would pass either way.
+        // Deleted so the save writes a new file rather than replacing one the
+        // creation site already protected: an atomic write renames a fresh temp
+        // file into place, so without the delete this case would still pass if
+        // only `create` named the class and `persist` had dropped it.
         try FileManager.default.removeItem(at: url)
         try await wallet.recordScanHeight(250)
         #expect(try Self.protectionClass(of: url) == Self.named, "the file a later save writes")

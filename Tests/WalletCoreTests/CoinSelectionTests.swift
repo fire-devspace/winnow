@@ -381,8 +381,11 @@ struct CoinSelectionTests {
 
     /// Both ends of the accepted fee-rate range still produce a conserved
     /// selection, so the bounds above are refusals rather than the only
-    /// values that work.
-    @Test("the extreme accepted fee rates still conserve value", arguments: [0.0001, 10_000.0])
+    /// values that work. The top of the range is named by `FeePolicy` rather
+    /// than repeated here, so a policy ceiling raised past the band selection
+    /// enforces fails this case.
+    @Test("the extreme accepted fee rates still conserve value",
+          arguments: [0.0001, FeePolicy.maximumSatPerVByte])
     func acceptedFeeRateExtremes(_ rate: Double) throws {
         let utxos = [Self.generatedUTXO(0, amount: BitcoinAmount.maximum / 4)]
         let payments = [Payment(amount: 1_000_000, scriptPubKey: Self.script(0xBB))]
@@ -390,6 +393,21 @@ struct CoinSelectionTests {
             utxos: utxos, payments: payments,
             changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
         Self.check(selection, payments: payments, offered: utxos, seed: 0, iteration: 0)
+    }
+
+    /// The other half of that tie. `FeePolicy.maximumSatPerVByte` and the band
+    /// `checkArguments` enforces are separate constants, so this pins the first
+    /// rate past the policy's ceiling to a refusal — and to `invalidFeeRate`
+    /// rather than insufficient funds, which a widened band would still throw.
+    @Test("the first fee rate past the fee policy's maximum is refused")
+    func feeRateAboveFeePolicyMaximum() {
+        let rate = FeePolicy.maximumSatPerVByte.nextUp
+        #expect(throws: CoinSelectionError.invalidFeeRate(rate)) {
+            try CoinSelection.select(
+                utxos: [Self.generatedUTXO(0, amount: 1_000_000)],
+                payments: [Payment(amount: 100_000, scriptPubKey: Self.script(0xBB))],
+                changeScriptPubKey: Self.changeScript, feeRateSatPerVByte: rate)
+        }
     }
 
     // MARK: - Fee policy
