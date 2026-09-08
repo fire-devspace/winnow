@@ -29,70 +29,70 @@ dialog a{overflow-wrap:anywhere}
 @media(max-width:35rem){.app-shot{float:none;display:block;width:190px;margin:1.2rem auto}}
 </style>
 </head>
-<body>
+<body class="home">
 <header class="topbar"><div class="bar">
 <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
 <nav class="links" aria-label="Main"><a href="/">Home</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">GitHub</a></nav>
 </div></header>
 <main>
-<p class="lede">Early access · open source · iPhone</p>
+<p class="lede">Early access · open source</p>
 <h1>A Bitcoin wallet for your iPhone.</h1>
 <p class="lede">Send and receive bitcoin, keep track of payments, and save with other people.</p>
 <p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Try it on TestFlight</a></p>
-<p>Your wallet connects directly to the Bitcoin network. Your private keys stay on your phone unless you choose to export them.</p>
-<section id="signing-choices"><h2>Two ways to protect your bitcoin</h2><div class="signing-choices"><article class="signing-story"><h3>A stolen hardware-wallet key isn’t enough.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="devices-example" value="attack" aria-controls="attack-scene" checked>Stolen key</label><label><input type="radio" name="devices-example" value="payment" aria-controls="payment-scene">Your payment</label></fieldset><div class="signing-scene" id="attack-scene" data-scene="attack" data-step="3">
+<p class="connection-note">Your phone connects directly to Bitcoin.</p>
+<section id="signing-choices"><h2>Two ways to protect your bitcoin</h2><div class="signing-choices"><article class="signing-story"><h3>Protect your key.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="devices-example" value="attack" aria-controls="attack-scene" checked>Stolen key</label><label><input type="radio" name="devices-example" value="payment" aria-controls="payment-scene">Your payment</label></fieldset><div class="signing-scene" id="attack-scene" data-scene="attack" data-step="3">
 <h4 class="signing-scene-title">Stolen hardware-wallet key</h4>
 <div class="signing-demo">
 <svg viewBox="0 0 360 220" role="img" aria-labelledby="attack-animation-title attack-animation-description">
 <title id="attack-animation-title">Stolen hardware-wallet key</title><desc id="attack-animation-description">An attacker gets the hardware wallet’s key and tries to spend. The iPhone has not approved, so the payment stays blocked and nothing is sent to Bitcoin.</desc>
-<path class="signing-wire" d="M90 111V120L180 155"/><g class="signing-person waiting" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow stolen" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person stolen" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><text class="signing-label stolen-label" y="52">Key stolen</text><g class="signing-warning"><circle cx="27" cy="-23" r="12"/><text x="27" y="-18">!</text></g></g>
+<path class="signing-wire" d="M90 111V120L180 155"/><g class="signing-person waiting" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow stolen" pathLength="1" d="M270 111V120L180 155"/><path class="signing-signal stolen" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person stolen" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><text class="signing-label stolen-label" y="52">Key stolen</text><g class="signing-warning"><circle cx="27" cy="-23" r="12"/><text x="27" y="-18">!</text></g></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
 <g class="signing-finished"><path d="M126 173l13 13m0-13-13 13"/><text x="193" y="185">Blocked</text></g></g>
 </svg>
 <div class="signing-chain"><span class="chain-label">On Bitcoin</span><span class="chain-token">No payment sent</span></div>
 </div>
-<p class="signing-caption">Your hardware wallet and your iPhone must both approve.</p>
+<p class="signing-caption"><span class="signing-beat" data-beat="0">Both keys are needed.</span><span class="signing-beat" data-beat="1">The hardware-wallet key is stolen.</span><span class="signing-beat" data-beat="2">The phone hasn’t approved.</span><span class="signing-beat" data-beat="3">Blocked. Nothing sent.</span></p>
 </div><div class="signing-scene" id="payment-scene" data-scene="payment" data-step="3">
 <h4 class="signing-scene-title">A payment you approve</h4>
 <div class="signing-demo">
 <svg viewBox="0 0 360 220" role="img" aria-labelledby="payment-animation-title payment-animation-description">
 <title id="payment-animation-title">A payment you approve</title><desc id="payment-animation-description">For a separate, normal payment, you check the address, amount, and fee on your iPhone. The iPhone and hardware wallet both sign. Bitcoin sees one ordinary signature, without revealing the two devices.</desc>
-<path class="signing-wire" d="M90 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M90 111V120L180 155"/><g class="signing-person first" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person second" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g>
+<path class="signing-wire" d="M90 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M90 111V120L180 155"/><path class="signing-signal first" pathLength="1" d="M90 111V120L180 155"/><g class="signing-person first" transform="translate(90 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/></g><text class="signing-label device-label" y="52">iPhone</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M270 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M270 111V120L180 155"/><path class="signing-signal second" pathLength="1" d="M270 111V120L180 155"/><g class="signing-person second" transform="translate(270 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/></g><text class="signing-label device-label" y="52">Hardware wallet</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
 <g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
 </svg>
-<div class="signing-chain"><span class="chain-label">On Bitcoin</span><span class="chain-token">One ordinary signature</span></div>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><span class="chain-merge" aria-hidden="true"><span>✓</span><span>✓</span></span><span class="chain-token">One ordinary signature</span></div>
 </div>
-<p class="signing-caption">Check the address, amount, and fee on your iPhone before approving.</p>
-</div><button class="signing-replay" type="button" aria-label="Replay A stolen hardware-wallet key isn’t enough." hidden>Replay ↻</button><p class="signing-links"><a href="/vaults#extra-device">Hardware compatibility</a> · <a href="/advanced#second-device">How it works</a></p></article><article class="signing-story"><h3>Share control without depending on everyone.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="shared-example" value="shared" aria-controls="shared-scene" checked>Shared savings</label><label><input type="radio" name="shared-example" value="borrowing" aria-controls="borrowing-scene">Borrowing</label></fieldset><div class="signing-scene" id="shared-scene" data-scene="shared" data-step="3">
+<p class="signing-caption"><span class="signing-beat" data-beat="0">A new payment. Both keys needed.</span><span class="signing-beat" data-beat="1">You check and approve on your phone.</span><span class="signing-beat" data-beat="2">The hardware wallet signs too.</span><span class="signing-beat" data-beat="3">Two devices. One signature.</span></p>
+</div><div class="signing-footer"><button class="signing-replay" type="button" aria-label="Replay Protect your key." hidden>Replay ↻</button><p class="signing-links"><a href="/advanced#second-device">About two-device signing →</a></p></div></article><article class="signing-story"><h3>Share control.</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend><label><input type="radio" name="shared-example" value="shared" aria-controls="shared-scene" checked>Savings</label><label><input type="radio" name="shared-example" value="borrowing" aria-controls="borrowing-scene">Borrowing</label></fieldset><div class="signing-scene" id="shared-scene" data-scene="shared" data-step="3">
 <h4 class="signing-scene-title">One person is away</h4>
 <div class="signing-demo">
 <svg viewBox="0 0 360 220" role="img" aria-labelledby="shared-animation-title shared-animation-description">
 <title id="shared-animation-title">One person is away</title><desc id="shared-animation-description">You and Alex approve while a third person is away. Any two of the three keys can approve. Spending reveals three public keys, the two-approval rule, and two signatures, but no names.</desc>
-<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Alex</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Away</text></g>
+<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><path class="signing-signal first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><path class="signing-signal second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Alex</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Away</text></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
 <g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Approved</text></g></g>
 </svg>
-<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span>2 required · 2 signatures</span></div>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span class="chain-rule">2 required · 2 signatures</span></div>
 </div>
-<p class="signing-caption">Any two of three can approve.</p>
+<p class="signing-caption"><span class="signing-beat" data-beat="0">Three people. Two approvals needed.</span><span class="signing-beat" data-beat="1">You approve.</span><span class="signing-beat" data-beat="2">Alex approves. One person stays away.</span><span class="signing-beat" data-beat="3">Two approve. The payment can go.</span></p>
 </div><div class="signing-scene" id="borrowing-scene" data-scene="borrowing" data-step="3">
 <h4 class="signing-scene-title">Returning loan collateral</h4>
 <div class="signing-demo">
 <svg viewBox="0 0 360 220" role="img" aria-labelledby="borrowing-animation-title borrowing-animation-description">
 <title id="borrowing-animation-title">Returning loan collateral</title><desc id="borrowing-animation-description">A possible future lending arrangement. After repayment, you and the lender approve returning your bitcoin. The independent key agent does not need to participate. The lender and key agent could also move the bitcoin together.</desc>
-<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Lender</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Key agent</text></g>
+<path class="signing-wire" d="M60 111V120L180 155"/><path class="signing-flow first" pathLength="1" d="M60 111V120L180 155"/><path class="signing-signal first" pathLength="1" d="M60 111V120L180 155"/><g class="signing-person first" transform="translate(60 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">You</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M180 111V120L180 155"/><path class="signing-flow second" pathLength="1" d="M180 111V120L180 155"/><path class="signing-signal second" pathLength="1" d="M180 111V120L180 155"/><g class="signing-person second" transform="translate(180 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Lender</text><g class="signing-check"><circle cx="27" cy="-23" r="12"/><path pathLength="1" d="m21-23 4 4 8-8"/></g></g><path class="signing-wire" d="M300 111V120L180 155"/><g class="signing-person absent" transform="translate(300 49)"><circle class="signing-node" r="35"/><g class="signing-icon"><circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/></g><text class="signing-label device-label" y="52">Key agent</text></g>
 <g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
 <g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
 <g class="signing-finished"><path d="m126 179 6 6 11-12"/><text x="193" y="185">Returned</text></g></g>
 </svg>
-<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span>2 required · 2 signatures</span></div>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span><div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span class="chain-rule">2 required · 2 signatures</span></div>
 </div>
-<p class="signing-caption">After repayment, you and the lender return the bitcoin.</p><p class="signing-note"><strong>Possible future use.</strong> A lender could provide stablecoins against this bitcoin. We have no lending partner yet. The lender and key agent could also move the funds together. <a href="/roadmap#signing-partners">About lending partners</a></p>
-</div><button class="signing-replay" type="button" aria-label="Replay Share control without depending on everyone." hidden>Replay ↻</button><p class="signing-links"><a href="/core-cosigner">2-of-3 signing tested with Bitcoin Core</a> · <a href="/vaults#shared-control">How it works</a></p></article></div>
+<p class="signing-caption"><span class="signing-beat" data-beat="0">The loan has been repaid.</span><span class="signing-beat" data-beat="1">You approve the return.</span><span class="signing-beat" data-beat="2">The lender approves too.</span><span class="signing-beat" data-beat="3">Your bitcoin is returned.</span></p><p class="signing-note"><strong>Possible future use.</strong> A lender could provide stablecoins against this bitcoin. We have no lending partner yet. The lender and key agent could also move the funds together. <a href="/roadmap#signing-partners">About lending partners</a></p>
+</div><div class="signing-footer"><button class="signing-replay" type="button" aria-label="Replay Share control." hidden>Replay ↻</button><p class="signing-links"><a href="/vaults#shared-control">About shared signing →</a></p></div></article></div>
 <button class="test-link" type="button" data-dialog="combined-signing" aria-controls="combined-signing" aria-haspopup="dialog">Use both together</button>
 <dialog id="combined-signing" aria-labelledby="combined-signing-title">
 <div class="dialog-heading"><h2 id="combined-signing-title">Protect your key in a shared wallet</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div>
@@ -106,8 +106,8 @@ dialog a{overflow-wrap:anywhere}
 <p><a href="/vaults">How the two signing methods fit together</a></p>
 </dialog></section>
 <nav class="jump-links" aria-label="On this page"><a href="#setup">Set up your wallet</a> <a href="#receive">Receive bitcoin</a> <a href="#send">Send bitcoin</a> <a href="#people">Pay someone again</a> <a href="#savings">Save with other people</a> <a href="#recovery">Back up and restore</a> <a href="#controls">More options when you need them</a></nav>
-<section class="journey" id="setup">
-<h2>Set up your wallet</h2><p>Create a wallet and write down your recovery words. If you stop partway through, you can finish the backup when you return.</p>
+<details class="journey" id="setup" open>
+<summary><h2>Set up your wallet</h2></summary><div class="journey-body"><p>Create a wallet and write down your recovery words. If you stop partway through, you can finish the backup when you return.</p>
 <img class="app-shot" src="screenshots/01-onboarding.png" width="1320" height="2868" loading="lazy" alt="Winnow: Set up your wallet.">
 <p class="limit">Save a backup file too. Winnow needs it to find your past payments when you restore the wallet.</p>
 <button class="test-link" type="button" data-dialog="setup-tests" aria-controls="setup-tests" aria-haspopup="dialog">How this is tested</button>
@@ -119,9 +119,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L117">test01OnboardingCreateWallet</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1215">test09BackupResumeAndReveal</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="receive">
-<h2>Receive bitcoin</h2><p>Share your address or QR code. Keep Receive open to watch for a payment, then check its confirmation in your wallet.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="receive" open>
+<summary><h2>Receive bitcoin</h2></summary><div class="journey-body"><p>Share your address or QR code. Keep Receive open to watch for a payment, then check its confirmation in your wallet.</p>
 <img class="app-shot" src="screenshots/03-receive.png" width="1320" height="2868" loading="lazy" alt="Winnow: Receive bitcoin.">
 <button class="test-link" type="button" data-dialog="receive-tests" aria-controls="receive-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="receive-tests" aria-labelledby="receive-tests-title">
@@ -132,9 +132,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L167">test02ReceiveAndFunding</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1420">test14IncomingPaymentBeforeConfirmation</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="send">
-<h2>Send bitcoin</h2><p>Enter an address and amount. Check the address, fee, and total before you send, then follow the payment’s status.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="send" open>
+<summary><h2>Send bitcoin</h2></summary><div class="journey-body"><p>Enter an address and amount. Check the address, fee, and total before you send, then follow the payment’s status.</p>
 <img class="app-shot" src="screenshots/06-send-review.png" width="1320" height="2868" loading="lazy" alt="Winnow: Send bitcoin.">
 <button class="test-link" type="button" data-dialog="send-tests" aria-controls="send-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="send-tests" aria-labelledby="send-tests-title">
@@ -146,9 +146,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L227">test03Send</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="people">
-<h2>Pay someone again</h2><p>Save someone’s payment card in People. Next time, choose their name instead of pasting an address.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="people" open>
+<summary><h2>Pay someone again</h2></summary><div class="journey-body"><p>Save someone’s payment card in People. Next time, choose their name instead of pasting an address.</p>
 <img class="app-shot" src="screenshots/24-people.png" width="1320" height="2868" loading="lazy" alt="Winnow: Pay someone again.">
 <button class="test-link" type="button" data-dialog="people-tests" aria-controls="people-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="people-tests" aria-labelledby="people-tests-title">
@@ -159,9 +159,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L719">test10PeopleAddAndPay</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="savings">
-<h2>Save with other people</h2><p>Choose who shares the wallet and how many approvals a payment needs. With two approvals out of three, one person can be away and the other two can still pay.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="savings" open>
+<summary><h2>Save with other people</h2></summary><div class="journey-body"><p>Choose who shares the wallet and how many approvals a payment needs. With two approvals out of three, one person can be away and the other two can still pay.</p>
 <img class="app-shot" src="screenshots/27-ask-approval.png" width="1320" height="2868" loading="lazy" alt="Winnow: Save with other people.">
 <p class="limit">For shared control, each person must keep their own key. If you choose just one required approval, any one of them can spend.</p>
 <p><a href="/vaults">Read the guide</a></p>
@@ -174,9 +174,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L881">test12SharedSavingsCreateAndAsk</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L561">test07ApproveRequest</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="recovery">
-<h2>Back up and restore</h2><p>Save a backup file with your payment history and shared accounts. Keep your recovery words too. You need both to restore the wallet and sign again.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="recovery" open>
+<summary><h2>Back up and restore</h2></summary><div class="journey-body"><p>Save a backup file with your payment history and shared accounts. Keep your recovery words too. You need both to restore the wallet and sign again.</p>
 <p class="limit">Keep both your recovery words and your backup file. The words alone won’t restore your payment history.</p>
 <button class="test-link" type="button" data-dialog="recovery-tests" aria-controls="recovery-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="recovery-tests" aria-labelledby="recovery-tests-title">
@@ -187,9 +187,9 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L472">test06ImportBundleVerification</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1341">test08ExportBundle</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
-<section class="journey" id="controls">
-<h2>More options when you need them</h2><p>Start with the basics. Turn on Advanced mode in Settings to adjust fees and manage network connections.</p>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
+<details class="journey" id="controls" open>
+<summary><h2>More options when you need them</h2></summary><div class="journey-body"><p>Start with the basics. Turn on Advanced mode in Settings to adjust fees and manage network connections.</p>
 <img class="app-shot" src="screenshots/23-settings-beginner.png" width="1320" height="2868" loading="lazy" alt="Winnow: More options when you need them.">
 <button class="test-link" type="button" data-dialog="controls-tests" aria-controls="controls-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="controls-tests" aria-labelledby="controls-tests-title">
@@ -200,7 +200,7 @@ dialog a{overflow-wrap:anywhere}
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L811">test11BeginnerShellHidesAdvancedControls</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
-<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
+<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></div></details>
 <p id="evidence"><a href="/testing">How we test Winnow</a></p>
 <p><a href='/advanced'>Advanced features</a> · <a href='/roadmap'>What’s next</a></p>
 </main>
