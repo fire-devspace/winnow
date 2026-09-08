@@ -1110,7 +1110,7 @@ final class WinnowAppUITests: XCTestCase {
         // fresh launch may still be catching up its headers — the persisted
         // coin row proves nothing about the tip. Re-adding re-reviews at the
         // current height, which is exactly what a person would do.
-        let review = app.staticTexts["Review — what you are signing"]
+        let review = app.staticTexts["Check this payment"]
         poll(timeout: 240, interval: 5, "review accepted once the tip caught up") {
             app.buttons["addPSBTButton"].tap()
             _ = review.waitForExistence(timeout: 3)
