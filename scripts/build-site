@@ -55,27 +55,114 @@ def card(journey, cases):
     parts = [f'<section class="journey" id="{journey["id"]}">']
     parts.append(f'<h2>{escape(journey["title"])}</h2><p>{escape(journey["description"])}</p>')
     if image := journey.get("image"):
-        parts.append(f'<img class="app-shot" src="screenshots/{image}.png" width="1320" height="2868" loading="lazy" alt="{escape(journey["title"])} in the signet test app.">')
+        parts.append(f'<img class="app-shot" src="screenshots/{image}.png" width="1320" height="2868" loading="lazy" alt="Winnow: {escape(journey["title"])}.">')
     if limitation := journey.get("limitations"):
-        parts.append(f'<p class="limit"><strong>Know before using it:</strong> {escape(limitation)}</p>')
+        parts.append(f'<p class="limit">{escape(limitation)}</p>')
     if guide := journey.get("guide"):
-        parts.append(f'<p><a href="{guide}">Read the advanced guide</a></p>')
-    parts.append('<details><summary>How this journey is checked</summary><ol>')
+        parts.append(f'<p><a href="{guide}">Read the guide</a></p>')
+    dialog = f'{journey["id"]}-tests'
+    parts.append(f'<button class="test-link" type="button" data-dialog="{dialog}" aria-controls="{dialog}" aria-haspopup="dialog">How this is tested</button>')
+    parts.append(f'<dialog id="{dialog}" aria-labelledby="{dialog}-title">')
+    parts.append(f'<div class="dialog-heading"><h2 id="{dialog}-title">How we test: {escape(journey["title"])}</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>')
     parts.extend(f'<li>{escape(step)}</li>' for step in journey["journey"])
-    parts.append('</ol><p>App scenarios:')
+    parts.append('</ol><p>Test code:')
     parts.append(", ".join(f'<a href="{SOURCE}{TEST_PATH}#L{cases[test][0]}">{escape(test)}</a>' for test in journey["tests"]))
-    parts.append(f'. <a href="{RESULTS}">Inspect test runs and their results</a>.</p></details></section>')
+    parts.append(f'. <a href="{RESULTS}">View test results</a>.</p>')
+    parts.append('<p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>')
+    parts.append('<p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>')
     return "\n".join(parts)
+
+def signing_animation(scene):
+    shared = scene in {"shared", "borrowing"}
+    attack = scene == "attack"
+    title, explanation = {
+        "attack": ("Stolen hardware-wallet key", "An attacker gets the hardware wallet’s key and tries to spend. The iPhone has not approved, so the payment stays blocked and nothing is sent to Bitcoin."),
+        "payment": ("A payment you approve", "For a separate, normal payment, you check the address, amount, and fee on your iPhone. The iPhone and hardware wallet both sign. Bitcoin sees one ordinary signature, without revealing the two devices."),
+        "shared": ("One person is away", "You and Alex approve while a third person is away. Any two of the three keys can approve. Spending reveals three public keys, the two-approval rule, and two signatures, but no names."),
+        "borrowing": ("Returning loan collateral", "A possible future lending arrangement. After repayment, you and the lender approve returning your bitcoin. The independent key agent does not need to participate. The lender and key agent could also move the bitcoin together."),
+    }[scene]
+    people = '<circle cy="-9" r="9"/><path d="M-17 17v-5a17 17 0 0 1 34 0v5"/>'
+    phone = '<rect x="-17" y="-28" width="34" height="56" rx="6"/><path d="M-5 19h10"/>'
+    hardware = '<rect x="-13" y="-26" width="26" height="52" rx="7"/><path d="M-7-17H7V0H-7z"/><circle cy="14" r="3"/>'
+    if shared:
+        signers = [(60, "You", people, "first"), (180, "Lender" if scene == "borrowing" else "Alex", people, "second"), (300, "Key agent" if scene == "borrowing" else "Away", people, "absent")]
+    else:
+        signers = [(90, "iPhone", phone, "waiting" if attack else "first"), (270, "Hardware wallet", hardware, "stolen" if attack else "second")]
+    drawing = []
+    for x, label, icon, role in signers:
+        drawing.append(f'<path class="signing-wire" d="M{x} 111V120L180 155"/>')
+        if role not in {"absent", "waiting"}:
+            drawing.append(f'<path class="signing-flow {role}" pathLength="1" d="M{x} 111V120L180 155"/>')
+        drawing.append(f'<g class="signing-person {role}" transform="translate({x} 49)"><circle class="signing-node" r="35"/><g class="signing-icon">{icon}</g><text class="signing-label device-label" y="52">{label}</text>')
+        if role == "stolen":
+            drawing.append('<text class="signing-label stolen-label" y="52">Key stolen</text>')
+            drawing.append('<g class="signing-warning"><circle cx="27" cy="-23" r="12"/><text x="27" y="-18">!</text></g>')
+        elif role != "waiting" and role != "absent":
+            drawing.append('<g class="signing-check"><circle cx="27" cy="-23" r="12"/><path d="m21-23 4 4 8-8"/></g>')
+        drawing.append('</g>')
+    final_label = "Blocked" if attack else "Returned" if scene == "borrowing" else "Approved"
+    final_icon = 'M126 173l13 13m0-13-13 13' if attack else 'm126 179 6 6 11-12'
+    if attack:
+        chain = '<span class="chain-token">No payment sent</span>'
+    elif shared:
+        chain = '<div class="chain-keys"><span>Key 1</span><span>Key 2</span><span>Key 3</span></div><span>2 required · 2 signatures</span>'
+    else:
+        chain = '<span class="chain-token">One ordinary signature</span>'
+    caption = {
+        "attack": "Your hardware wallet and your iPhone must both approve.",
+        "payment": "Check the address, amount, and fee on your iPhone before approving.",
+        "shared": "Any two of three can approve.",
+        "borrowing": "After repayment, you and the lender return the bitcoin.",
+    }[scene]
+    note = '<p class="signing-note"><strong>Possible future use.</strong> A lender could provide stablecoins against this bitcoin. We have no lending partner yet. The lender and key agent could also move the funds together. <a href="/roadmap#signing-partners">About lending partners</a></p>' if scene == "borrowing" else ''
+    return f'''<div class="signing-scene" id="{scene}-scene" data-scene="{scene}" data-step="3">
+<h4 class="signing-scene-title">{title}</h4>
+<div class="signing-demo">
+<svg viewBox="0 0 360 220" role="img" aria-labelledby="{scene}-animation-title {scene}-animation-description">
+<title id="{scene}-animation-title">{title}</title><desc id="{scene}-animation-description">{explanation}</desc>
+{"".join(drawing)}
+<g class="signing-payment"><rect x="109" y="155" width="142" height="49" rx="24"/>
+<g class="signing-locked"><path d="M128 175v-5a6 6 0 0 1 12 0v5m-14 0h16v14h-16z"/><text x="186" y="185">Waiting</text></g>
+<g class="signing-finished"><path d="{final_icon}"/><text x="193" y="185">{final_label}</text></g></g>
+</svg>
+<div class="signing-chain"><span class="chain-label">On Bitcoin</span>{chain}</div>
+</div>
+<p class="signing-caption">{caption}</p>{note}
+</div>'''
+
+def signing_choices():
+    options = []
+    for name, heading, scenes, links in [
+        ("devices", "A stolen hardware-wallet key isn’t enough.", [("attack", "Stolen key"), ("payment", "Your payment")], '<a href="/vaults#extra-device">Hardware compatibility</a> · <a href="/advanced#second-device">How it works</a>'),
+        ("shared", "Share control without depending on everyone.", [("shared", "Shared savings"), ("borrowing", "Borrowing")], '<a href="/core-cosigner">2-of-3 signing tested with Bitcoin Core</a> · <a href="/vaults#shared-control">How it works</a>'),
+    ]:
+        switches = ''.join(f'<label><input type="radio" name="{name}-example" value="{scene}" aria-controls="{scene}-scene"{" checked" if index == 0 else ""}>{label}</label>' for index, (scene, label) in enumerate(scenes))
+        drawings = ''.join(signing_animation(scene) for scene, _ in scenes)
+        options.append(f'<article class="signing-story"><h3>{heading}</h3><fieldset class="signing-switch" hidden><legend>Choose an example</legend>{switches}</fieldset>{drawings}<button class="signing-replay" type="button" aria-label="Replay {heading}" hidden>Replay ↻</button><p class="signing-links">{links}</p></article>')
+    return '''<section id="signing-choices"><h2>Two ways to protect your bitcoin</h2><div class="signing-choices">''' + ''.join(options) + '''</div>
+<button class="test-link" type="button" data-dialog="combined-signing" aria-controls="combined-signing" aria-haspopup="dialog">Use both together</button>
+<dialog id="combined-signing" aria-labelledby="combined-signing-title">
+<div class="dialog-heading"><h2 id="combined-signing-title">Protect your key in a shared wallet</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div>
+<div class="combined-signers">
+<div class="combined-you"><span>iPhone + hardware wallet</span><b>↓</b><strong>Your approval</strong></div>
+<div><span>Partner’s key</span><b>↓</b><strong>Partner’s approval</strong></div>
+<div><span>Third person’s key</span><b>↓</b><strong>Their approval</strong></div>
+</div>
+<p><strong>Any two columns can approve.</strong> Your column needs both your devices. The other two people can also approve together without you.</p>
+<p>On Bitcoin, your two devices appear as one key and one signature within the shared wallet’s three-key rule.</p>
+<p><a href="/vaults">How the two signing methods fit together</a></p>
+</dialog></section>'''
 
 def page(section, journeys, cases):
     advanced = section == "advanced"
-    title = "Advanced wallet journeys" if advanced else "A Bitcoin wallet, from first setup to shared savings"
-    intro = ("Turn on Advanced mode for explicit vault policies, signing exchanges, fee replacement, and peer controls."
-             if advanced else "Create a wallet on your phone, pay people, and choose when a payment needs more than one approval.")
+    title = "Advanced wallet journeys" if advanced else "A Bitcoin wallet for your iPhone."
+    intro = ("Turn on Advanced mode for explicit vault policies, signing exchanges, fee controls and replacement, and peer controls."
+             if advanced else "Send and receive bitcoin, keep track of payments, and save with other people.")
     selected = [j for j in journeys if j["section"] == section]
     content = "\n".join(card(j, cases) for j in selected)
     links = " ".join(f'<a href="#{j["id"]}">{escape(j["title"])}</a>' for j in selected)
-    cta = "" if advanced else '<p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Get early access on TestFlight</a></p>'
+    cta = "" if advanced else '<p><a class="action" href="https://testflight.apple.com/join/83djpNE7">Try it on TestFlight</a></p>'
+    choices = "" if advanced else signing_choices()
     return f"""<!doctype html>
 <!-- Generated by scripts/build-site from docs/journeys.json and the app test source. -->
 <html lang="en">
@@ -85,39 +172,58 @@ def page(section, journeys, cases):
 <title>{escape(title)} — Winnow</title>
 <meta name="description" content="{escape(intro)}">
 <link rel="canonical" href="https://winnowwallet.com/{'advanced' if advanced else ''}">
-<link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="site.css">{'<script src="signing.js" defer></script>' if not advanced else ''}
 <style>
 main{{max-width:64rem}} .journey{{display:flow-root;padding-bottom:1.2rem}}
 .app-shot{{float:right;width:min(34%,220px);height:auto;margin:0 0 1.5rem 2rem;border:1px solid var(--rule);border-radius:1.4rem}}
-.journey details{{margin:1.2rem 0;color:var(--ink-2)}} summary{{cursor:pointer;color:var(--seed);font-weight:600}}
-.journey ol{{margin:1rem 0 1rem 1.3rem}} .journey li{{margin:.45rem 0}} .journey details a{{overflow-wrap:anywhere}}
+.test-link,.dialog-close{{font:inherit;cursor:pointer;color:var(--seed);background:none;border:0;min-height:44px}}
+.test-link{{margin:.5rem 0;font-size:.95rem;font-weight:600;text-decoration:underline;text-underline-offset:3px}}
+.dialog-close{{padding:.4rem .7rem;border:1px solid var(--rule-2);border-radius:.5rem}}
+dialog{{margin:auto;width:min(42rem,calc(100% - 2rem));max-height:calc(100% - 2rem);overflow:auto;padding:clamp(1rem,4vw,2rem);border:1px solid var(--rule-2);border-radius:1rem;background:var(--paper);color:var(--ink)}}
+dialog::backdrop{{background:rgb(0 0 0 / .55)}} html:has(dialog[open]){{overflow:hidden}}
+.dialog-heading{{display:flex;align-items:flex-start;gap:1rem;justify-content:space-between}}
+.dialog-heading h2{{margin:0;padding:0;border:0}} .dialog-heading form{{flex-shrink:0}}
+dialog a{{overflow-wrap:anywhere}}
 .action{{display:inline-block;background:var(--seed);color:var(--paper);padding:.7rem 1rem;border-radius:.6rem;font-weight:650}}
 .jump-links{{display:flex;flex-wrap:wrap;gap:.6rem 1rem;margin:1.5rem 0;font-size:.95rem}}
 .limit{{border-left:2px solid var(--rule-2);padding-left:1rem}}
+.signing-choices{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2rem}}
+.signing-choices article{{border-top:3px solid var(--seed);padding-top:1rem}}
+.signing-choices .lede{{font-size:.95rem}}
+@media(max-width:40rem){{.signing-choices{{grid-template-columns:1fr}}}}
 @media(max-width:35rem){{.app-shot{{float:none;display:block;width:190px;margin:1.2rem auto}}}}
 </style>
 </head>
 <body>
 <header class="topbar"><div class="bar">
 <a class="mark" href="/"><b>&#8383;</b> Winnow</a>
-<nav class="links" aria-label="Main"><a href="/">Everyday use</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">Source</a></nav>
+<nav class="links" aria-label="Main"><a href="/">Home</a><a href="/advanced">Advanced</a><a href="/testing">Testing</a><a href="/roadmap">Roadmap</a><a href="https://github.com/winnowwallet/winnow">GitHub</a></nav>
 </div></header>
 <main>
 <p class="lede">Early access · open source · iPhone</p>
 <h1>{escape(title)}</h1>
 <p class="lede">{escape(intro)}</p>
 {cta}
-<p>Wallet reads use Bitcoin peers and compact block filters. Keys are stored in this device’s Keychain; secret exports are explicit. No address-query service supplies the wallet’s balance.</p>
-<nav class="jump-links" aria-label="Journeys">{links}</nav>
+<p>Your wallet connects directly to the Bitcoin network. Your private keys stay on your phone unless you choose to export them.</p>
+{choices}
+<nav class="jump-links" aria-label="On this page">{links}</nav>
 {content}
-<section id="evidence"><h2>What the evidence means</h2>
-<p>Each journey above links to tests that drive the actual app against a disposable signet node. Images show test wallets. A screenshot or a test’s presence in the source is not a passing result: inspect the linked run for its revision, failures, and result bundle.</p>
-<p>Cryptographic vectors, hostile-peer checks, storage failures, and Bitcoin Core comparisons support these journeys. They establish properties that a successful screen flow alone cannot show. <a href="/testing">Explore the testing suites and their artifacts</a>, or read the <a href="{SOURCE}docs/testing.md">testing and feature policy</a>.</p>
-<p>Simulator results do not establish hardware security, battery life, or independent security review. <a href="/roadmap">Those release requirements and future features live on the separate roadmap</a>.</p>
-</section>
-{"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Explore advanced wallet journeys</a> · <a href='/roadmap'>See planned work</a></p>"}
+<p id="evidence"><a href="/testing">How we test Winnow</a></p>
+{"<section id='debugging'><h2>Local debugging tools</h2><p>Use winnow-debug for environment checks, simulator diagnostics, release-data generation, and network soak runs. These are operator tools, with their own command and protocol checks.</p><p><a href='" + SOURCE + "Tools/Debug/README.md'>Debugging commands and their limits</a></p></section>" if advanced else "<p><a href='/advanced'>Advanced features</a> · <a href='/roadmap'>What’s next</a></p>"}
 </main>
 <footer><div class="bar"><a href="/">Winnow</a> · <a href="/advanced">Advanced</a> · <a href="/testing">Testing</a> · <a href="/roadmap">Roadmap</a> · <a href="/privacy">Privacy</a> · <a href="/architecture">How it works</a></div></footer>
+<script>
+document.querySelectorAll('[data-dialog]').forEach(button => {{
+  const dialog = document.getElementById(button.dataset.dialog);
+  button.addEventListener('click', () => dialog.showModal());
+  dialog.addEventListener('click', event => {{
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+  }});
+}});
+</script>
 </body>
 </html>
 """

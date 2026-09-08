@@ -16,6 +16,7 @@ struct SharedSavingsCreateView: View {
     @State private var error: String?
     @State private var creating = false
     @State private var created: VaultRecord?
+    @State private var showAddPerson = false
 
     private var chosen: [PersonRecord] {
         model.people.filter { selected.contains($0.id) }
@@ -42,6 +43,7 @@ struct SharedSavingsCreateView: View {
                 }
             }
             .navigationTitle(created == nil ? "New shared savings" : "Share the savings")
+            .sheet(isPresented: $showAddPerson) { AddPersonView() }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if created == nil {
@@ -62,10 +64,12 @@ struct SharedSavingsCreateView: View {
         Form {
             Section {
                 if model.people.isEmpty {
-                    Text("Add people first. Each co-owner needs a Winnow card, which carries their signer key.")
+                    Text("Add each co-owner’s Winnow card, then choose who will share control.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                Button("Add a co-owner") { showAddPerson = true }
+                    .accessibilityIdentifier("addSavingsCoOwnerButton")
                 ForEach(model.people) { person in
                     Button {
                         toggle(person)
@@ -104,7 +108,7 @@ struct SharedSavingsCreateView: View {
                     .accessibilityIdentifier("savingsNameField")
                     .onChange(of: name) { _, _ in nameEdited = true }
             } footer: {
-                Text("Money in shared savings moves only when this many co-owners approve. Winnow builds a Taproot \(threshold)-of-\(signerCount) that no single key can spend.")
+                Text("Any \(threshold) of these \(signerCount) keys can approve a payment. \(threshold == 1 ? "One key is enough to spend." : "One key alone is not enough to spend.") Names do not prove that the keys are held by different people.")
             }
 
             if let error {
@@ -288,6 +292,8 @@ struct SharedSavingsDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                VaultPolicySection(vault: vault)
 
                 Section {
                     if let savings {

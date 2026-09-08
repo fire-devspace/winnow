@@ -358,18 +358,18 @@
 
   <!-- ═══ FIGURE 4 ═══ -->
   <figure class="fig" id="fig-musig">
-    <h2>4 · Two signatures that look like one.</h2>
-    <p class="sub">Elena and Mateo hold the family reserve together — a 2-of-2 MuSig2 vault, coordinated over PSBTs with no wallet server in the middle. Two rounds, public nonces then partial signatures, collapse into a single Schnorr signature.</p>
+    <h2>4 · A second signing device, one signature.</h2>
+    <p class="sub">Elena keeps a key on her phone and uses an independent signer for the second key. Her 2-of-2 MuSig2 savings require both for every payment. Two rounds, public nonces then partial signatures, produce a single Schnorr signature. The current app journey uses a software fixture as the second signer; desktop and hardware-wallet integrations remain unverified.</p>
     <div class="stage">
       <div class="f4">
         <div class="f4-stage">
           <h4>Round 1 · nonces</h4>
-          <p>Each phone publishes a public nonce. The secret halves stay in the signing screen and never persist — leaving before round&nbsp;2 abandons the session.</p>
+          <p>Each signer publishes a public nonce. The phone’s secret nonce stays in the signing screen and never persists — leaving before round&nbsp;2 abandons the session.</p>
           <div class="f4-signers"><i></i><i></i></div>
         </div>
         <div class="f4-stage">
           <h4>Round 2 · partials</h4>
-          <p>Elena and Mateo each sign the same sighash, producing a partial signature that is verified before it is attached. Signing zeroes the secret nonce.</p>
+          <p>The phone and second signer each sign the same sighash, producing a partial signature that is verified before it is attached. Signing zeroes the secret nonce.</p>
           <div class="f4-signers"><i></i><i></i></div>
         </div>
         <div class="f4-stage">
@@ -382,11 +382,11 @@
           <h4>On chain</h4>
           <p class="sig">64 bytes · P2TR key-path</p>
           <p style="font-size:.72rem;color:var(--night-ink-2);line-height:1.4;margin-top:.35rem">
-            Identical in form to an ordinary single-signature spend. Watchers cannot tell a vault from an everyday wallet.</p>
+            The signature has the form of an ordinary Taproot key-path spend. It does not reveal how many signers participated.</p>
         </div>
       </div>
     </div>
-    <p class="takeaway">Both-of-two costs the chain <b>one signature</b>, so the <b>on-chain witness shape and fee</b> are those of an everyday spend. That is a statement about the chain only — coordination between cosigners and network-level privacy are separate matters. The k-of-n vault is the honest opposite: it uses a script path, which is visibly multisig — a cost paid deliberately for “k of us, and nobody holds an escape hatch.”</p>
+    <p class="takeaway">A second device adds a required key only if its secret stays independent. Both keys are required; losing either key and its backups can lock the funds. For shared control with one absent signer, use a <b>2-of-3 threshold</b> instead: the threshold is hidden in the Taproot output until a script-path spend reveals it. Neither policy certifies protection from coercion. <a href="/vaults">Compare the policies, metadata, and recovery limits</a>.</p>
   </figure>
 
   <!-- ═══ FIGURE 5 ═══ -->

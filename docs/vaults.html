@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vaults: Shared Custody That Still Fits on a Phone &mdash; Winnow</title>
-<meta name="description" content="Technical guide for Winnow. A vault is another descriptor on the same read / write path — not a second wallet architecture. Framing: a phone wallet.">
+<title>Shared control or an extra signing device &mdash; Winnow</title>
+<meta name="description" content="Two uses for multiple signing keys: shared control and a second device. What the policies enforce, what metadata cannot prove, and what is tested.">
 <link rel="canonical" href="https://winnowwallet.com/vaults">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://winnowwallet.com/vaults">
-<meta property="og:title" content="Vaults: Shared Custody That Still Fits on a Phone &mdash; Winnow">
-<meta property="og:description" content="Technical guide for Winnow. A vault is another descriptor on the same read / write path — not a second wallet architecture. Framing: a phone wallet.">
+<meta property="og:title" content="Shared control or an extra signing device &mdash; Winnow">
+<meta property="og:description" content="Two uses for multiple signing keys: shared control and a second device. What the policies enforce, what metadata cannot prove, and what is tested.">
 <meta property="og:image" content="https://winnowwallet.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Vaults: Shared Custody That Still Fits on a Phone &mdash; Winnow">
-<meta name="twitter:description" content="Technical guide for Winnow. A vault is another descriptor on the same read / write path — not a second wallet architecture. Framing: a phone wallet.">
+<meta name="twitter:title" content="Shared control or an extra signing device &mdash; Winnow">
+<meta name="twitter:description" content="Two uses for multiple signing keys: shared control and a second device. What the policies enforce, what metadata cannot prove, and what is tested.">
 <meta name="twitter:image" content="https://winnowwallet.com/og.png">
 <link rel="stylesheet" href="site.css">
 </head>
@@ -31,66 +31,52 @@
   </div>
 </header>
 <main>
-  <h1 id="vaults-shared-custody-that-still-fits-on-a-phone">Vaults: Shared Custody That Still Fits on a Phone</h1>
-  <p><em>Technical guide for Winnow. A vault is another descriptor on the same <a href="/read-side">read</a> / <a href="/write-side">write</a> path — not a second wallet architecture. Framing: <a href="/mobile">a phone wallet</a>.</em></p>
-  <hr />
-  <h2 id="the-problem">1. The problem</h2>
-  <p>Shared custody on a phone usually means one of three things, all bad for this product:</p>
-  <ul>
-  <li>A <strong>vendor coordinator</strong> that sees every proposal, every cosigner, and when you spend.</li>
-  <li>A <strong>legacy multisig</strong> script (<code>OP_CHECKMULTISIG</code>) with ECDSA, redeem-script fingerprints, and a larger on-chain footprint than the everyday Taproot wallet.</li>
-  <li>A <strong>QR-code theatre</strong> that hides an underspecified PSBT behind “scan this” and hopes the review screen shows the right destination.</li>
-  </ul>
-  <p>The constraint is the same as the rest of the app: no server by default, Taproot only, logic in the library, the phone is a signer you can hold. So a vault here is a descriptor plus a PSBTv2 file you can AirDrop. The phone never runs a coordinator. The PSBT <em>is</em> the coordinator.</p>
-  <p>Two policies are supported — and only these two. Both are Taproot. Both reuse <code>FilterSync</code>, <code>CoinSelection</code>, <code>FeePolicy</code>, and <code>TxBroadcaster</code>.</p>
-  <hr />
-  <h2 id="the-two-policies">2. The two policies</h2>
-  <h3 id="script-path-k-of-n-trnums-sortedmulti_ak">2.1 Script-path k-of-n — <code>tr(NUMS, sortedmulti_a(k, …))</code></h3>
-  <p>BIP387 <code>multi_a</code> / <code>sortedmulti_a</code> in a single tapscript leaf. The internal key is the BIP341 NUMS (nothing-up-my-sleeve) point (<code>Taproot.unspendableInternalKey</code>). No party has the corresponding secret, so <strong>there is no key-path spend</strong>. The only way out is the leaf.</p>
-  <p><code>sortedmulti_a</code> is the constructor the app emits (<code>Vault.multiADescriptor</code>): keys are sorted, so independently constructed descriptors agree. <code>multi_a</code> (unsorted) is accepted on import so a descriptor built elsewhere still opens.</p>
-  <p>On-chain this is visibly a script-path spend: control block + leaf script + k signatures. That is a privacy cost relative to everyday key-path spends, paid for an honest k-of-n (a 2-of-3 inheritance vault, a 2-of-2 with a recovery key, and so on). The witness is larger; coin selection is told the exact <code>witnessBytesPerInput</code> for that leaf so the fee is not a guess.</p>
-  <h3 id="key-path-n-of-n-trmusigk1-k2">2.2 Key-path n-of-n — <code>tr(musig(k1, k2, …)/…)</code></h3>
-  <p>BIP390 <code>musig()</code> aggregated with BIP327 MuSig2, typically with a BIP328 derivation suffix. The on-chain output is an ordinary P2TR key-path spend: one 64-byte signature. Watchers cannot tell a MuSig2 vault from the everyday single-sig wallet.</p>
-  <p>The cost is interactive signing (nonces, then partials) and the n-of-n shape — there is no k &lt; n. A party who loses a key cannot fall back to a leaf; if you need that, use §2.1.</p>
-  <p>The app does not mix the two in one descriptor (no <code>tr(musig(…), multi_a(…))</code> first cut). One policy per vault keeps the review screen and the PSBT fields honest.</p>
-  <hr />
-  <h2 id="why-these-two-and-not-the-rest">3. Why these two, and not the rest</h2>
-  <ul>
-  <li><strong>No <code>OP_CHECKMULTISIG</code> / P2SH, and no P2WSH for vaults.</strong> They reintroduce ECDSA, a second address type, and a watch-list the compact-filter path would have to treat as special. The product is Taproot-only (<a href="/mobile">mobile</a> §4.2), with one deliberate exception: the planned 0.7 <a href="/roadmap">P2WSH Safe</a> is an opt-in <code>wsh(pk(KEY))</code> store with its own keys, its own watch list and its own ECDSA signing path, kept separate from vaults and from the Taproot account. Its <a href="https://github.com/winnowwallet/winnow/issues/6">design and release criteria</a> spell out that boundary.</li>
-  <li><strong>No unspendable-internal-key <em>and</em> a MuSig2 key-path in one output.</strong> That construction exists in the BIP zoo; it is a third review surface and a third witness-size path. Two policies cover the two stories users actually have: “k of us must agree, and nobody has an escape hatch” versus “all of us must agree, and the chain sees a single signature.”</li>
-  <li><strong>No coordinator protocol.</strong> Frost, MuSig2 with a signing server, or a proprietary “vault API” would put a third party on the write path. Cosigners exchange PSBTs. How they exchange them is their problem — the library does not open a socket for it.</li>
-  </ul>
-  <hr />
-  <h2 id="the-ceremony-is-psbtv2">4. The ceremony is PSBTv2</h2>
-  <p>Roles (BIP370/371/373), as the library actually implements them:</p>
-  <ol type="1">
-  <li><strong>Creator</strong> (<code>Vault.createSpend</code>). Same coin selection and unsigned tx as <code>Wallet.buildSend</code>, then vault fields:
-  <ul>
-  <li><em>multi_a:</em> BIP371 leaf script, control block, per-key origins (fingerprint + full path at <code>(choice, index)</code>).</li>
-  <li><em>MuSig2:</em> BIP373 participant pubkeys and the BIP328-derived internal key.</li>
-  <li>Change, if any, goes to choice 1 at <code>changeIndex</code> and carries <code>PSBT_OUT_TAP_TREE</code> / internal key / derivations so a cosigner can see it is <em>this vault’s</em> change, not an unknown output.</li>
-  </ul></li>
-  <li><strong>Signer</strong> (per cosigner, on their own phone). For multi_a: a BIP342 script-path signature with the plain x-only key (no taproot tweak — the sighash commits to the leaf). For MuSig2: nonce generation, then a partial signature, in the BIP373 fields. Secrets load from that device’s keychain for the call, same as the everyday wallet.</li>
-  <li><strong>Combiner.</strong> Union-merge of partial PSBTs. Order-independent; a 2-of-3 can combine in any sequence.</li>
-  <li><strong>Finalizer / extractor.</strong> Witnesses assembled, raw transaction out, then <a href="/write-side">the write side</a> §7 broadcasts it.</li>
-  </ol>
-  <p>The review screen (<code>VaultSignView</code>) runs <em>before</em> the key is used. It lists every destination, flags vault change via the output derivation fields, and shows the fee and sighash. A cosigner who cannot explain an output does not sign. That is the whole anti-“QR theatre” mechanism: the PSBT carries enough metadata to review, and the UI refuses to skip it.</p>
-  <hr />
-  <h2 id="the-read-side-does-not-care">5. The read side does not care</h2>
-  <p>A vault is a <code>tr(…)</code> descriptor. <code>watchScripts(upTo:)</code> derives both multipath choices for a gap of indices and drops them into the same filter stream as the everyday wallet. There is no per-vault server, no “subscribe this multisig,” no extra bandwidth for a 2-of-3 versus a 1-of-1.</p>
-  <p>Creation height still matters. A vault whose first output is older than the phone’s scan start will not be discovered by filters — same fresh-wallet / forward-only rule as everything else. Import the history, or create the vault in this app and use it from now on. <a href="/import">Import</a>.</p>
-  <hr />
-  <h2 id="what-a-vault-is-not">6. What a vault is not</h2>
-  <ul>
-  <li><strong>Not a recovery mnemonic for the everyday wallet.</strong> Losing the phone still loses the everyday seed unless the user wrote it down. A 2-of-3 vault is how you <em>plan</em> for lost devices; it is not automatic.</li>
-  <li><strong>Not threshold MuSig.</strong> k-of-n with a single-signature on-chain footprint is a different scheme (FROST, etc.) and a different paper. Here, k-of-n is the leaf, n-of-n is MuSig2.</li>
-  <li><strong>Not private against your cosigners.</strong> They see the spend. They should: they are signing it.</li>
-  <li><strong>Not private against chain watchers in the multi_a case.</strong> Script-path is visible. MuSig2 is not.</li>
-  </ul>
-  <hr />
-  <h2 id="conclusion">7. Conclusion</h2>
-  <p>Shared custody on this phone is two Taproot descriptors and a file format. The NUMS internal key makes k-of-n honest (no hidden key-path). MuSig2 makes n-of-n quiet (one signature). PSBTv2 is the only coordinator. The read path does not change.</p>
-  <p><strong>v1 is therefore: <code>tr(NUMS, sortedmulti_a(k, …))</code> and <code>tr(musig(…)/…)</code>, created and cosigned on-device, broadcast on the same P2P path as a single-sig spend.</strong></p>
+<h1>Who must approve a payment?</h1>
+<p class="lede">Winnow supports two signing policies for two useful stories: share control with other people, or require an additional signing device. Both use the wallet’s existing Bitcoin peer connection.</p>
+<p>These are product choices, not restrictions of the cryptography: a threshold can also protect one person’s devices, and MuSig2 can also be shared between people.</p>
+
+<section id="shared-control">
+<h2>Share control: any two of three</h2>
+<p>For a family reserve or shared treasury, three independent keys can require any two approvals. One signer can be unavailable and the other two can still spend. Any two can also spend without the third person’s agreement.</p>
+<p>Start with <strong>Wallet → Save with other people</strong>. Choose co-owners and the threshold, then share the savings card before funding so each wallet starts watching. The account shows its actual signing policy and its confirmed balance.</p>
+<p>The threshold is configurable. <strong>1-of-n permits one key to spend.</strong> A name or “shared savings” label does not change that rule. Distinct public keys also do not prove that different people hold their secrets.</p>
+<p>Winnow uses Taproot script-path multisig with an unspendable internal key: there is no secret key that bypasses the threshold. The receiving output alone does not reveal the threshold. Spending reveals the executed script, its keys, and the threshold. <a href="https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki">Taproot rules</a>.</p>
+<p><a href="/#savings">App journey and test evidence</a></p>
+</section>
+
+<section id="extra-device">
+<h2>Add a factor: the phone and another signer</h2>
+<p>For personal savings, keep one key on the phone and another on an independent signing device. A 2-of-2 MuSig2 policy requires both keys for every payment. Two keys on the same compromised device do not provide the intended separation.</p>
+<p>In <strong>Advanced mode → Wallet → Require another signing device</strong>, add the phone’s key and a compatible participant’s public account key. Review the policy before funding. MuSig2 exchanges public nonces and then partial signatures; the final payment has one Taproot key-path signature.</p>
+<p>The signature alone does not reveal the number of signers. This does not hide balances, transaction history, or signing coordination from everyone. Every participant remains required: losing a key and all its backups can lock the funds permanently. Winnow’s MuSig2 policy has no alternate recovery branch.</p>
+<p><strong>Current compatibility:</strong> the app journey uses an independent software signer as a fixture. It does not establish compatibility with a desktop application or a particular hardware wallet. Bitcoin Core round-two compatibility remains an open issue. A hardware secret would stay on its device; the desktop would coordinate, not import that secret into Winnow.</p>
+<p><a href="/advanced#second-device">App journey and its exact limits</a> · <a href="/core-cosigner">Core interoperability</a> · <a href="https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki">MuSig2 specification</a></p>
+</section>
+
+<section id="policy-metadata">
+<h2>What can metadata prove?</h2>
+<p>The app derives the required key count from the spending descriptor. Names, contact cards, notes, and imported transaction labels cannot lower that requirement or establish who controls a key.</p>
+<p>A signed policy statement could authenticate who made the statement and bind it to a descriptor. It still could not prove that no key copies exist, where they are kept, or how an attacker will behave. Winnow does not issue a “wrench-proof” certificate or add that claim to the blockchain.</p>
+<p>Separating keys across independently controlled devices or people can make compromising one key insufficient. Physical coercion remains possible. A genuinely mandatory delay or independent approval would need to constrain every valid spending path; descriptive metadata cannot enforce either. Such additional policies are not implemented here.</p>
+</section>
+
+<section id="professional-cosigners">
+<h2>Professional co-signers and trusts: an investigation</h2>
+<p>Unchained’s published standard custody model gives the client two of three keys, so the provider’s participation is optional. Its published Partner model describes clients holding a single key alongside other key agents. <a href="https://www.unchained.com/features/bitcoin-network-of-keys">Unchained’s custody models</a>.</p>
+<p>That distinction matters: a backup co-signer and a required independent approver serve different purposes. In a 2-of-3 where the client holds one key, the two other holders can also spend together without the client.</p>
+<p>Trust arrangements also need legal authority and key access to agree. Unchained describes trust and inheritance services, but Winnow has no partnership or verified integration with Unchained. A trust label in this app does not create a trust or a signing obligation. <a href="https://www.unchained.com/inheritance">Unchained inheritance services</a>.</p>
+<p><a href="/roadmap#signing-partners">Compatibility, recovery, and partner acceptance criteria</a></p>
+</section>
+
+<details id="the-two-policies">
+<summary>Advanced: descriptors and signing</summary>
+<p>Threshold accounts use <code>tr(NUMS, sortedmulti_a(k, …))</code>; imported <code>multi_a</code> orderings are also supported. MuSig2 accounts use <code>tr(musig(k1, k2, …)/…)</code> with BIP328 derivation. Winnow does not combine the two into a hidden alternate spending path.</p>
+<p>PSBTv2 carries the proposed transaction, Taproot information, and signatures. The app checks known inputs and derives its own output scripts to recognize change; it does not trust a proposer’s change label or derivation metadata. It displays recipients, amounts, fees, and the signing policy before authorization.</p>
+<p>MuSig2 secret nonces stay in the active signing screen’s memory. Leaving the screen abandons the session; completing a signature consumes its nonce. Co-signers must restart an abandoned exchange with fresh nonces.</p>
+<p>Each account is watched through the same compact-filter flow as the everyday wallet. Creation height matters: importing a public policy does not automatically recover funds sent before this phone started watching it. Keep the policy and the required wallet history for recovery. <a href="/import">Recovery behavior</a>.</p>
+<p>Current signing support is Taproot. Support for a different provider’s P2SH/P2WSH policies or PSBT conventions cannot be inferred from the shared word “multisig.” The planned <a href="/roadmap#safe">P2WSH Safe</a> is a separate proposal, not proof of that compatibility.</p>
+</details>
+<p><a href="/testing">How the suites and artifacts support these claims</a></p>
 </main>
 <footer>
   <div class="bar">

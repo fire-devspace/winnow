@@ -16,3 +16,11 @@ Existing store-*.png files are historical candidates. Neither an image nor the
 timing file proves that the current app passes its tests.
 [check-site](../../scripts/check-site) checks referenced assets and unresolved LFS
 pointers; reviewing the actual rendered image remains necessary.
+
+The Send captures (`05` through `08`) and person-payment review (`25`) were
+refreshed from [app revision d02ffa3](https://github.com/winnowwallet/winnow/commit/d02ffa314d198f4759069e8398d84bb8a50f19d2).
+All 16 app journeys passed in [this UI run](https://github.com/winnowwallet/winnow/actions/runs/34171647009),
+including editing a payment, keeping custom fees out of beginner mode, opening
+payment diagnostics, and following Bitcoin Core confirmation.
+The [run artifact](https://github.com/winnowwallet/winnow/actions/runs/34171647009/artifacts/10036468223)
+contains the original captures, log, and result bundle.

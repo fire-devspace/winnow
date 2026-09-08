@@ -295,10 +295,12 @@ struct VaultSignView: View {
         } else if let participantCount {
             Section("Actions") {
                 Button("Round 1 — attach this device's nonce") { attachNonces() }
+                    .accessibilityIdentifier("musigNonceButton")
                     .disabled(nonceSessionStarted || minNonces >= participantCount
                         || minPartialSigs > 0 || !workingInputsRemainAvailable
                         || authorizing || broadcastTxid != nil)
                 Button("Round 2 — sign with this device") { signMuSig2() }
+                    .accessibilityIdentifier("musigSignButton")
                     .disabled(!nonceSessionStarted || signedMuSig2ThisSession
                         || secretNonces.isEmpty || minNonces < participantCount
                         || minPartialSigs >= participantCount || !workingInputsRemainAvailable
@@ -306,6 +308,7 @@ struct VaultSignView: View {
                 Button(broadcasting ? "Broadcasting…" : "Aggregate & broadcast") {
                     aggregateAndBroadcast()
                 }
+                .accessibilityIdentifier("musigBroadcastButton")
                 .disabled(minPartialSigs < participantCount || !workingInputsRemainAvailable
                     || authorizing || broadcasting || broadcastTxid != nil)
                 if !workingInputsRemainAvailable {
