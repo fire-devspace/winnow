@@ -9,7 +9,9 @@ need tests because their output informs debugging and release decisions.
 It consumes the shared [debugging implementation](../../Tools/Debug/Sources/WinnowDebug/README.md)
 and [fuzz invariants](../../Tools/Fuzz/Sources/WinnowFuzzCore/README.md).
 [GenerateTests](GenerateTests.swift) exercise offline generation
-decisions; [OperatorCLITests](OperatorCLITests.swift) check command behavior.
+decisions; [FallbackPeerAgeTests](FallbackPeerAgeTests.swift) exercise the
+freshness rule for the generated peer list against supplied clocks;
+[OperatorCLITests](OperatorCLITests.swift) check command behavior.
 
 Run `swift test --filter ToolsTests` from the repository root.
 [FuzzRegressionTests](FuzzRegressionTests.swift) discover only

@@ -17,6 +17,7 @@ scripts/winnow-debug doctor
 scripts/winnow-debug diagnostics --simulator booted --out /tmp/winnow-diagnostics
 scripts/winnow-debug diagnostics --simulator DEVICE_UUID --out /tmp/winnow-diagnostics --run E2E_RUN_ID
 scripts/winnow-debug generate --help
+scripts/winnow-debug check fallback-peers [--in PATH] [--as-of ISO8601]
 scripts/winnow-debug soak --help
 scripts/winnow-debug soak --network signet --minutes 30 --out /tmp/signet-soak.jsonl
 ```
@@ -33,7 +34,11 @@ explicit E2E run ID, it also copies that run's redacted event journal and
 signet peer list, when present. It does not copy wallets or Keychain material.
 These are local debugging files, with no publishing or media-review workflow.
 
-The [generator runbook](../Generate/README.md) documents fallback-peer and
+`check` reads generated release data and reports on it without writing
+anything: today its one subject is the bundled fallback-peer list, whose age it
+compares with `NetworkParams.maxFallbackPeerAgeDays` and answers in its exit
+status. `scripts/check-fallback-peer-age` is the same command by a shorter
+name. The [generator runbook](../Generate/README.md) documents fallback-peer and
 checkpoint refreshes. The soak preserves its JSONL metrics and optional
 header/filter/peer state, defaults to public signet and three peers, and takes
 one sample per minute. `--minutes 0` or omission runs until interrupted.

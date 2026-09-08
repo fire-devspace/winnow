@@ -17,3 +17,7 @@ cover encoding, parsing, and network selection.
 FallbackPeersGenerated.swift is produced by the
 [release-data generator](../../../../Tools/Generate/README.md). Refresh it through that
 tool and retain its log; do not hand-edit a list merely to pass the freshness gate.
+`NetworkParams.maxFallbackPeerAgeDays` is how long a generated list counts as
+current, and `scripts/check-fallback-peer-age` reports on the committed file
+against it in its exit status. The always-on tests check the list's shape, never
+its age, so a stale list stays green until something asks.

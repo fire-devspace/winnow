@@ -1,0 +1,15 @@
+#!/bin/bash
+# Is the bundled fallback-peer list (#161) still current? Exit 0 yes, non-zero no.
+#
+# scripts/check-release-policy asks the same question against the same ceiling,
+# NetworkParams.maxFallbackPeerAgeDays, but only on the release path: it runs
+# from a tag. Anything that consumes this package by pinning a revision never
+# reaches that gate, and its bundled list ages from the day it pinned with
+# nothing to say so. This is the rule as its own command, on any cadence, for
+# any lane that wants an exit status from it.
+#
+# --as-of ISO8601 fixes the clock; --in PATH names a file other than the
+# committed one. No network: it reads the file the generator last wrote.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec scripts/winnow-debug check fallback-peers "$@"

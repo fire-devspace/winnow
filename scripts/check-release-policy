@@ -8,12 +8,21 @@ import re
 tag = os.environ.get('RELEASE_TAG', '')
 if tag and not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
     raise SystemExit('expected a stable vMAJOR.MINOR.PATCH tag')
+# The ceiling belongs to the library, beside the list it governs, so this reads
+# it instead of keeping a second copy that can drift. The arithmetic stays here
+# because this job runs on a runner with no Swift toolchain; the same rule for
+# lanes that have one is `scripts/check-fallback-peer-age`.
+params = pathlib.Path('Sources/WalletCore/Network/Protocol/NetworkParams.swift').read_text()
+ceiling = re.search(r'static let maxFallbackPeerAgeDays = (\d+)', params)
+if not ceiling:
+    raise SystemExit('NetworkParams no longer states maxFallbackPeerAgeDays')
+limit = int(ceiling[1])
 text = pathlib.Path('Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift').read_text()
 match = re.search(r'^// Generation: ([^,]+),', text, re.M)
 if not match:
     raise SystemExit('fallback peers have no recorded generation date')
 generated = dt.datetime.fromisoformat(match[1].replace('Z', '+00:00'))
 age = (dt.datetime.now(dt.timezone.utc) - generated).total_seconds() / 86400
-print(f'fallback peers generated {match[1]} ({age:.1f} days ago)')
-if not 0 <= age <= 30:
+print(f'fallback peers generated {match[1]} ({age:.1f} days ago, ceiling {limit})')
+if not 0 <= age <= limit:
     raise SystemExit('run scripts/generate-fallback-peers and commit the refreshed list before tagging')

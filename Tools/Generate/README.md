@@ -16,6 +16,7 @@ Run from the repository root:
 ```sh
 swift run winnow-debug generate --help
 scripts/generate-fallback-peers
+scripts/check-fallback-peer-age [--as-of ISO8601] [--in PATH]
 scripts/refresh-checkpoint [--network mainnet|signet] ~/…/headers.bin [height]
 ```
 
@@ -51,6 +52,18 @@ simulator container holds one too. The signet constant currently in the tree
 was derived on a machine with no route to port 38333; `NetworkParams.swift`
 records where its header file came from instead, and what that provenance is
 and is not worth.
+
+`check-fallback-peer-age` answers the other half of the same question and
+needs no network: is the committed list still within
+`NetworkParams.maxFallbackPeerAgeDays`. `scripts/check-release-policy` asks it
+at a release tag, from a runner with no Swift toolchain; this asks it on any
+cadence, from any lane, and exits non-zero when the list is too old, records no
+generation date, or records one in the future. Both read the ceiling from the
+library rather than carrying a copy, and `--as-of` fixes the clock so the rule
+is testable rather than only observable. A consumer that pins a revision
+instead of following tags reaches neither gate by itself and should run this
+one on its own schedule: the bundled list ages from the day it pinned, and the
+always-on shape tests pass just as happily on a list three months stale.
 
 The default output path is found from `#filePath`, so it lands in the
 checkout the tool was built from whatever the working directory. Selection,

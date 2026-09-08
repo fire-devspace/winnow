@@ -46,11 +46,16 @@ tags in Winnow and the archived library remain fixed; the former library's
 Run Release manually first to validate the checkout without signing, uploading,
 assigning TestFlight groups or publishing. Release checks the generation date
 recorded inside `FallbackPeersGenerated.swift`, so copying or squashing history
-cannot make an old peer list appear fresh. If older than 30 days, run
-`scripts/generate-fallback-peers` (which runs `winnow-debug generate fallback-peers`
-from [Tools/Generate](../../Tools/Generate/README.md)), retain its log and
-commit the result before tagging. Refreshing the header checkpoint is the same
-tool's other subcommand, via `scripts/refresh-checkpoint`, and needs a
+cannot make an old peer list appear fresh. The ceiling is
+`NetworkParams.maxFallbackPeerAgeDays`, read out of the library so the gate
+cannot drift from it. If the list is older, run `scripts/generate-fallback-peers`
+(which runs `winnow-debug generate fallback-peers` from
+[Tools/Generate](../../Tools/Generate/README.md)), retain its log and commit the
+result before tagging. Release is not the only place that question can be asked:
+`scripts/check-fallback-peer-age` applies the same ceiling on any cadence and
+answers in its exit status, which is what a consumer pinning a revision rather
+than following tags has to run for itself. Refreshing the header checkpoint is
+the same tool's other subcommand, via `scripts/refresh-checkpoint`, and needs a
 genesis-validated header file; it is a manual release-time step, not a check.
 The signed app archive is checked for E2E controls and its provenance is
 attached to the GitHub release.

@@ -385,6 +385,33 @@ struct PeerPolicyTests {
             #expect(peer.port == 8_333)
         }
     }
+
+    /// A refresh replaces the addresses; it must not quietly replace what they
+    /// count as.
+    ///
+    /// These endpoints are the `fallback` class wherever they are seen: the
+    /// pool classes them so when it builds candidates, and version 2 of the
+    /// peers file keeps that class after a successful dial rather than
+    /// collapsing them to `persisted`. The source ceiling is what that buys —
+    /// however long the list grows, and however fast its peers answer, it
+    /// cannot fill a three-slot pool on its own. A list that lost its class
+    /// would still pass every shape check above and take the ceiling with it.
+    @Test("the committed list keeps the fallback class, and cannot fill the pool alone")
+    func committedListKeepsItsSourceClass() throws {
+        let candidates = NetworkParams.mainnet.fallbackPeers.map {
+            PeerCandidate(endpoint: $0, source: .fallback)
+        }
+        let encoded = try JSONEncoder().encode(PersistedPeers(candidates))
+        let restored = try #require(PersistedPeers.decode(encoded))
+        #expect(restored == candidates)
+        #expect(restored.allSatisfy { $0.source == .fallback })
+
+        var seated: [PeerCandidate] = []
+        for candidate in restored where policy().admits(candidate, given: seated) {
+            seated.append(candidate)
+        }
+        #expect(seated.count == 2, "a list this long must still leave the third slot elsewhere")
+    }
 }
 
 private final class Flag: @unchecked Sendable {

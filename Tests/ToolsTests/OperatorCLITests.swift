@@ -7,7 +7,8 @@ import Testing
 struct OperatorCLITests {
     @Test("operator help needs no story run, simulator, network, or header file")
     func help() async throws {
-        for command in [["inspect"], ["inspect", "--help"], ["generate"], ["generate", "--help"], ["soak", "--help"], ["soak", "help"]] {
+        for command in [["inspect"], ["inspect", "--help"], ["generate"], ["generate", "--help"],
+                        ["check"], ["check", "--help"], ["soak", "--help"], ["soak", "help"]] {
             try await WinnowDebug.execute(command)
         }
     }
@@ -22,6 +23,9 @@ struct OperatorCLITests {
         }
         await #expect(throws: GenerateError.self) {
             try await WinnowDebug.execute(["generate", "checkpoint"])
+        }
+        await #expect(throws: DebugError.self) {
+            try await WinnowDebug.execute(["check", "nope"])
         }
         await #expect(throws: SoakError.self) {
             try await WinnowDebug.execute(["soak", "--peers", "0"])

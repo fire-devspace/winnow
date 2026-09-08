@@ -21,6 +21,7 @@ enum WinnowDebug {
         case "help", "--help", "-h": print(usageText)
         case "inspect": print(try InspectionCommand.render(Array(arguments.dropFirst())))
         case "generate": try await WinnowGenerate.execute(Array(arguments.dropFirst()))
+        case "check": try FallbackPeerList.execute(Array(arguments.dropFirst()))
         case "soak": try await SoakCommand.execute(Array(arguments.dropFirst()))
         case "doctor":
             var failed = false
@@ -55,6 +56,7 @@ enum WinnowDebug {
       scripts/winnow-debug generate --help
       scripts/winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
       scripts/winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
+      scripts/winnow-debug check fallback-peers [--in PATH] [--as-of ISO8601]
       scripts/winnow-debug soak --help
       scripts/winnow-debug soak [--network signet|mainnet] [--minutes N] [--out PATH] [--state DIR]
     """
@@ -63,11 +65,15 @@ enum WinnowDebug {
 enum DebugError: LocalizedError {
     case usage(String)
     case command(String, Int32, String)
+    /// A check ran and its answer was no. Separate from `usage` because the
+    /// caller of a check reads the exit status, not the text.
+    case check(String)
 
     var errorDescription: String? {
         switch self {
         case let .usage(message): message
         case let .command(command, status, output): "\(command) failed (\(status)): \(output)"
+        case let .check(detail): detail
         }
     }
 }

@@ -10,6 +10,8 @@ for contributors and CI without duplicating the wallet implementation.
 consumers. [CI/release operations](../.github/internal/ci-release.md) and
 [debugging](../Tools/Debug/README.md) explain how to use them.
 signet-fixture starts test nodes; runner machines and registration are managed privately.
+check-fallback-peer-age reports whether the bundled peer list is still current,
+outside the release path that normally asks for it.
 
 [Python regressions](tests/README.md) cover site generation and LOC
 reporting. The existing CI jobs exercise build, dependency, warning, debugging,

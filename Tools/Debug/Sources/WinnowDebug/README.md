@@ -3,7 +3,8 @@
 # Debugging implementation
 
 This executable implements offline transaction/PSBT/descriptor inspection, environment checks, simulator diagnostics, network
-soaks, and generation of the app's fallback peers and header checkpoint.
+soaks, and generation of the app's fallback peers and header checkpoint, plus
+the freshness check that reads the generated peer list back.
 It helps investigate the actual GUI and networking code while staying outside
 the shipping app.
 

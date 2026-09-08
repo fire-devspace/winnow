@@ -29,6 +29,23 @@ public struct NetworkParams: Sendable, Equatable {
     /// see the per-network value's comment). Dialed alongside the DNS-seed
     /// results so a fresh launch works even when seed results are dead.
     public let fallbackPeers: [PeerEndpoint]
+
+    /// How long a generated `fallbackPeers` list is treated as current, in days.
+    ///
+    /// The list is a photograph of the network on the day it was taken, so its
+    /// age is the property that decides whether it is worth dialling — not its
+    /// length, which `PeerPolicyTests` already holds to a floor. Thirty days is
+    /// the figure the release gate has always used; it lives here, beside the
+    /// list it governs, so the gate, the check command and any consumer read
+    /// one number instead of three copies of it.
+    ///
+    /// Stated as a library property because the release tag is not the only
+    /// way this code ships. A consumer that pins a revision never reaches
+    /// `scripts/check-release-policy`, and its bundled list ages from the day
+    /// it pinned with nothing to say so; `scripts/check-fallback-peer-age`
+    /// answers the same question on any cadence, against this ceiling.
+    public static let maxFallbackPeerAgeDays = 30
+
     /// Optional trusted start for header sync (#89). Present where syncing
     /// from genesis is slow enough to matter, which is both public networks;
     /// it stays optional because a custom signet (`customSignet`) and the
