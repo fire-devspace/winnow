@@ -88,9 +88,11 @@ public struct BlockMatch: Sendable, Equatable {
 ///    filter-hash chain is walked forward and pinned per height. Every
 ///    checkpoint boundary the batch pins is compared against the cfcheckpt
 ///    reference before the batch's filters are read.
-/// 4. `getcfilters` (type 0x00) for the batch; each filter must reproduce the
-///    pinned header chain given the block hash from our PoW-checked header
-///    chain — this is what anchors filters to the block chain.
+/// 4. `getcfilters` (type 0x00) for the batch, asked for in chunks of
+///    `filtersPerChunk` and released chunk by chunk; each filter must
+///    reproduce the pinned header chain given the block hash from our
+///    PoW-checked header chain — this is what anchors filters to the block
+///    chain.
 /// 5. Each filter is matched locally against the watch list with BitcoinCore's
 ///    GCSFilter; on a hit the full block is fetched (getdata MSG_WITNESS_BLOCK),
 ///    its hash verified, and handed to `onMatch`.
@@ -101,6 +103,10 @@ public struct BlockMatch: Sendable, Equatable {
 ///    pruned to the headers a later check can still ask for: every checkpoint
 ///    boundary, and the run of recent heights a reorg could rewind into
 ///    (`prunedFilterHeaders`).
+///
+/// A run scans to the chain tip unless the caller passes `maxBlocks`, which
+/// stops it that many blocks past the frontier; the next run resumes from the
+/// persisted frontier.
 public actor FilterSync {
     public enum PersistenceState: Equatable, Sendable {
         case disabled
@@ -113,6 +119,13 @@ public actor FilterSync {
     public static let maxRangePerRequest: UInt32 = 1_000
     /// BIP157 checkpoint interval in blocks.
     public static let checkpointInterval: UInt32 = 1_000
+    /// How many filters one `getcfilters` request asks for. A batch is still
+    /// up to `maxRangePerRequest` blocks — that is the span the cfheaders
+    /// cross-check covers and the span progress is saved after — but its
+    /// filters arrive a chunk at a time, so a scan holds a chunk rather than
+    /// a whole batch. At 100 the burst a peer can put in memory before any of
+    /// it is matched is a tenth of what it was.
+    public static let defaultFiltersPerChunk: UInt32 = 100
 
     /// Persisted sync progress.
     public struct Progress: Codable, Sendable, Equatable {
@@ -142,6 +155,10 @@ public actor FilterSync {
     /// source. It also uses all the evidence available instead of discarding a
     /// third of it, at the cost of one extra round trip per sync.
     public let requiredCheckpointPeers: Int
+    /// Filters per `getcfilters` request, clamped to 1 ... `maxRangePerRequest`.
+    /// A caller that is tighter on memory than on round trips lowers it; see
+    /// `defaultFiltersPerChunk`.
+    public let filtersPerChunk: UInt32
     private let storageURL: URL?
     public nonisolated let persistenceState: PersistenceState
     private var progress: Progress
@@ -151,11 +168,13 @@ public actor FilterSync {
     private static let maximumPinnedHeaders = 2_000_000
 
     public init(pool: PeerPool, chain: HeaderChain, startHeight: UInt32,
-                storageURL: URL? = nil, requiredCheckpointPeers: Int = 3) throws {
+                storageURL: URL? = nil, requiredCheckpointPeers: Int = 3,
+                filtersPerChunk: UInt32 = FilterSync.defaultFiltersPerChunk) throws {
         self.pool = pool
         self.chain = chain
         self.storageURL = storageURL
         self.requiredCheckpointPeers = requiredCheckpointPeers
+        self.filtersPerChunk = min(max(1, filtersPerChunk), Self.maxRangePerRequest)
         if let storageURL {
             let result = try Self.load(storageURL: storageURL, startHeight: startHeight)
             persistenceState = result.state
@@ -205,6 +224,12 @@ public actor FilterSync {
         throw lastError
     }
 
+    /// `maxBlocks` bounds one run: at most that many blocks are scanned before
+    /// it returns, and the next call resumes from the persisted frontier. Nil
+    /// scans to the tip, which is what every caller had before. A bounded run
+    /// is for a scheduler that must hand control back on a deadline — a
+    /// foreground-only scan on a phone — rather than run to the tip once.
+    ///
     /// `onReorg` is called with the fork height when the header sync replaced a
     /// branch, and is awaited **before** any filter work resumes.
     ///
@@ -214,6 +239,7 @@ public actor FilterSync {
     /// aborts the sync rather than proceeding with state that is known stale
     /// (#127).
     public func sync(watchScripts: [Data],
+                     maxBlocks: UInt32? = nil,
                      onReorg: (@Sendable (UInt32) async throws -> Void)? = nil,
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         try beginRequest()
@@ -236,20 +262,18 @@ public actor FilterSync {
         // wrong. Roll back to the lowest fork the sync saw before reading a
         // single filter: the frontier below is the thing that would otherwise
         // carry the orphaned branch forward.
-        if let forkHeight = headerOutcome.minForkHeight {
-            // The caller goes first because it owns the crash marker: nothing
-            // may change in any store until the target height is recorded, or
-            // a crash leaves stores disagreeing with no way to know a rollback
-            // was ever in progress.
-            try await onReorg?(forkHeight)
-            try rollBack(to: forkHeight)
-        }
+        try await rollBackIfForked(headerOutcome, onReorg: onReorg)
         peers = await pool.connectedPeers()
         guard !peers.isEmpty else { throw FilterSyncError.noPeers }
         let tip = await chain.height
         let tipHash = await chain.tipHash
         try Self.validate(progress: progress, againstTip: tip)
         guard tip >= progress.nextScanHeight else { return }
+        // How far this run may go. Everything below stops at the ceiling
+        // rather than the tip, and a run that asked for no blocks at all stops
+        // before any filter request is sent.
+        guard let ceiling = Self.scanCeiling(frontier: progress.nextScanHeight,
+                                             maxBlocks: maxBlocks, tip: tip) else { return }
 
         // 2. cfcheckpt cross-peer comparison: collect answers about our tip,
         // adopt the majority, and only peers whose answer matched may go on
@@ -265,10 +289,13 @@ public actor FilterSync {
         peers = try await approved(peers: approvedEndpoints)
         try checkPinnedBoundaries(against: reference, tip: tip)
 
-        // 3+4+5. Batches of ≤1000 blocks.
-        while progress.nextScanHeight <= tip {
+        // 3+4+5. Batches of ≤1000 blocks, to the tip or this run's ceiling.
+        // A ceiling below the tip only shortens the last batch, exactly as the
+        // tip already does, so the cross-check and the save still happen once
+        // per batch.
+        while progress.nextScanHeight <= ceiling {
             let batchStart = progress.nextScanHeight
-            let batchStop = min(batchStart + Self.maxRangePerRequest - 1, tip)
+            let batchStop = min(batchStart + Self.maxRangePerRequest - 1, ceiling)
             guard let stopHash = await chain.blockHash(at: batchStop) else {
                 throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
             }
@@ -310,7 +337,9 @@ public actor FilterSync {
 
         // Final guard: the highest checkpoint header we computed must equal
         // the one the checkpoint peers announced (Core's last cfcheckpt entry
-        // is the header at the greatest multiple of 1000 ≤ tip).
+        // is the header at the greatest multiple of 1000 ≤ tip). A bounded run
+        // that stopped below that height has not pinned it yet, so there is
+        // nothing to compare and the run that reaches it does the comparing.
         //
         // The per-batch comparison walks the reference by index, so it cannot
         // notice a reference list that stops short of the boundaries we
@@ -321,6 +350,33 @@ public actor FilterSync {
            let announced = reference.filterHeaders.last, pinned != announced {
             throw FilterSyncError.checkpointMismatch("checkpoint filter header at \(lastCheckpoint) disagrees with cfcheckpt")
         }
+    }
+
+    /// A branch was replaced, so everything derived from the old one is wrong:
+    /// roll back to the lowest fork the header sync saw before reading a
+    /// single filter. The caller goes first because it owns the crash marker;
+    /// nothing may change in any store until the target height is recorded,
+    /// or a crash leaves stores disagreeing with no way to know a rollback was
+    /// ever in progress.
+    private func rollBackIfForked(_ outcome: HeaderChain.SyncOutcome,
+                                  onReorg: (@Sendable (UInt32) async throws -> Void)?) async throws {
+        guard let forkHeight = outcome.minForkHeight else { return }
+        try await onReorg?(forkHeight)
+        try rollBack(to: forkHeight)
+    }
+
+    /// The highest block one run may scan: `maxBlocks` blocks from the
+    /// frontier, never past the tip. Nil `maxBlocks` means the tip — the
+    /// unbounded behaviour of a caller that does not ask to be bounded — and a
+    /// nil result means a run with no room, which scans nothing.
+    ///
+    /// The sum is taken in 64 bits because a caller may reasonably say
+    /// `UInt32.max` to mean "as far as you can get", and a 32-bit add would
+    /// trap on it.
+    static func scanCeiling(frontier: UInt32, maxBlocks: UInt32?, tip: UInt32) -> UInt32? {
+        guard let maxBlocks else { return tip }
+        guard maxBlocks > 0 else { return nil }
+        return UInt32(min(UInt64(frontier) + UInt64(maxBlocks) - 1, UInt64(tip)))
     }
 
     /// One cfcheckpt answer per peer that answered about our chain tip.
@@ -648,28 +704,68 @@ public actor FilterSync {
         }
     }
 
-    /// Fetches, verifies and matches all filters in [batchStart, batchStop].
+    /// Fetches, verifies and matches all filters in [batchStart, batchStop],
+    /// a chunk at a time.
+    ///
+    /// The batch stays the unit of verification and of saving: the cfheaders
+    /// cross-check above covers all of it, and the completeness guard below
+    /// proves all of it arrived. What the chunks change is the unit of memory.
+    /// A 1000-filter burst was held whole until its last message landed, so
+    /// peak memory was a batch; a chunk is matched and dropped before the next
+    /// one is asked for, so peak memory is a chunk however long the batch is.
     private func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
                              watchScripts: [Data],
                              filterHeaders: [String: String],
                              onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
-        guard let stopHash = await chain.blockHash(at: batchStop) else {
-            throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
-        }
         let count = Int(batchStop - batchStart + 1)
+        var seen: Set<UInt32> = []
+        var chunkStart = batchStart
+        while chunkStart <= batchStop {
+            let chunkStop = UInt32(min(UInt64(chunkStart) + UInt64(filtersPerChunk) - 1,
+                                       UInt64(batchStop)))
+            seen.formUnion(try await scanChunk(chunkStart: chunkStart, chunkStop: chunkStop,
+                                               peer: peer, watchScripts: watchScripts,
+                                               filterHeaders: filterHeaders, onMatch: onMatch))
+            chunkStart = chunkStop + 1
+        }
+        guard seen.count == count else {
+            throw FilterSyncError.badPeerResponse("missing cfilters: \(seen.count)/\(count)")
+        }
+    }
+
+    /// One chunk of a batch: the filters for [chunkStart, chunkStop], each
+    /// verified against the batch's pinned headers and matched, and all of
+    /// them released when this returns. Gives back the heights it accounted
+    /// for, which the batch adds up.
+    ///
+    /// The height map is built per chunk rather than per batch, so a filter
+    /// for some other block of the same batch is a mismatch here instead of an
+    /// early delivery — a chunk is answered by the chunk that was asked for.
+    private func scanChunk(chunkStart: UInt32, chunkStop: UInt32, peer: PeerConnection,
+                           watchScripts: [Data],
+                           filterHeaders: [String: String],
+                           onMatch: @Sendable (BlockMatch) async throws -> Void) async throws
+        -> Set<UInt32>
+    {
+        guard let stopHash = await chain.blockHash(at: chunkStop) else {
+            throw FilterSyncError.badPeerResponse("missing header at \(chunkStop)")
+        }
+        let count = Int(chunkStop - chunkStart + 1)
         let responses = try await peer.requestMany(
-            .getcfilters(GetCFiltersRequest(startHeight: batchStart, stopHash: stopHash)),
-            expecting: "cfilter", count: count, timeout: .seconds(120))
+            .getcfilters(GetCFiltersRequest(startHeight: chunkStart, stopHash: stopHash)),
+            expecting: "cfilter", count: count, timeout: Self.chunkTimeout(filters: count))
 
         var heightByHash: [Data: UInt32] = [:]
-        for height in batchStart ... batchStop {
+        for height in chunkStart ... chunkStop {
             if let hash = await chain.blockHash(at: height) { heightByHash[hash] = height }
         }
 
         var seen: Set<UInt32> = []
+        var chunkBytes = 0
         for response in responses {
             let (height, message) = try verifiedFilter(from: response, heightByHash: heightByHash,
                                                        seen: &seen, filterHeaders: filterHeaders)
+            chunkBytes += message.filter.count
             guard !watchScripts.isEmpty else { continue }
             let parsed = try message.parsedFilter()
             let filter = try GCSFilter(p: GCSFilter.defaultP, m: GCSFilter.defaultM,
@@ -679,9 +775,19 @@ public actor FilterSync {
             try await deliverMatchedBlock(from: peer, height: height,
                                           blockHash: message.blockHash, onMatch: onMatch)
         }
-        guard seen.count == count else {
-            throw FilterSyncError.badPeerResponse("missing cfilters: \(seen.count)/\(count)")
-        }
+        peakChunkFilterBytesForTest = max(peakChunkFilterBytesForTest, chunkBytes)
+        return seen
+    }
+
+    /// A chunk's deadline, taken from the whole-batch ceiling it replaces:
+    /// 120 seconds covered up to `maxRangePerRequest` filters, so a chunk gets
+    /// that share of it and never less than 30 seconds, the timeout the
+    /// ordinary peer request uses. Sharing it out matters because the deadline
+    /// is now per request: at a flat 120 seconds a peer that answered every
+    /// chunk just inside it could hold one batch ten times as long as it could
+    /// before.
+    private static func chunkTimeout(filters: Int) -> Duration {
+        .seconds(max(30, 120 * filters / Int(maxRangePerRequest)))
     }
 
     /// One cfilter response, verified: the right type, a block we asked
@@ -906,6 +1012,11 @@ public actor FilterSync {
 
     /// Test seam: the pinned filter headers a rollback prunes.
     var pinnedFilterHeadersForTest: [String: String] { progress.filterHeaders }
+
+    /// Test seam: the most filter bytes this instance has held at once, which
+    /// is one chunk's worth. Chunking exists to keep that number off the size
+    /// of a batch, and counting is the only way to see it from outside.
+    private(set) var peakChunkFilterBytesForTest = 0
 
     private func persist(_ candidate: Progress) throws {
         guard let storageURL else { return }

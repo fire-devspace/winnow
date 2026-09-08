@@ -183,6 +183,11 @@ public actor LoopbackNode {
         }
     }
 
+    /// Every post-handshake message received, in arrival order and left in
+    /// place. `nextMessage` drains one; this reads them all, for a test that
+    /// asserts on the shape of a whole burst of requests.
+    public var receivedMessages: [PeerMessage] { inbox }
+
     /// Removes and returns the first received message with this command,
     /// waiting up to `timeout` for it to arrive.
     public func nextMessage(command: String, timeout: Duration = .seconds(10)) async -> PeerMessage? {
