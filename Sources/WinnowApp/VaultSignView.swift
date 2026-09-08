@@ -436,8 +436,9 @@ struct VaultSignView: View {
                     initial, record: record, reason: "Sign this shared-vault transaction")
                 try Task.checkCancellation()
                 guard accepts(token) else { return }
+                let reply = try psbt.base64V0()
                 working = psbt
-                output = try psbt.base64V0()
+                output = reply
             } catch is CancellationError {
                 // Inactive/background transitions deliberately abandon output.
             } catch {
@@ -504,10 +505,11 @@ struct VaultSignView: View {
                 }
                 try Task.checkCancellation()
                 guard accepts(token) else { return }
+                let reply = try result.0.base64V0()
                 secretNonces = result.1
                 nonceSessionStarted = true
                 working = result.0
-                output = try result.0.base64V0()
+                output = reply
                 model.journalPSBT(stage: "musig2-public-nonces", psbt: result.0)
             } catch is CancellationError {
                 // Secret nonces produced for an invalidated presentation are
@@ -553,8 +555,9 @@ struct VaultSignView: View {
                 }
                 try Task.checkCancellation()
                 guard accepts(token) else { return }
+                let reply = try psbt.base64V0()
                 working = psbt
-                output = try psbt.base64V0()
+                output = reply
                 secretNonces.removeAll(keepingCapacity: false)
                 signedMuSig2ThisSession = true
                 model.journalPSBT(stage: "musig2-partial-signed", psbt: psbt)
