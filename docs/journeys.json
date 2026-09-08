@@ -91,7 +91,7 @@
       "test16MuSig2RequiresSecondDevice"
     ],
     "guide": "/vaults",
-    "limitations": "The second signer in this journey is a software fixture, not a hardware wallet. Desktop and hardware-wallet integrations remain unverified. Every required key needs a backup; this policy has no alternate recovery branch."
+    "limitations": "The intended setup pairs your phone with a MuSig2-compatible hardware wallet or a desktop wallet such as Bitcoin Core. Those integrations remain unverified; this journey uses a software test signer. Back up both keys; there is no alternate recovery path."
   },
   {
     "id": "recovery",

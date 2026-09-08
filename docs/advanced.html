@@ -44,7 +44,7 @@ dialog a{overflow-wrap:anywhere}
 <nav class="jump-links" aria-label="Journeys"><a href="#second-device">Require another signing device</a> <a href="#vaults">Inspect and import signing policies</a> <a href="#groups">Use a group as a vault cosigner</a> <a href="#fees">Replace a pending payment with a higher fee</a> <a href="#network">Inspect peers and control external disclosure</a></nav>
 <section class="journey" id="second-device">
 <h2>Require another signing device</h2><p>Add an independent signing key to your phone wallet. In a 2-of-2 MuSig2 account, both keys must participate in every payment; the final Taproot signature does not reveal the signer count.</p>
-<p class="limit"><strong>Know before using it:</strong> The second signer in this journey is a software fixture, not a hardware wallet. Desktop and hardware-wallet integrations remain unverified. Every required key needs a backup; this policy has no alternate recovery branch.</p>
+<p class="limit"><strong>Know before using it:</strong> The intended setup pairs your phone with a MuSig2-compatible hardware wallet or a desktop wallet such as Bitcoin Core. Those integrations remain unverified; this journey uses a software test signer. Back up both keys; there is no alternate recovery path.</p>
 <p><a href="/vaults">Read the advanced guide</a></p>
 <button class="test-link" type="button" data-dialog="second-device-tests" aria-controls="second-device-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="second-device-tests" aria-labelledby="second-device-tests-title">
