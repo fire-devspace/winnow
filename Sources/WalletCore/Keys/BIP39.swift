@@ -54,9 +54,11 @@ public enum BIP39 {
     }
 
     /// Mnemonic -> 64-byte seed via PBKDF2-HMAC-SHA512, salt "mnemonic"+passphrase, 2048 rounds.
+    /// BIP39 normalizes both the sentence and the passphrase NFKD, so a wallet that
+    /// normalizes them any other way derives a different seed from the same words.
     public static func seed(mnemonic: String, passphrase: String = "") throws -> Data {
-        let password = Data(mnemonic.decomposedStringWithCanonicalMapping.utf8)
-        let salt = Data(("mnemonic" + passphrase).decomposedStringWithCanonicalMapping.utf8)
+        let password = Data(mnemonic.decomposedStringWithCompatibilityMapping.utf8)
+        let salt = Data(("mnemonic" + passphrase).decomposedStringWithCompatibilityMapping.utf8)
         return try PBKDF2.hmacSHA512(password: password, salt: salt)
     }
 }

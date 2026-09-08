@@ -5,6 +5,9 @@
 BIP39 recovery words, BIP32 derivation, BIP86 addresses, and the Apple Keychain
 implementation live together. Receiving, recovery, and signing use the same
 keys; durable secrets retain access rules distinct from ordinary wallet metadata.
+Seed derivation normalizes the recovery words and the passphrase NFKD, as BIP39
+requires: any other normalization derives a seed no other wallet agrees with, and
+nothing about the phrase itself would look wrong.
 
 The [wallet](../Wallet/README.md), [signer](../Transactions/README.md), and
 [app](../../WinnowApp/README.md) use this code. The in-memory keystore stays in

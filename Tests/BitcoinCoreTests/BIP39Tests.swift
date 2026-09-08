@@ -13,9 +13,9 @@ struct BIP39Tests {
         let xprv: String
     }
 
-    static func englishVectors() throws -> [Vector] {
+    static func vectors(language: String) throws -> [Vector] {
         let json = try Vectors.decode([String: [[String]]].self, "bip39-vectors.json", in: .module)
-        return try json["english"]!.map { entry in
+        return try json[language]!.map { entry in
             guard let entropy = Data(hex: entry[0]), let seed = Data(hex: entry[2]) else {
                 throw VectorError.badHex(entry[0])
             }
@@ -25,29 +25,54 @@ struct BIP39Tests {
 
     @Test("entropy -> mnemonic")
     func entropyToMnemonic() throws {
-        for vector in try Self.englishVectors() {
+        for vector in try Self.vectors(language: "english") {
             #expect(try BIP39.mnemonic(entropy: vector.entropy) == vector.mnemonic)
         }
     }
 
     @Test("mnemonic validation accepts all vectors")
     func validate() throws {
-        for vector in try Self.englishVectors() {
+        for vector in try Self.vectors(language: "english") {
             try BIP39.validate(mnemonic: vector.mnemonic)
         }
     }
 
     @Test("mnemonic -> seed")
     func mnemonicToSeed() throws {
-        for vector in try Self.englishVectors() {
+        for vector in try Self.vectors(language: "english") {
             let seed = try BIP39.seed(mnemonic: vector.mnemonic, passphrase: "TREZOR")
             #expect(seed == vector.seed)
         }
     }
 
+    /// The Japanese sentences separate words with U+3000 IDEOGRAPHIC SPACE, which only
+    /// compatibility decomposition folds to an ordinary space, so these vectors are the
+    /// ones that tell NFKD from NFD. Their words are outside the English wordlist, so
+    /// only the seed is checked here.
+    @Test("mnemonic -> seed, japanese (NFKD, not NFD)")
+    func japaneseMnemonicToSeed() throws {
+        for vector in try Self.vectors(language: "japanese") {
+            let seed = try BIP39.seed(mnemonic: vector.mnemonic, passphrase: "TREZOR")
+            #expect(seed == vector.seed)
+        }
+    }
+
+    /// The passphrase is normalized the same way, and nothing in the vector file covers
+    /// it: every language derives its seed under "TREZOR". U+FB01 LATIN SMALL LIGATURE FI
+    /// folds to "fi" under NFKD and is left alone by NFD. The expected seed was derived
+    /// outside this package with Python's `hashlib.pbkdf2_hmac`.
+    @Test("passphrase -> seed (NFKD, not NFD)")
+    func passphraseNormalization() throws {
+        let mnemonic = try Self.vectors(language: "english")[0].mnemonic
+        let ligature = try BIP39.seed(mnemonic: mnemonic, passphrase: "of\u{FB01}ce")
+        let expanded = try BIP39.seed(mnemonic: mnemonic, passphrase: "office")
+        #expect(ligature == expanded)
+        #expect(ligature == Data(hex: "a82f3f4d9297559940ae10ce91e52f9be22afd06444fd7c1d40fdd1204cab43068fefca566d9f9fa714807a55e02dbc13ab4d7b7481305be8d280bf237139c96"))
+    }
+
     @Test("seed -> BIP32 master xprv")
     func masterXprv() throws {
-        for vector in try Self.englishVectors() {
+        for vector in try Self.vectors(language: "english") {
             let master = try HDKey(seed: vector.seed)
             #expect(master.serialized() == vector.xprv)
         }
