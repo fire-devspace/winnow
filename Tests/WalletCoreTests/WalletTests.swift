@@ -302,6 +302,78 @@ struct WalletTests {
         }
     }
 
+    /// The same ceiling on the other path that signs.
+    ///
+    /// `buildSend` measures its signed bytes and coin selection refuses the
+    /// estimate before that, so nothing in this build can produce the pending
+    /// send this starts from. A build that predates either check could, and
+    /// its transaction is still in the state file — so the state file is
+    /// written the way that build would have left it: a pending transaction
+    /// already past the ceiling, with its change output still ours to
+    /// respend. A replacement rebuilt from it is the same size, and
+    /// `commitFeeBump` behind it marks every input spent for a transaction no
+    /// peer will relay.
+    @Test("a fee bump refuses a replacement past the standard size limit")
+    func feeBumpRefusesAnOversizedReplacement() async throws {
+        let url = tempFileURL("oversized-pending-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 100_000_000, 100)])
+        let coin = try #require(await wallet.utxos.first)
+        let changeScript = try await wallet.scriptPubKey(chain: .change, index: 0)
+
+        // One input and enough recipients to clear the ceiling: a P2TR output
+        // is 43 bytes, so ~2,400 of them put the vsize past 100,000.
+        let payments = (0 ..< 2_400).map { _ in
+            Payment(amount: 1_000, scriptPubKey: TestScripts.p2trDestination)
+        }
+        let changeOutputIndex = payments.count
+        let oversized = try TransactionBuilder.build(
+            inputs: [coin.outpoint], payments: payments,
+            change: Payment(amount: 90_000_000, scriptPubKey: changeScript),
+            changePosition: changeOutputIndex)
+        #expect(TransactionBuilder.signedVSize(inputCount: 1, outputs: oversized.outputs)
+            > TransactionBuilder.maximumStandardVSize, "the fixture must be over the ceiling")
+
+        // The state an older build would have persisted: the input spent by a
+        // send still in flight, its change live, and the exact transaction
+        // kept so a replacement can be rebuilt from it.
+        var state = try JSONDecoder().decode(WalletState.self, from: Data(contentsOf: url))
+        var spentFunding = coin
+        spentFunding.spent = WalletUTXO.SpentMarker(spentBy: oversized.txid, height: nil)
+        state.allUtxos = [spentFunding,
+                          WalletUTXO(txid: oversized.txid, vout: UInt32(changeOutputIndex),
+                                     amount: 90_000_000, scriptPubKey: changeScript,
+                                     chain: .change, index: 0, height: 0)]
+        state.nextChangeIndex = 1
+        state.pendingSends = [PendingSend(
+            rawTransaction: oversized.serialized(includeWitness: true), selected: [coin],
+            changeIndex: 0, changeOutputIndex: UInt32(changeOutputIndex), fee: 1_000)]
+        try JSONEncoder().encode(state).write(to: url, options: .atomic)
+
+        let reopened = try Wallet.open(storageURL: url, keyStore: keyStore)
+        let txid = oversized.txid
+        #expect(await reopened.feeBumpableTxids == [txid], "the fixture is bumpable to begin with")
+        let rate = try await reopened.pendingFeeRate(txid: txid)
+
+        var thrown: (any Error)?
+        do {
+            _ = try await reopened.buildFeeBump(txid: txid, feeRateSatPerVByte: rate + 1)
+        } catch {
+            thrown = error
+        }
+        guard case let .transactionTooLarge(vsize, limit)? = thrown as? WalletError else {
+            Issue.record("expected transactionTooLarge, got \(String(describing: thrown))")
+            return
+        }
+        #expect(limit == TransactionBuilder.maximumStandardVSize)
+        #expect(vsize > limit)
+        // Refused before anything moved, like every other build failure here.
+        #expect(await reopened.feeBumpableTxids == [txid])
+        #expect(await reopened.balance == 90_000_000)
+    }
+
     @Test("fee bump keeps inputs/payments, satisfies BIP125 fees, signs, and persists")
     func feeBump() async throws {
         let url = tempFileURL("wallet.json")
@@ -946,6 +1018,49 @@ struct WalletTests {
         // The unmodified file is the control: it loads.
         try good.write(to: url, options: .atomic)
         #expect(throws: Never.self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+    }
+
+    /// The same rule on the other list, which it was missing.
+    ///
+    /// `change` was held to strict ascending order and `external` to nothing
+    /// but disjointness, so a breakdown could name one vout twice — two
+    /// amounts and two scripts for a single output, and a reader has to pick
+    /// one — or list its outputs in an order the transaction does not have,
+    /// which is what "in transaction order" promises and what makes a vout
+    /// checkable against the transaction it names.
+    ///
+    /// The three cases below are the same two entries every time, at vouts
+    /// this transaction's change does not use, so what is being judged is the
+    /// order and nothing else: disjointness cannot be the reason any of them
+    /// is refused, and the ascending pair is the control that loads.
+    @Test("recorded external outputs must be ascending and unique",
+          arguments: [([8, 8], false), ([9, 8], false), ([8, 9], true)])
+    func externalVoutsMustAscend(vouts: [Int], loads: Bool) async throws {
+        let url = tempFileURL("external-order-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var reordered = outputs
+            let template = try! #require((outputs["external"] as? [[String: Any]])?.first)
+            reordered["external"] = vouts.map { vout -> [String: Any] in
+                var entry = template
+                entry["vout"] = NSNumber(value: vout)
+                return entry
+            }
+            return reordered
+        }
+        if loads {
+            #expect(throws: Never.self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+        } else {
+            #expect(throws: (any Error).self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+        }
     }
 
     /// `applyOutputs` skips a zero-value output because it is not a coin;

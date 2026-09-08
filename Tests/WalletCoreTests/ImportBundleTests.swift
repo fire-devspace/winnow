@@ -233,16 +233,22 @@ struct ImportBundleTests {
         }
     }
 
-    /// The v2 schema is frozen and its `KnownTransaction` has no place for an
-    /// output breakdown, so a restore comes back with `outputs` not known —
-    /// the same state as an entry written before the breakdown existed, and
-    /// deliberately not an empty one, which would claim the send paid nobody.
+    /// A confirmed send's destination survives a backup.
     ///
-    /// Worth pinning rather than leaving to the reader: the export walks the
-    /// history field by field, so adding a field to `HistoryEntry` and
-    /// forgetting the schema is frozen is exactly the change this catches.
-    @Test("a recorded output breakdown does not cross an export")
-    func recordedOutputsDoNotCrossAnExport() async throws {
+    /// The breakdown is the only record of where a confirmed payment went:
+    /// the `PendingSend` holding the same facts is retired by the block that
+    /// includes the transaction, and forward-only scanning cannot reconstruct
+    /// it — a restored wallet rescans from `lastKnownHeight`, which is past
+    /// the block in question. A bundle that dropped it therefore lost every
+    /// past payment's recipient for good, silently, on the one path a user
+    /// takes to keep their history.
+    ///
+    /// The schema carries it as an optional field and the version stays 2, so
+    /// the two directions below are the compatibility argument: a bundle
+    /// written now round-trips the breakdown, and one written before the
+    /// field imports with it not known rather than empty.
+    @Test("a recorded output breakdown crosses an export and comes back")
+    func recordedOutputsCrossAnExport() async throws {
         let wallet = try await TestSupport.fundedWallet(
             coins: [(.receive, 0, 150_000, 100)]).wallet
         let prepared = try await wallet.buildSend(
@@ -258,16 +264,96 @@ struct ImportBundleTests {
         #expect(!recorded.external.isEmpty, "the wallet knows where this send paid")
 
         let bundle = try await wallet.exportBundle()
+        #expect(bundle.version == 2, "an added optional field is not a new format")
         let json = try bundle.serialized()
-        #expect(!json.contains("\"outputs\""), "the frozen schema carries no breakdown")
+        #expect(json.contains("\"outputs\""))
 
         let restored = try Wallet.importing(
             try ImportBundle.decode(json: json), keyStore: InMemoryKeyStore())
         let entry = try #require(await restored.history.first { $0.txid == signed.txid })
-        #expect(entry.outputs == nil, "not known, which is not the same as paid nobody")
-        // Everything the schema does carry still made the trip.
+        #expect(entry.outputs == recorded, "where it paid, byte for byte")
+        // Everything the schema already carried still made the trip.
         #expect(entry.spent == 150_000)
         #expect(entry.height == 150)
+
+        // The same bundle in its older shape — the key removed, everything
+        // else untouched — still imports, with the breakdown not known rather
+        // than an empty one claiming the send paid nobody.
+        let older = try Self.bundleJSON(json) { transaction in
+            var without = transaction
+            without.removeValue(forKey: "outputs")
+            return without
+        }
+        let fromOlder = try Wallet.importing(try ImportBundle.decode(json: older),
+                                             keyStore: InMemoryKeyStore())
+        let olderEntry = try #require(await fromOlder.history.first { $0.txid == signed.txid })
+        #expect(olderEntry.outputs == nil)
+        #expect(olderEntry.spent == 150_000)
+    }
+
+    /// A bundle is the one input a user is invited to paste from anywhere, so
+    /// a breakdown arriving in one is held to what the state file is held to
+    /// on load: it must be able to describe a transaction. Without this an
+    /// import is a way to seed state `Wallet.open` would have refused.
+    ///
+    /// The cases are the wallet file's, in bundle form: a vout claimed as
+    /// both ours and a stranger's, external vouts that repeat, and external
+    /// vouts out of order.
+    @Test("a bundle whose output breakdown contradicts itself is refused",
+          arguments: [["external": [0], "change": [0]],
+                      ["external": [1, 1], "change": [0]],
+                      ["external": [2, 1], "change": [0]]])
+    func inconsistentBundleOutputsAreRefused(shape: [String: [Int]]) async throws {
+        let wallet = try await TestSupport.fundedWallet(
+            coins: [(.receive, 0, 150_000, 100)]).wallet
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        try await wallet.apply(match: fakeMatch(height: 150,
+                                                transactions: [prepared.built.transaction]))
+        try await wallet.recordScanHeight(151)
+        let json = try await wallet.exportBundle().serialized()
+        // The bundle as exported is the control: it imports.
+        #expect(throws: Never.self) {
+            _ = try Wallet.importing(try ImportBundle.decode(json: json),
+                                     keyStore: InMemoryKeyStore())
+        }
+
+        let hostile = try Self.bundleJSON(json) { transaction in
+            // Only the send carries a breakdown; the funding coinbase is an
+            // observed transaction and has none to edit.
+            guard let outputs = transaction["outputs"] as? [String: Any],
+                  let template = (outputs["external"] as? [[String: Any]])?.first
+            else { return transaction }
+            var edited = transaction
+            edited["outputs"] = [
+                "external": (shape["external"] ?? []).map { vout -> [String: Any] in
+                    var entry = template
+                    entry["vout"] = NSNumber(value: vout)
+                    return entry
+                },
+                "change": (shape["change"] ?? []).map { NSNumber(value: $0) },
+            ]
+            return edited
+        }
+        #expect(throws: WalletError.self) {
+            _ = try Wallet.importing(try ImportBundle.decode(json: hostile),
+                                     keyStore: InMemoryKeyStore())
+        }
+    }
+
+    /// Applies `transform` to every entry of a bundle's `transactions` array
+    /// and gives the JSON back. Editing the serialized form rather than the
+    /// struct is the point: it is what a bundle from another writer, or from
+    /// an attacker, actually looks like.
+    private static func bundleJSON(_ json: String,
+                                   _ transform: ([String: Any]) -> [String: Any]) throws -> String {
+        let object = try JSONSerialization.jsonObject(with: Data(json.utf8))
+        var bundle = try #require(object as? [String: Any])
+        bundle["transactions"] = try #require(bundle["transactions"] as? [[String: Any]])
+            .map(transform)
+        return String(decoding: try JSONSerialization.data(withJSONObject: bundle), as: UTF8.self)
     }
 
     @Test("export with the mnemonic is opt-in and yields a spendable wallet")

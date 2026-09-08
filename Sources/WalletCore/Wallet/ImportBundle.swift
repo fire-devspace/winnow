@@ -38,7 +38,10 @@ private final class EffectCollector: @unchecked Sendable {
 ///                   "scriptPubKey": "5120…", "chain": 0, "index": 3, "height": 149000 }],
 ///       "transactions": [{ "txid": "<display hex>", "height": 149000,
 ///                          "received": 50000, "spent": 0, "fee": 250,
-///                          "replacedBy": "<replacement display hex>" }]
+///                          "replacedBy": "<replacement display hex>",
+///                          "outputs": { "external": [{ "vout": 0, "amount": 50000,
+///                                                      "scriptPubKey": "5120…" }],
+///                                       "change": [1] } }]
 ///     }
 ///
 /// `fee` on a history entry is optional. It is present only when every
@@ -47,6 +50,21 @@ private final class EffectCollector: @unchecked Sendable {
 /// unknown. Observed feerate *samples* used by FeePolicy stay on-device
 /// and are not in this schema — a restored wallet falls back to presets
 /// until it observes new sends.
+///
+/// `outputs` is optional on the same terms and carries the breakdown
+/// `HistoryEntry.Outputs` holds: where a send paid, and which of the outputs
+/// it kept were change. Absent means not known — never "paid nobody" — so a
+/// bundle written before this field, or by software that never recorded one,
+/// restores exactly as it did. It is the only record of a confirmed send's
+/// destination that survives confirmation, and forward-only scanning cannot
+/// reconstruct it, so a backup that dropped it lost where every past payment
+/// went for good.
+///
+/// **The version stays 2.** The field is optional in both directions: an
+/// older reader ignores a key it does not know, and this reader treats a
+/// missing key as not known. A bump would instead make every bundle this
+/// build writes unreadable to a build shipping `supportedVersions = 1 ... 2`,
+/// over a field that build would have ignored.
 ///
 /// Legacy `silentPaymentTweak` signing data is read only to refuse unsupported
 /// coins safely. Version 1 remains readable for ordinary descriptor UTXOs;
@@ -101,19 +119,28 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         /// The transaction that superseded this one through fee replacement.
         /// Optional so existing v1/v2 bundles remain readable.
         public var replacedBy: String?
+        /// Where this transaction's outputs went, in the wallet's own shape.
+        /// Optional so a bundle written before it existed still imports, with
+        /// the breakdown coming back not known rather than empty. Validated
+        /// on the way in exactly as the wallet file is on load: amounts
+        /// inside the supply, and a breakdown that does not contradict
+        /// itself.
+        public var outputs: HistoryEntry.Outputs?
 
         public init(txid: String, height: UInt32, received: Int64, spent: Int64,
-                    fee: Int64? = nil, replacedBy: String? = nil) {
+                    fee: Int64? = nil, replacedBy: String? = nil,
+                    outputs: HistoryEntry.Outputs? = nil) {
             self.txid = txid
             self.height = height
             self.received = received
             self.spent = spent
             self.fee = fee
             self.replacedBy = replacedBy
+            self.outputs = outputs
         }
 
         private enum CodingKeys: String, CodingKey {
-            case txid, height, received, spent, fee, replacedBy
+            case txid, height, received, spent, fee, replacedBy, outputs
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -124,6 +151,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             try container.encode(spent, forKey: .spent)
             try container.encodeIfPresent(fee, forKey: .fee)
             try container.encodeIfPresent(replacedBy, forKey: .replacedBy)
+            try container.encodeIfPresent(outputs, forKey: .outputs)
         }
     }
 
@@ -176,12 +204,14 @@ public struct ImportBundle: Codable, Equatable, Sendable {
                      isCoinbase: utxo.isCoinbase ? true : nil)
             },
             transactions: history.map { entry in
-                // The v2 schema is frozen and carries no output breakdown, so
-                // an entry's `outputs` does not cross an export: it comes back
-                // not known, the same as one written before it was recorded.
+                // `outputs` travels as-is, including its absence: an entry
+                // that never had a breakdown writes no key, and one that has
+                // an empty `external` writes an empty list, which is the send
+                // that paid nothing out rather than the send nobody recorded.
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
                                  received: entry.received, spent: entry.spent, fee: entry.fee,
-                                 replacedBy: entry.replacedBy?.displayHex)
+                                 replacedBy: entry.replacedBy?.displayHex,
+                                 outputs: entry.outputs)
             },
             nextReceiveIndex: nextReceiveIndex,
             nextChangeIndex: nextChangeIndex
@@ -494,6 +524,12 @@ extension Wallet {
 
     /// The claimed history, with txids well-formed and amounts inside the
     /// supply — bounded hostile input like everything else in a bundle.
+    ///
+    /// A claimed output breakdown is held to the rule the wallet file is held
+    /// to on load: amounts inside the supply, and lists that can describe one
+    /// transaction. A bundle is the one input a user is invited to paste from
+    /// anywhere, so it must not be able to seed state a state file could not
+    /// have held.
     private static func validatedHistory(of bundle: ImportBundle) throws -> [HistoryEntry] {
         try bundle.transactions.map { known in
             guard let txid = Data(hex: known.txid), txid.count == 32 else {
@@ -512,9 +548,20 @@ extension Wallet {
                   (0 ... BitcoinAmount.maximum).contains(known.spent),
                   known.fee.map({ (0 ... BitcoinAmount.maximum).contains($0) }) ?? true
             else { throw WalletError.invalidBundle("transaction history has invalid amounts") }
+            if let outputs = known.outputs {
+                guard outputs.external.allSatisfy({
+                    (0 ... BitcoinAmount.maximum).contains($0.amount)
+                }) else {
+                    throw WalletError.invalidBundle("transaction history has invalid amounts")
+                }
+                guard outputs.isSelfConsistent else {
+                    throw WalletError.invalidBundle(
+                        "transaction \(known.txid) has an inconsistent output breakdown")
+                }
+            }
             return HistoryEntry(txid: Data(txid.reversed()), height: known.height,
                                 received: known.received, spent: known.spent, fee: known.fee,
-                                replacedBy: replacedBy)
+                                replacedBy: replacedBy, outputs: known.outputs)
         }
     }
 

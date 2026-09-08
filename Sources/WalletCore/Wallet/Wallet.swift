@@ -290,9 +290,18 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
                 change: try container.decodeIfPresent([UInt32].self, forKey: .change) ?? [])
         }
 
-        /// Whether the two lists can describe one transaction: `change` is
-        /// strictly ascending, as the doc above promises, and no vout is
+        /// Whether the two lists can describe one transaction: each is
+        /// strictly ascending, as the docs above promise, and no vout is
         /// claimed as both ours and someone else's.
+        ///
+        /// Strictly ascending is what makes a list unique as well as ordered,
+        /// and `external` needs both. Two entries naming the same vout are two
+        /// amounts and two scripts for one output, so a reader has to pick one
+        /// and is describing a transaction that cannot exist either way; the
+        /// order is what "in transaction order" above already promises, and
+        /// what lets a vout be checked against the transaction it names. Only
+        /// `change` was held to this, so a file could list vout 1 twice, or
+        /// list 2 before 1, and load.
         ///
         /// Checked at decode because nothing else can. `classifyOutputs`
         /// walks the outputs in order and puts each in exactly one list, so
@@ -301,8 +310,10 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
         /// bounded, so leaving the vouts alone made half the field validated
         /// and half not.
         var isSelfConsistent: Bool {
-            zip(change, change.dropFirst()).allSatisfy { $0 < $1 }
-                && Set(external.map(\.vout)).isDisjoint(with: change)
+            let externalVouts = external.map(\.vout)
+            return zip(change, change.dropFirst()).allSatisfy { $0 < $1 }
+                && zip(externalVouts, externalVouts.dropFirst()).allSatisfy { $0 < $1 }
+                && Set(externalVouts).isDisjoint(with: change)
         }
     }
 
@@ -1288,6 +1299,12 @@ public actor Wallet {
     /// every selected coin spent, so a transaction nothing will relay strands
     /// those coins in a locally-spent, on-chain-unspent limbo that
     /// forward-only scanning cannot repair.
+    ///
+    /// Every path that hands a signed transaction to the broadcaster comes
+    /// through here: `buildSend` and `buildFeeBump` both. A replacement is
+    /// built from a stored transaction rather than from selection, so it is
+    /// the path where an already-oversized send would otherwise be re-signed
+    /// unmeasured.
     static func checkStandardSize(_ transaction: Transaction) throws {
         let vsize = TransactionBuilder.vsize(of: transaction)
         guard vsize <= TransactionBuilder.maximumStandardVSize else {
@@ -1439,12 +1456,24 @@ public actor Wallet {
     /// Rebuilds and signs a BIP125 replacement with the same inputs and
     /// recipient outputs. The original change output is shrunk, or removed if
     /// the remainder would be dust. Like `buildSend`, this is mutation-free.
+    ///
+    /// The replacement meets the standard-size ceiling on the same terms the
+    /// first send does. Nothing here builds an oversized transaction — the
+    /// inputs and the recipients are the original's, and dropping the change
+    /// output only shrinks it — but the original is read from the state file
+    /// rather than built now, and a pending send written before `buildSend`
+    /// measured its signed bytes is already past the ceiling. Re-signing it
+    /// produced an equally unrelayable replacement, and `commitFeeBump` then
+    /// marked the coins spent behind it: the same locally-spent,
+    /// on-chain-unspent limbo `checkStandardSize` exists to prevent, reached
+    /// by the one path that did not check.
     public func buildFeeBump(txid: Data, feeRateSatPerVByte: Double) throws -> PreparedFeeBump {
         let candidate = try feeBumpCandidate(txid: txid, feeRateSatPerVByte: feeRateSatPerVByte)
         let (psbt, signed) = try sign(
             transaction: candidate.transaction, selected: candidate.pending.selected,
             changeIndex: candidate.change.map { _ in candidate.changeIndex },
             changeOutputIndex: candidate.changeOutputIndex.map(Int.init))
+        try Self.checkStandardSize(signed)
         let built = BuiltTransaction(psbt: psbt, transaction: signed, fee: candidate.fee,
                                      changeAmount: candidate.change?.amount)
         return PreparedFeeBump(originalTxid: txid, built: built,
