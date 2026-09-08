@@ -24,8 +24,14 @@ struct KeyStoreTests {
 
     @Test("WalletSecret tagged serialization round trip")
     func secretSerialization() throws {
+        let account = try BIP86.accountKey(from: testMaster(), coinType: 1)
+            .serialized(network: .testnet)
         for secret in [WalletSecret.mnemonic(testMnemonic),
-                       WalletSecret.masterKey("xprv9s21ZrQH143K3GJpoapnV8SFfukcVBSfeCficPSGfubmSFDxo1kuHnLisriDvSnRRuL2Qrg5ggqHKNVpxR86QEC8w35uxmGoggxtQTPvfUu")] {
+                       WalletSecret.masterKey("xprv9s21ZrQH143K3GJpoapnV8SFfukcVBSfeCficPSGfubmSFDxo1kuHnLisriDvSnRRuL2Qrg5ggqHKNVpxR86QEC8w35uxmGoggxtQTPvfUu"),
+                       WalletSecret.accountKey(xprv: account, masterFingerprint: 0x73C5_DA0A),
+                       // A fingerprint with leading zeros: the encoding is
+                       // fixed-width hex, so it must not come back shortened.
+                       WalletSecret.accountKey(xprv: account, masterFingerprint: 0x0000_00FF)] {
             #expect(try WalletSecret(serialized: secret.serialized) == secret)
         }
         #expect(throws: KeyStoreError.malformedSecret) {
@@ -33,6 +39,15 @@ struct KeyStoreTests {
         }
         #expect(throws: KeyStoreError.malformedSecret) {
             _ = try WalletSecret(serialized: Data("no-newline".utf8))
+        }
+        // An account secret is three lines, and its fingerprint line is eight
+        // hex digits — not seven, and not a signed integer literal, which
+        // `UInt32(_:radix:)` would otherwise accept.
+        for text in ["account\n73c5da0a", "account\n73c5da0\n\(account)",
+                     "account\n+3c5da0a\n\(account)", "account\n73c5da0a\n\(account)\nextra"] {
+            #expect(throws: KeyStoreError.malformedSecret) {
+                _ = try WalletSecret(serialized: Data(text.utf8))
+            }
         }
     }
 }

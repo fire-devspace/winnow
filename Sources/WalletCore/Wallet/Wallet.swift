@@ -29,6 +29,12 @@ public enum WalletError: Error, Equatable, LocalizedError {
     /// Legacy signing metadata must not be silently discarded by JSONDecoder:
     /// the resulting coin would look ordinary but could not be spent here.
     case unsupportedWalletData
+    /// The account key held for this wallet does not belong to it: it declares
+    /// a different master fingerprint than the descriptor's origin, it does not
+    /// sit at the end of that origin path, or it carries no private material.
+    /// Refusing is the point of storing the fingerprint beside the key — the
+    /// wrong account key signs perfectly well, for someone else's coins.
+    case accountKeyMismatch
 
     public var errorDescription: String? {
         switch self {
@@ -62,6 +68,8 @@ public enum WalletError: Error, Equatable, LocalizedError {
             This wallet contains unsupported signing data and cannot be opened here. \
             Keep the original wallet file and use compatible wallet software to recover these coins.
             """
+        case .accountKeyMismatch:
+            "The protected key on this device belongs to a different wallet, so nothing was signed."
         }
     }
 }
@@ -746,6 +754,56 @@ public actor Wallet {
                                 accountKey: accountKey.neutered, keyStore: keyStore,
                                 storageURL: storageURL, state: state)
         try keyStore.store(.mnemonic(mnemonic), for: wallet.id)
+        try Self.persistNewWallet(state: state, storageURL: storageURL,
+                                  walletID: wallet.id, keyStore: keyStore)
+        return wallet
+    }
+
+    /// Creates a wallet from an account key the embedder derived itself: the
+    /// library is handed m/86'/coin'/account' and the master fingerprint that
+    /// path hangs from, and is never in a position to see the seed or the root
+    /// key. This fork adds the constructor; upstream generates the mnemonic
+    /// here and has no caller that could hold one back.
+    ///
+    /// The descriptor, the wallet ID and every PSBT origin come out identical
+    /// to `create(network:keyStore:…)` run on the seed this account key was
+    /// derived from — the property the differential custody test pins. What
+    /// differs is what the KeyStore holds afterwards, and so what reading it
+    /// yields: one account's spending authority rather than every account's,
+    /// and no recovery phrase. A wallet made this way cannot export a seed
+    /// backup; the embedder is the only place that could.
+    public static func create(accountKey: HDKey, masterFingerprint: UInt32,
+                              network: BitcoinNetwork, keyStore: any KeyStore,
+                              storageURL: URL? = nil, creationHeight: UInt32 = 0,
+                              account: UInt32 = 0) throws -> Wallet {
+        let coinType = Self.coinType(for: network)
+        let origin = Descriptor.KeyOrigin(fingerprint: masterFingerprint,
+                                          path: [86, coinType, account].map { $0 + HDKey.hardenedOffset })
+        // Refused here as well as at signing time: a caller that hands over the
+        // root key, or an account key from a different depth, would otherwise
+        // get a wallet whose addresses are real and whose signatures are not.
+        guard accountKey.isPrivate, accountKey.depth == UInt8(origin.path.count),
+              accountKey.childIndex == origin.path.last
+        else { throw WalletError.accountKeyMismatch }
+        let descriptor = Self.makeDescriptor(accountKey: accountKey, origin: origin, network: network)
+        let state = WalletState(descriptor: descriptor.serialized(), network: network.rawValue,
+                                creationHeight: creationHeight, nextScanHeight: creationHeight)
+        let wallet = try Wallet(network: network, descriptor: descriptor,
+                                accountKey: accountKey.neutered, keyStore: keyStore,
+                                storageURL: storageURL, state: state)
+        let xprv = accountKey.serialized(network: Self.hdNetwork(for: network))
+        try keyStore.store(.accountKey(xprv: xprv, masterFingerprint: masterFingerprint), for: wallet.id)
+        try Self.persistNewWallet(state: state, storageURL: storageURL,
+                                  walletID: wallet.id, keyStore: keyStore)
+        return wallet
+    }
+
+    /// Writes a new wallet's first state file, and on failure deletes the
+    /// secret stored a moment earlier. Wallet creation is one logical
+    /// operation: do not leave a keychain entry that makes an idempotent retry
+    /// fail after local state persistence was interrupted.
+    private static func persistNewWallet(state: WalletState, storageURL: URL?,
+                                         walletID: String, keyStore: any KeyStore) throws {
         do {
             if let storageURL {
                 let data = try JSONEncoder().encode(state)
@@ -753,13 +811,9 @@ public actor Wallet {
                                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
         } catch {
-            // Wallet creation is one logical operation: do not leave a
-            // keychain entry that makes an idempotent retry fail after local
-            // state persistence was interrupted.
-            try? keyStore.delete(walletID: wallet.id)
+            try? keyStore.delete(walletID: walletID)
             throw error
         }
-        return wallet
     }
 
     /// Re-opens a wallet from its persisted JSON state.
@@ -1651,11 +1705,11 @@ public actor Wallet {
                                                        originPath: origin.path))
         }
         var psbt = try PSBT(unsignedTx: transaction, inputs: inputInfo, outputs: outputInfo)
-        // One KeyStore read and one seed derivation for the whole operation,
-        // handed down to each input the way the vault entries take `master`
+        // One KeyStore read and one derivation for the whole operation, handed
+        // down to each input the way the vault entries take `master`
         // (`Vault.partialSign`), rather than a PBKDF2 run per input. The key
         // still lives no longer than this call.
-        let master = try masterKey()
+        let account = try accountPrivateKey()
         for (index, utxo) in selected.enumerated() {
             // BIP86 key-path spend: the output key is the account key tweaked
             // by the coin's own chain/index coordinates. Both sends and
@@ -1663,7 +1717,7 @@ public actor Wallet {
             try psbt.signKeyPath(
                 input: index,
                 tweakedPrivateKey: tweakedPrivateKey(chain: utxo.chain, index: utxo.index,
-                                                     master: master))
+                                                     account: account))
         }
         try psbt.finalize()
         return (psbt, try psbt.extractedTransaction())
@@ -1688,28 +1742,70 @@ public actor Wallet {
         return origin
     }
 
-    /// The master key from the KeyStore — loaded just for the duration of one
-    /// signing operation, never held in wallet state.
-    private func masterKey() throws -> HDKey {
+    /// The account key this wallet's addresses hang from, resolved from the
+    /// KeyStore — loaded just for the duration of one signing operation, never
+    /// held in wallet state.
+    ///
+    /// A root secret is walked down the descriptor's own origin path, exactly
+    /// where it was walked before. An account secret is already standing at the
+    /// end of that walk, so it is used as it is: the origin path is hardened,
+    /// and walking it a second time from a depth-3 key would derive a different
+    /// key rather than fail, which is a wrong signature and not an error.
+    ///
+    /// Hence the check on the way past. A stored account key claims a master
+    /// fingerprint, and that claim is the only thing tying it to this wallet:
+    /// an extended key records its parent's fingerprint (here m/86'/coin'), not
+    /// the master's, so the descriptor cannot confirm it and nothing else will.
+    /// The depth and child index reading with it catch the other confusions the
+    /// case invites — a root key filed under `accountKey`, which would derive
+    /// from m/chain/index, and a neighbouring account's key, which has this
+    /// master and the right depth and is still the wrong wallet. Each of them
+    /// signs successfully for coins this wallet does not own.
+    private func accountPrivateKey() throws -> HDKey {
+        // The same origin the removed root walk read: `Wallet.init` validated
+        // the descriptor's shape before the wallet existed.
+        let origin = Self.originUnchecked(of: descriptor)
         switch try keyStore.load(walletID: id) {
         case let .mnemonic(words):
-            try HDKey(seed: BIP39.seed(mnemonic: words))
+            return try Self.walk(HDKey(seed: BIP39.seed(mnemonic: words)), down: origin.path)
         case let .masterKey(xprv):
-            try HDKey.deserialize(xprv)
+            return try Self.walk(HDKey.deserialize(xprv), down: origin.path)
+        case let .accountKey(xprv, masterFingerprint):
+            let account = try HDKey.deserialize(xprv)
+            guard masterFingerprint == origin.fingerprint, account.isPrivate,
+                  account.depth == UInt8(origin.path.count),
+                  account.childIndex == origin.path.last
+            else { throw WalletError.accountKeyMismatch }
+            return account
         }
     }
 
+    /// Walks a key down a derivation path, one hardened or unhardened step at
+    /// a time. The descriptor's origin path is the only path handed to it.
+    private static func walk(_ key: HDKey, down path: [UInt32]) throws -> HDKey {
+        var key = key
+        for step in path { key = try key.child(at: step) }
+        return key
+    }
+
     /// BIP86 tweaked private key for one of our addresses (key-path spend),
-    /// derived from the `master` its caller loaded for this signing operation.
-    private func tweakedPrivateKey(chain: AddressChain, index: UInt32, master: HDKey) throws -> Data {
-        let originPath = Self.originUnchecked(of: descriptor).path
-        var key = master
-        for step in originPath { key = try key.child(at: step) }
-        key = try key.child(at: UInt32(chain.rawValue)).child(at: index)
+    /// derived from the `account` key its caller loaded for this signing
+    /// operation.
+    private func tweakedPrivateKey(chain: AddressChain, index: UInt32, account: HDKey) throws -> Data {
+        let key = try account.child(at: UInt32(chain.rawValue)).child(at: index)
         guard let secret = key.privateKey else {
             throw WalletError.invalidDescriptor("neutered key in signing path")
         }
         return try BIP86.tweakedPrivateKey(secret)
+    }
+
+    /// The exact key-path secret `sign` uses for one of this wallet's coins.
+    /// Module-internal and called by no production path: the differential
+    /// custody test compares these bytes between a wallet holding the root and
+    /// one holding only the account key, which is the claim this fork's account
+    /// custody rests on and which no public surface can witness.
+    func keyPathSecret(chain: AddressChain, index: UInt32) throws -> Data {
+        try tweakedPrivateKey(chain: chain, index: index, account: accountPrivateKey())
     }
 
     /// The key-path secret that signs for a UTXO: the BIP86 tweaked key of
@@ -1724,8 +1820,9 @@ public actor Wallet {
     /// not move the frontier.
     ///
     /// Watch-only by default. The seed is included only on an explicit
-    /// opt-in; an xprv-seeded wallet throws ``WalletError/mnemonicUnavailable``
-    /// rather than silently exporting a non-spendable "backup".
+    /// opt-in; a wallet seeded from an extended key, master or account, throws
+    /// ``WalletError/mnemonicUnavailable`` rather than silently exporting a
+    /// non-spendable "backup".
     public func exportBundle(includeMnemonic: Bool = false) throws -> ImportBundle {
         // Commit already pulled the parent inputs out of `utxos`. A bundle
         // written now would carry only height-0 change; a restore that
@@ -1750,7 +1847,7 @@ public actor Wallet {
             switch secret {
             case let .mnemonic(words):
                 mnemonic = words
-            case .masterKey:
+            case .masterKey, .accountKey:
                 throw WalletError.mnemonicUnavailable
             }
         } else {

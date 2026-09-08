@@ -21,29 +21,52 @@ public enum KeyStoreError: LocalizedError, Equatable {
     }
 }
 
-/// The root secret of a wallet, as held by a `KeyStore`.
+/// The spending secret of a wallet, as held by a `KeyStore`.
 public enum WalletSecret: Equatable, Sendable {
     /// BIP39 mnemonic sentence (single spaces, checksummed).
     case mnemonic(String)
     /// BIP32 master extended private key, Base58Check (xprv/tprv).
     case masterKey(String)
+    /// BIP32 account extended private key at the descriptor's own origin path
+    /// (m/86'/coin'/account'), Base58Check, with the fingerprint of the master
+    /// key it was derived from.
+    ///
+    /// This fork adds the case for an embedder that derives the account key in
+    /// its own key service and hands the library nothing above it; upstream
+    /// stores a root secret and has no way to reach this case. The wallet ID
+    /// and every PSBT origin are still the master fingerprint, which an
+    /// account key cannot supply on its own: an extended key records only its
+    /// parent's fingerprint, and the parent here is m/86'/coin', not the
+    /// master. So the fingerprint travels beside the key.
+    case accountKey(xprv: String, masterFingerprint: UInt32)
 
-    /// Tagged text encoding: a header line (`mnemonic` / `xprv`) + payload line.
-    /// Versionable and inspectable; the bytes are what lands in the keychain.
+    /// Tagged text encoding: a header line (`mnemonic` / `xprv` / `account`)
+    /// and its payload lines. Versionable and inspectable; the bytes are what
+    /// lands in the keychain.
     public var serialized: Data {
         switch self {
         case let .mnemonic(words): Data("mnemonic\n\(words)".utf8)
         case let .masterKey(xprv): Data("xprv\n\(xprv)".utf8)
+        case let .accountKey(xprv, fingerprint):
+            Data("account\n\(String(format: "%08x", fingerprint))\n\(xprv)".utf8)
         }
     }
 
     public init(serialized: Data) throws {
         let text = String(decoding: serialized, as: UTF8.self)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count == 2 else { throw KeyStoreError.malformedSecret }
-        switch lines[0] {
-        case "mnemonic": self = .mnemonic(String(lines[1]))
-        case "xprv": self = .masterKey(String(lines[1]))
+        guard let header = lines.first else { throw KeyStoreError.malformedSecret }
+        switch header {
+        case "mnemonic" where lines.count == 2: self = .mnemonic(String(lines[1]))
+        case "xprv" where lines.count == 2: self = .masterKey(String(lines[1]))
+        case "account" where lines.count == 3:
+            // Fixed-width lowercase hex, the spelling every wallet ID and
+            // descriptor origin in this library uses, so a stored secret and
+            // the descriptor beside it cannot disagree by formatting alone.
+            guard lines[1].count == 8, lines[1].allSatisfy(\.isHexDigit),
+                  let fingerprint = UInt32(lines[1], radix: 16)
+            else { throw KeyStoreError.malformedSecret }
+            self = .accountKey(xprv: String(lines[2]), masterFingerprint: fingerprint)
         default: throw KeyStoreError.malformedSecret
         }
     }

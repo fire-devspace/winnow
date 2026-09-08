@@ -59,6 +59,9 @@ final class AppModel {
         case noStorage
         case personCannotBePaid
         case personCannotCoOwn(String)
+        /// A root-key operation on a wallet whose stored secret is an account
+        /// key, so the key above it is somewhere this app cannot reach.
+        case rootKeyUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -76,6 +79,7 @@ final class AppModel {
             case .deviceAuthUnavailable: "Set a device passcode first — sensitive wallet actions require device authentication."
             case .deviceAuthFailed: "Device authentication failed."
             case .spendAlreadyInFlight: "Another payment is already being signed and broadcast. Wait for it to finish."
+            case .rootKeyUnavailable: "This wallet holds one account's key, not its root key, so shared savings cannot be signed on this device."
             case .noStorage: "Winnow could not reach its storage, so a chain reorganisation could not be recorded. Syncing has stopped rather than continue on stale data."
             }
         }
@@ -2033,6 +2037,11 @@ final class AppModel {
         switch try keyStore.load(walletID: walletID) {
         case let .mnemonic(words): master = try HDKey(seed: BIP39.seed(mnemonic: words))
         case let .masterKey(xprv): master = try HDKey.deserialize(xprv)
+        // A vault ceremony is inherently root-taking: `Vault` matches each
+        // cosigner's origin fingerprint against the master it is handed, and an
+        // account key cannot answer for the path above itself. This app always
+        // stores a root secret; the case exists for embedders that do not.
+        case .accountKey: throw AppError.rootKeyUnavailable
         }
         return try body(master)
     }
