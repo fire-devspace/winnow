@@ -2,65 +2,6 @@ import SwiftUI
 import UIKit
 import WalletCore
 
-/// The raw vault list (k-of-n script-path and n-of-n MuSig2), as a section
-/// of the People tab in Advanced mode. Beginners see the same vaults as
-/// shared savings; this is the expert view of the same records.
-struct VaultsSection: View {
-    @Environment(AppModel.self) private var model
-    @State private var showCreate = false
-
-    var body: some View {
-        Section {
-            if model.vaults.isEmpty {
-                Text("No vaults yet. A vault is a shared-custody Taproot descriptor watched by the same filter stream as the wallet.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.vaults) { record in
-                NavigationLink(destination: VaultDetailView(recordID: record.id)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(record.name)
-                        Text(policySummary(record))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text(satsText(record.balance))
-                        .font(.subheadline)
-                }
-            }
-            .onDelete { offsets in
-                for index in offsets {
-                    Task { await model.removeVault(id: model.vaults[index].id) }
-                }
-            }
-            // The sheet hangs off the row, not the Section: a modifier on a
-            // Section inside a List is dropped, and the sheet never presents.
-            Button("New vault") { showCreate = true }
-                .accessibilityIdentifier("newVaultButton")
-                .sheet(isPresented: $showCreate) {
-                    VaultCreateView()
-                }
-        } header: {
-            Text("Vaults")
-        } footer: {
-            Text("The descriptors behind shared savings, and MuSig2 vaults, with their PSBT tools.")
-        }
-    }
-
-    private func policySummary(_ record: VaultRecord) -> String {
-        guard let vault = try? Vault(record.descriptor, network: model.network) else {
-            return "invalid descriptor"
-        }
-        switch vault.policy {
-        case let .multiA(threshold, _, cosigners, _):
-            return "\(threshold)-of-\(cosigners.count) · script path"
-        case let .muSig2(participants, _):
-            return "\(participants.count)-of-\(participants.count) · MuSig2 key path"
-        }
-    }
-}
-
 /// Builds a vault descriptor from cosigner key expressions (pasted, or this
 /// device's own wallet key), previews the descriptor and first address, and
 /// saves it into the vault store.

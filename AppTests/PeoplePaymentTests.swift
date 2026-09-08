@@ -52,7 +52,6 @@ final class PeoplePaymentTests: XCTestCase {
         // No people yet: the vault still shows, with every signer unaccounted for.
         XCTAssertEqual(model.sharedSavings.count, 1)
         XCTAssertEqual(model.sharedSavings[0].coOwners, [])
-        XCTAssertEqual(model.sharedSavings[0].unknownSignerCount, 3)
         XCTAssertEqual(model.sharedSavings[0].threshold, 2)
         XCTAssertEqual(model.sharedSavings[0].signerCount, 3)
         XCTAssertFalse(model.sharedSavings[0].includesYou, "no wallet is open, so no own key")
@@ -61,14 +60,10 @@ final class PeoplePaymentTests: XCTestCase {
         try await model.addPerson(name: "Alice", payTo: nil, signerKey: keys[0])
         try await model.addPerson(name: "Bob", payTo: nil, signerKey: keys[2].replacingOccurrences(of: "'", with: "h"))
         XCTAssertEqual(model.sharedSavings[0].coOwners.map(\.name), ["Alice", "Bob"])
-        XCTAssertEqual(model.sharedSavings[0].unknownSignerCount, 1)
-        XCTAssertEqual(SharedSavingsRow.caption(for: model.sharedSavings[0]),
-                       "2 of 3 must approve · with Alice, Bob · 1 co-owner not in People")
-
-        // Removing a person cannot dangle: the vault simply loses a name.
-        try await model.removePerson(id: model.people[0].id)
-        XCTAssertEqual(model.sharedSavings[0].coOwners.map(\.name), ["Bob"])
-        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("people.json").path))
+        // Hiding a payment shortcut preserves signer identity and labels.
+        let alice = model.people[0]
+        try await model.updateRecipient(id: alice.id, name: alice.name, saved: false)
+        XCTAssertEqual(model.sharedSavings[0].coOwners.map(\.name), ["Alice", "Bob"])
 
         // A person needs a signer key to co-own savings; a pay-to-only person is refused.
         let payOnly = try await model.addPerson(

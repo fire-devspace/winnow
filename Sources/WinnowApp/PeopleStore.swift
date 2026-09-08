@@ -1,7 +1,7 @@
 import WalletCore
 import Foundation
 
-/// A person in the address book, as persisted at `people.json`. Public keys
+/// A saved recipient or co-owner, as persisted at `people.json`. Public keys
 /// only: nothing here can spend, so the file is not a wallet's and survives
 /// deleting one.
 struct PersonRecord: Codable, Equatable, Identifiable, Sendable {
@@ -14,9 +14,13 @@ struct PersonRecord: Codable, Equatable, Identifiable, Sendable {
     var signerKey: String?
     /// The next receive-chain index a payment to this person derives.
     var nextPaymentIndex: UInt32 = 0
+    /// Nil in older files: payable recipients were all saved. Keep the record
+    /// when hiding a shortcut so past names and address counters survive.
+    var savedRecipient: Bool?
 
     var canCoOwnSavings: Bool { signerKey != nil }
     var derivesFreshAddresses: Bool { payTo?.derivesFreshAddresses == true }
+    var isSavedRecipient: Bool { payTo != nil && savedRecipient != false }
 }
 
 enum PeopleStorageOpenResult: Equatable, Sendable {
@@ -38,7 +42,7 @@ enum PeopleStorageError: Error, Equatable, LocalizedError {
         case let .invalidState(reason):
             "Invalid people storage: \(reason)"
         case .damaged:
-            "Winnow could not safely read your People list, so nothing can be added to it until it is readable again."
+            "Winnow could not safely read your saved recipients, so they cannot be changed until the file is readable again."
         case let .duplicate(existingName):
             "That key already belongs to \(existingName)."
         case .nothingToSave:
@@ -51,7 +55,7 @@ enum PeopleStorageError: Error, Equatable, LocalizedError {
     }
 }
 
-/// The address book. Mirrors `VaultStore`: one JSON file per network, a
+/// Local recipient names, public keys, and address counters. Mirrors `VaultStore`: one JSON file per network, a
 /// strict validation that fails the whole snapshot closed, and a rollback
 /// on any failed write. Differs in one way: damage is not fatal to the app.
 /// A vault holds money; a person is a public key and a name. So a damaged
@@ -114,32 +118,29 @@ actor PeopleStore {
             throw PeopleStorageError.invalidState("a person needs a name")
         }
         guard payTo != nil || signerKey != nil else { throw PeopleStorageError.nothingToSave }
-        guard records.count < Self.maximumPeople else { throw PeopleStorageError.tooMany }
         let candidate = PersonRecord(id: UUID().uuidString, name: trimmedName,
                                      payTo: payTo, signerKey: signerKey)
         if let existing = try Self.firstSharingAKey(with: candidate, among: records, network: network) {
+            if !existing.isSavedRecipient, payTo != nil, existing.payTo == payTo, existing.signerKey == signerKey {
+                return try updateRecipient(id: existing.id, name: trimmedName, saved: true)
+            }
             throw PeopleStorageError.duplicate(existingName: existing.name)
         }
+        guard records.count < Self.maximumPeople else { throw PeopleStorageError.tooMany }
         return try mutate { $0.append(candidate) }.first { $0.id == candidate.id }!
     }
 
-    /// Replaces a person wholesale; the id must already exist.
-    func update(_ record: PersonRecord) throws {
+    /// Edit presentation only, preserving the current keys and payment counter.
+    @discardableResult
+    func updateRecipient(id: String, name: String? = nil, saved: Bool) throws -> PersonRecord {
         guard !isDamaged else { throw PeopleStorageError.damaged }
-        guard let position = records.firstIndex(where: { $0.id == record.id }) else {
+        guard let position = records.firstIndex(where: { $0.id == id }) else {
             throw PeopleStorageError.unknownPerson
         }
-        let others = records.enumerated().filter { $0.offset != position }.map(\.element)
-        if let existing = try Self.firstSharingAKey(with: record, among: others, network: network) {
-            throw PeopleStorageError.duplicate(existingName: existing.name)
-        }
-        try mutate { $0[position] = record }
-    }
-
-    func remove(id: String) throws {
-        guard !isDamaged else { throw PeopleStorageError.damaged }
-        guard records.contains(where: { $0.id == id }) else { return }
-        try mutate { $0.removeAll { $0.id == id } }
+        return try mutate {
+            if let name { $0[position].name = name.trimmingCharacters(in: .whitespacesAndNewlines) }
+            $0[position].savedRecipient = saved
+        }[position]
     }
 
     /// Moves the person's payment counter past `index`. Monotonic, so a
@@ -174,7 +175,7 @@ actor PeopleStore {
     }
 
     private static let damagedStorageMessage =
-        "Winnow found your People list but could not safely read it. The file was left untouched, and nothing can be added until it is readable again. Retry; if this continues, ask for help before changing anything."
+        "Winnow could not read the saved-recipient file. It has been left untouched. You can still send to an address; saved recipients cannot be changed until the file is readable again."
 
     /// The existing person who already holds one of `candidate`'s keys, if any.
     /// Keys are compared as derived material, so relabelling an origin cannot

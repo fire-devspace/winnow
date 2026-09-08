@@ -73,6 +73,29 @@ struct ImportBundleTests {
         #expect(await legacyWallet.balance == 150_000)
     }
 
+    @Test("payment details survive backup, legacy history loads, and a mismatched transaction is rejected")
+    func paymentDetails() async throws {
+        var bundle = try await makeBundle()
+        let payment = Transaction(version: 2, inputs: [Transaction.Input(
+            previousOutput: Transaction.Outpoint(txid: Data(repeating: 1, count: 32), vout: 0), scriptSig: Data(), sequence: 0xffff_fffd)],
+            outputs: [Transaction.Output(value: 1_000, scriptPubKey: Data([0x51]))], locktime: 0)
+        bundle.transactions[0].txid = payment.txid.displayHex
+        let wallet = try Wallet.importing(bundle, keyStore: InMemoryKeyStore())
+        #expect(await wallet.history[0].rawTransaction == nil)
+        let balance = await wallet.balance
+        try await wallet.rememberTransaction(payment)
+        #expect(await wallet.balance == balance)
+        let receipt = await wallet.history[0]
+        #expect(try receipt.transaction() == payment)
+        #expect(try JSONDecoder().decode(HistoryEntry.self, from: JSONEncoder().encode(receipt)) == receipt)
+        let exported = try await wallet.exportBundle(includeMnemonic: false)
+        let restored = try Wallet.importing(exported, keyStore: InMemoryKeyStore())
+        #expect(try await restored.history[0].transaction() == payment)
+        bundle.transactions[0].rawTransaction = payment.serialized(includeWitness: false)
+        bundle.transactions[0].txid = Data(repeating: 2, count: 32).displayHex
+        #expect(throws: WalletError.self) { try Wallet.importing(bundle, keyStore: InMemoryKeyStore()) }
+    }
+
     @Test("fee-replacement history survives export and import")
     func replacementHistory() async throws {
         var bundle = try await makeBundle()

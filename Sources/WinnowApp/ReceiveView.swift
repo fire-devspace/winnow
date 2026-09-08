@@ -22,6 +22,7 @@ struct ReceiveView: View {
         var id: Data { txid }
     }
 
+    @State private var showCard = false
     @State private var address: String?
     @State private var error: String?
     @State private var unconfirmed: [UnconfirmedPayment] = []
@@ -79,6 +80,12 @@ struct ReceiveView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showCard) { ShareMyCardView() }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Share my card") { showCard = true }.accessibilityIdentifier("shareMyCardButton")
                 }
             }
             .task {

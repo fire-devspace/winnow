@@ -233,18 +233,39 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
     /// history so the old tx is rendered as replaced, not as a second pending
     /// payment. Internal byte order; JSON uses display hex.
     public var replacedBy: Data?
+    /// The payment's outputs, authenticated by txid. Witnesses are not needed
+    /// for displaying recipients. Older history loads this on demand.
+    public var rawTransaction: Data?
 
     public init(txid: Data, height: UInt32, received: Int64, spent: Int64,
-                fee: Int64? = nil, replacedBy: Data? = nil) {
+                fee: Int64? = nil, replacedBy: Data? = nil, rawTransaction: Data? = nil) {
         self.txid = txid
         self.height = height
         self.received = received
         self.spent = spent
         self.fee = fee
         self.replacedBy = replacedBy
+        self.rawTransaction = rawTransaction
     }
 
-    private enum CodingKeys: String, CodingKey { case txid, height, received, spent, fee, replacedBy }
+    public func transaction() throws -> Transaction? {
+        guard let rawTransaction else { return nil }
+        let transaction = try Transaction.decode(rawTransaction)
+        guard transaction.txid == txid else {
+            throw WalletError.invalidBundle("payment details do not match the transaction ID")
+        }
+        var total: Int64 = 0
+        for output in transaction.outputs {
+            guard (0 ... BitcoinAmount.maximum).contains(output.value),
+                  output.value <= BitcoinAmount.maximum - total else {
+                throw WalletError.invalidTransactionAmounts
+            }
+            total += output.value
+        }
+        return transaction
+    }
+
+    private enum CodingKeys: String, CodingKey { case txid, height, received, spent, fee, replacedBy, rawTransaction }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -267,7 +288,9 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
                   received: try container.decode(Int64.self, forKey: .received),
                   spent: try container.decode(Int64.self, forKey: .spent),
                   fee: try container.decodeIfPresent(Int64.self, forKey: .fee),
-                  replacedBy: replacedBy)
+                  replacedBy: replacedBy,
+                  rawTransaction: try container.decodeIfPresent(Data.self, forKey: .rawTransaction))
+        _ = try transaction()
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -278,6 +301,7 @@ public struct HistoryEntry: Equatable, Sendable, Codable {
         try container.encode(spent, forKey: .spent)
         try container.encodeIfPresent(fee, forKey: .fee)
         try container.encodeIfPresent(replacedBy?.displayHex, forKey: .replacedBy)
+        try container.encodeIfPresent(rawTransaction, forKey: .rawTransaction)
     }
 }
 
@@ -703,6 +727,16 @@ public actor Wallet {
         return tip >= utxo.height && tip - utxo.height >= Self.coinbaseMaturity - 1
     }
     public var history: [HistoryEntry] { state.history }
+
+    /// Enrich an existing receipt without replaying its effects on the wallet.
+    public func rememberTransaction(_ transaction: Transaction) throws {
+        guard let index = state.history.firstIndex(where: { $0.txid == transaction.txid }) else { return }
+        var updated = state
+        updated.history[index].rawTransaction = transaction.serialized(includeWitness: false)
+        _ = try updated.history[index].transaction()
+        try persist(updated)
+        state = updated
+    }
     public var observedFeeRates: [Double] { state.observedFeeRates }
     /// Locally-created pending sends with persisted metadata and unspent
     /// change available for a same-input fee bump.
@@ -895,9 +929,11 @@ public actor Wallet {
         if let existing = state.history.firstIndex(where: { $0.txid == txid }) {
             // Known pending send (height 0) reaching confirmation.
             state.history[existing].height = height
+            state.history[existing].rawTransaction = tx.serialized(includeWitness: false)
         } else {
             state.history.append(HistoryEntry(txid: txid, height: height,
-                                              received: received, spent: spent, fee: fee))
+                                              received: received, spent: spent, fee: fee,
+                                              rawTransaction: tx.serialized(includeWitness: false)))
         }
         state.pendingSends.removeAll { $0.txid == txid }
     }
@@ -1187,7 +1223,8 @@ public actor Wallet {
         updated.history.append(HistoryEntry(txid: signed.txid, height: 0,
                                           received: prepared.change?.amount ?? 0,
                                           spent: prepared.selected.reduce(0) { $0 + $1.amount },
-                                          fee: prepared.fee))
+                                          fee: prepared.fee,
+                                          rawTransaction: signed.serialized(includeWitness: false)))
         updated.pendingSends.append(PendingSend(
             rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,
             changeIndex: prepared.change == nil ? nil : prepared.changeIndex,
@@ -1296,7 +1333,8 @@ public actor Wallet {
         updated.history[historyIndex].replacedBy = signed.txid
         updated.history.append(HistoryEntry(
             txid: signed.txid, height: 0, received: prepared.change?.amount ?? 0,
-            spent: prepared.selected.reduce(0) { $0 + $1.amount }, fee: prepared.built.fee))
+            spent: prepared.selected.reduce(0) { $0 + $1.amount }, fee: prepared.built.fee,
+            rawTransaction: signed.serialized(includeWitness: false)))
         updated.pendingSends.remove(at: pendingIndex)
         updated.pendingSends.append(PendingSend(
             rawTransaction: signed.serialized(includeWitness: true), selected: prepared.selected,

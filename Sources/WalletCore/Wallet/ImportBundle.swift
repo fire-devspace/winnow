@@ -48,6 +48,10 @@ private final class EffectCollector: @unchecked Sendable {
 /// and are not in this schema — a restored wallet falls back to presets
 /// until it observes new sends.
 ///
+/// Optional `rawTransaction` is the non-witness transaction, encoded as base64.
+/// Its txid must match the history entry. Older backups omit it; the app can
+/// fetch the known block when the user opens that payment, without rescanning.
+///
 /// Legacy `silentPaymentTweak` signing data is read only to refuse unsupported
 /// coins safely. Version 1 remains readable for ordinary descriptor UTXOs;
 /// writers always emit version 2.
@@ -101,19 +105,21 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         /// The transaction that superseded this one through fee replacement.
         /// Optional so existing v1/v2 bundles remain readable.
         public var replacedBy: String?
+        public var rawTransaction: Data?
 
         public init(txid: String, height: UInt32, received: Int64, spent: Int64,
-                    fee: Int64? = nil, replacedBy: String? = nil) {
+                    fee: Int64? = nil, replacedBy: String? = nil, rawTransaction: Data? = nil) {
             self.txid = txid
             self.height = height
             self.received = received
             self.spent = spent
             self.fee = fee
             self.replacedBy = replacedBy
+            self.rawTransaction = rawTransaction
         }
 
         private enum CodingKeys: String, CodingKey {
-            case txid, height, received, spent, fee, replacedBy
+            case txid, height, received, spent, fee, replacedBy, rawTransaction
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -124,6 +130,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             try container.encode(spent, forKey: .spent)
             try container.encodeIfPresent(fee, forKey: .fee)
             try container.encodeIfPresent(replacedBy, forKey: .replacedBy)
+            try container.encodeIfPresent(rawTransaction, forKey: .rawTransaction)
         }
     }
 
@@ -178,7 +185,7 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             transactions: history.map { entry in
                 KnownTransaction(txid: entry.txid.displayHex, height: entry.height,
                                  received: entry.received, spent: entry.spent, fee: entry.fee,
-                                 replacedBy: entry.replacedBy?.displayHex)
+                                 replacedBy: entry.replacedBy?.displayHex, rawTransaction: entry.rawTransaction)
             },
             nextReceiveIndex: nextReceiveIndex,
             nextChangeIndex: nextChangeIndex
@@ -507,9 +514,11 @@ extension Wallet {
                   (0 ... BitcoinAmount.maximum).contains(known.spent),
                   known.fee.map({ (0 ... BitcoinAmount.maximum).contains($0) }) ?? true
             else { throw WalletError.invalidBundle("transaction history has invalid amounts") }
-            return HistoryEntry(txid: Data(txid.reversed()), height: known.height,
+            let entry = HistoryEntry(txid: Data(txid.reversed()), height: known.height,
                                 received: known.received, spent: known.spent, fee: known.fee,
-                                replacedBy: replacedBy)
+                                replacedBy: replacedBy, rawTransaction: known.rawTransaction)
+            _ = try entry.transaction()
+            return entry
         }
     }
 

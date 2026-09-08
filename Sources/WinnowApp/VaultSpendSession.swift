@@ -21,7 +21,7 @@ final class VaultSpendSession {
             case let .savings(name): "Back into \(name)"
             case let .person(name): "Pays \(name)"
             case .you: "Pays you (your wallet)"
-            case .unknown: "Pays an address not in People"
+            case .unknown: "Pays an unsaved address"
             }
         }
     }
@@ -168,7 +168,7 @@ final class VaultSpendSession {
                 signerNames[position] = "you"
                 ownPosition = position
             } else {
-                signerNames[position] = identities[key] ?? "a co-owner not in People"
+                signerNames[position] = identities[key] ?? "an unnamed co-owner"
             }
         }
     }
@@ -226,16 +226,7 @@ final class VaultSpendSession {
     /// Best-effort scriptPubKey → address; hex for anything non-standard so
     /// a destination is shown, never hidden.
     static func address(forScript script: Data, network: BitcoinNetwork) -> String {
-        let hrp = network == .mainnet ? "bc" : "tb"
-        guard script.count >= 4, let first = script.first else { return script.hex }
-        let version: Int? = first == 0x00 ? 0 : (first >= 0x51 && first <= 0x60 ? Int(first) - 0x50 : nil)
-        guard let version else { return script.hex }
-        let pushLength = Int(script[script.index(script.startIndex, offsetBy: 1)])
-        let program = Data(script.dropFirst(2))
-        guard program.count == pushLength, (2 ... 40).contains(program.count),
-              let address = try? SegwitAddress.encode(hrp: hrp, version: version, program: program)
-        else { return script.hex }
-        return address
+        AddressDecoder.address(for: script, network: network) ?? script.hex
     }
 }
 

@@ -17,21 +17,24 @@ timing file proves that the current app passes its tests.
 [check-site](../../scripts/check-site) checks referenced assets and unresolved LFS
 pointers; reviewing the actual rendered image remains necessary.
 
-The Send captures (`05` through `08`) and person-payment review (`25`) were
-refreshed from [app revision d02ffa3](https://github.com/winnowwallet/winnow/commit/d02ffa314d198f4759069e8398d84bb8a50f19d2).
+The retained Send captures (`05`, `07`, and `08`) come from
+[app revision d02ffa3](https://github.com/winnowwallet/winnow/commit/d02ffa314d198f4759069e8398d84bb8a50f19d2).
 All 16 app journeys passed in [this UI run](https://github.com/winnowwallet/winnow/actions/runs/34171647009),
 including editing a payment, keeping custom fees out of beginner mode, opening
 payment diagnostics, and following Bitcoin Core confirmation.
 The [run artifact](https://github.com/winnowwallet/winnow/actions/runs/34171647009/artifacts/10036468223)
 contains the original captures, log, and result bundle.
 
-The extra-device captures (`35` through `39`) come from
-[app revision 75d08be](https://github.com/winnowwallet/winnow/commit/75d08be333311ee1bd53d1e2eb4d6a3118a747d9).
-All 16 app scenarios passed in
-[this UI run](https://github.com/winnowwallet/winnow/actions/runs/34253766409).
-The Core-backed journey covers account setup, review, interruption and restart,
-both approvals, the sent receipt, and restoring the pre-payment backup to find
-the remaining balance. The images are unchanged originals from the
-[run artifact](https://github.com/winnowwallet/winnow/actions/runs/34253766409/artifacts/10068373928),
-which also includes the log and result bundle. They show an iPhone simulator on
-a private test chain; they do not show a hardware-wallet integration.
+The current Receive, review, account, Settings, saved-recipient, and approval
+captures (`03`, `06`, `10`, `11`, `23-settings-beginner`, `24-saved-recipient`,
+`25-pay-person-review`, `27`, and `35` through `39`) come from
+[app revision 4559ecd](https://github.com/winnowwallet/winnow/commit/4559ecd150b2f3399f0b4613cce9db689bcb2d51).
+They are unchanged originals captured locally on 2026-09-08 with an iPhone 17 Pro
+simulator running iOS 26.5 against a disposable signet node.
+All 16 app journeys passed in that run, along with the app unit tests.
+The local evidence is `recipients-final-ui.xcresult` and
+`winnow-recipients-final-ui.log`.
+The recipient journey covers saving, renaming, restarting, removing and re-adding,
+then paying through Send. The extra-device journey uses Bitcoin Core as the other
+signer and covers setup, review, interruption and restart, both approvals, the
+sent receipt, and restoring the pre-payment backup to find the remaining balance.

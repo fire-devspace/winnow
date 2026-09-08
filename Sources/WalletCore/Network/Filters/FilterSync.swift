@@ -1,6 +1,7 @@
 import Foundation
 
 public enum FilterSyncError: LocalizedError, Equatable, Sendable {
+    case busy
     case noPeers
     /// Every peer is briefly resting after a slow reply — transient, unlike
     /// `noPeers`, which means there is nothing to dial at all.
@@ -15,6 +16,8 @@ public enum FilterSyncError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .busy:
+            "Finishing sync. Try loading the payment again in a moment."
         case .noPeers:
             "No Bitcoin peers are available for compact-filter synchronization."
         case let .peersCoolingDown(count):
@@ -135,6 +138,7 @@ public actor FilterSync {
     private let storageURL: URL?
     public nonisolated let persistenceState: PersistenceState
     private var progress: Progress
+    private var requesting = false
 
     private static let maximumProgressBytes = 128 * 1_024 * 1_024
     private static let maximumPinnedHeaders = 2_000_000
@@ -165,6 +169,35 @@ public actor FilterSync {
         progress.filterHeaders[String(height)].flatMap { Data(hex: $0) }
     }
 
+    private func beginRequest() throws {
+        guard !requesting else { throw FilterSyncError.busy }
+        requesting = true
+    }
+
+    /// Fetch a historical receipt without changing scan progress or balances.
+    /// Peer requests match by command, so they cannot overlap a filter scan.
+    public func transaction(_ txid: Data, at height: UInt32) async throws -> Transaction {
+        try beginRequest()
+        defer { requesting = false }
+        guard let hash = await chain.blockHash(at: height) else {
+            throw FilterSyncError.badPeerResponse("the payment's block header is unavailable")
+        }
+        var lastError: any Error = FilterSyncError.noPeers
+        for peer in await pool.connectedPeers().prefix(3) {
+            try Task.checkCancellation()
+            do {
+                let block = try await verifiedBlock(from: peer, height: height, blockHash: hash,
+                                                    timeout: .seconds(30))
+                guard await chain.blockHash(at: height) == hash,
+                      let transaction = block.transactions.first(where: { $0.txid == txid }) else {
+                    throw FilterSyncError.badPeerResponse("the payment is not in this block")
+                }
+                return transaction
+            } catch { lastError = error }
+        }
+        throw lastError
+    }
+
     /// `onReorg` is called with the fork height when the header sync replaced a
     /// branch, and is awaited **before** any filter work resumes.
     ///
@@ -176,6 +209,8 @@ public actor FilterSync {
     public func sync(watchScripts: [Data],
                      onReorg: (@Sendable (UInt32) async throws -> Void)? = nil,
                      onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
+        try beginRequest()
+        defer { requesting = false }
         var peers = await pool.connectedPeers()
         guard !peers.isEmpty else {
             // Same distinction as `PeerPool.syncHeaders`: since transport
@@ -653,9 +688,15 @@ public actor FilterSync {
                                      blockHash: Data,
                                      onMatch: @Sendable (BlockMatch) async throws -> Void)
         async throws {
+        let block = try await verifiedBlock(from: peer, height: height, blockHash: blockHash)
+        try await onMatch(BlockMatch(height: height, blockHash: blockHash, block: block))
+    }
+
+    private func verifiedBlock(from peer: PeerConnection, height: UInt32, blockHash: Data,
+                               timeout: Duration = .seconds(120)) async throws -> Block {
         let blockResponse = try await peer.request(
             .getdata(InventoryPayload([InventoryVector(type: .witnessBlock, hash: blockHash)])),
-            expecting: ["block", "notfound"], timeout: .seconds(120))
+            expecting: ["block", "notfound"], timeout: timeout)
         switch blockResponse {
         case let .block(block):
             guard block.hash == blockHash else {
@@ -666,7 +707,7 @@ public actor FilterSync {
                 await pool.misbehaving(peer, reason: "merkle root mismatch at \(height)")
                 throw FilterSyncError.badPeerResponse("merkle root mismatch at \(height)")
             }
-            try await onMatch(BlockMatch(height: height, blockHash: blockHash, block: block))
+            return block
         case .notfound:
             throw FilterSyncError.badPeerResponse("peer lost block at \(height)")
         default:

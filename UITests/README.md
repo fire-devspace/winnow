@@ -3,7 +3,7 @@
 # Asserted app journeys
 
 XCUITest drives real screens for wallet creation, recovery, receiving, sending,
-people, shared savings, and Advanced signing. These tests check the combined app,
+saved recipients, shared savings, and Advanced signing. These tests check the combined app,
 wallet, and node behavior that isolated unit tests cannot establish.
 
 [WinnowAppUITests.swift](WinnowAppUITests.swift) contains the scenarios.

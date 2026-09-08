@@ -57,12 +57,14 @@ final class AppModel {
         case spendAlreadyInFlight
         /// No storage directory, so a rollback target cannot be recorded.
         case noStorage
+        case paymentDetailsUnavailable
         case personCannotBePaid
         case personCannotCoOwn(String)
 
         var errorDescription: String? {
             switch self {
             case .noWallet: "No wallet is open."
+            case .paymentDetailsUnavailable: "Payment details aren’t available on this phone."
             case .personCannotBePaid: "This person has no pay-to key or address yet. Ask them for their Winnow card."
             case let .personCannotCoOwn(name): "\(name) has no signer key yet. Ask them for their Winnow card before creating savings together."
             case .noStack: "The sync stack is not running."
@@ -231,13 +233,30 @@ final class AppModel {
     // Keep the derived savings cache current at each input, including local
     // mutations that do not trigger a network refresh.
     private(set) var vaults: [VaultRecord] = [] {
-        didSet { recomputeSharedSavings() }
+        didSet {
+            recomputeSharedSavings()
+            guard vaults != oldValue else { return }
+            ownedVaultScripts = Set(vaults.flatMap { record in
+                let vault = try? Vault(record.descriptor, network: network)
+                let count = max(record.nextReceiveIndex, record.nextChangeIndex) + Wallet.gapLimit
+                return (try? vault?.watchScripts(upTo: count)) ?? []
+            })
+        }
     }
+    private var ownedVaultScripts: Set<Data> = []
     private(set) var people: [PersonRecord] = [] {
-        didSet { recomputeSharedSavings() }
+        didSet {
+            recomputeSharedSavings()
+            guard people != oldValue else { return }
+            recipientByScript = people.reduce(into: [:]) { result, person in
+                let scripts = try? person.payTo?.scripts(upTo: person.nextPaymentIndex + Wallet.gapLimit, network: network)
+                for script in scripts ?? [] where result[script] == nil { result[script] = person }
+            }
+        }
     }
+    private(set) var recipientByScript: [Data: PersonRecord] = [:]
     private(set) var sharedSavings: [SharedSavings] = []
-    /// Set when `people.json` could not be read. Shown on the People tab;
+    /// Set when `people.json` could not be read. Shown in the recipient picker;
     /// the store refuses mutations meanwhile. Never blocks boot.
     private(set) var peopleStorageNotice: String?
     /// The wallet's own watched scripts, cached so a shared-savings review can
@@ -797,7 +816,7 @@ final class AppModel {
     }
 
     private func syncOnce() async {
-        guard let wallet, let stack, let filters = stack.filters else { return }
+        guard !status.syncing, let wallet, let stack, let filters = stack.filters else { return }
         status.syncing = true
         defer { status.syncing = false }
         do {
@@ -1695,13 +1714,10 @@ final class AppModel {
         var record: VaultRecord
         var coOwners: [PersonRecord]
         var includesYou: Bool
-        var unknownSignerCount: Int
         var threshold: Int
         var signerCount: Int
 
         var id: String { record.id }
-        var name: String { record.name }
-        var balance: Int64 { record.balance }
     }
 
     /// Reads the address book file for the current network. Damage is a
@@ -1737,7 +1753,6 @@ final class AppModel {
             let coOwners = identities.filter { signerKeys.contains($0.key) }.map(\.person)
             let includesYou = ownKey.map { signerKeys.contains($0) } ?? false
             return SharedSavings(record: record, coOwners: coOwners, includesYou: includesYou,
-                                 unknownSignerCount: signerKeys.count - coOwners.count - (includesYou ? 1 : 0),
                                  threshold: vault.threshold, signerCount: vault.signerCount)
         }
     }
@@ -1790,9 +1805,50 @@ final class AppModel {
         return record
     }
 
-    func removePerson(id: String) async throws {
-        try await peopleStore.remove(id: id)
+    var savedRecipients: [PersonRecord] { people.filter(\.isSavedRecipient) }
+
+    func updateRecipient(id: String, name: String? = nil, saved: Bool) async throws {
+        try await peopleStore.updateRecipient(id: id, name: name, saved: saved)
         people = await peopleStore.all
+    }
+
+    struct PaymentRecipient: Identifiable {
+        var id: Int
+        var address: String
+        var amount: Int64
+        var person: PersonRecord?
+    }
+
+    func paymentRecipients(_ entry: HistoryEntry) -> [PaymentRecipient] {
+        Self.paymentRecipients(entry, owned: ownWatchScripts.union(ownedVaultScripts),
+                               people: recipientByScript, network: network)
+    }
+
+    static func paymentRecipients(_ entry: HistoryEntry, owned: Set<Data>,
+                                  people: [Data: PersonRecord], network: BitcoinNetwork) -> [PaymentRecipient] {
+        guard entry.spent > 0, let transaction = try? entry.transaction() else { return [] }
+        return transaction.outputs.enumerated().compactMap { index, output in
+            guard !owned.contains(output.scriptPubKey),
+                  let address = AddressDecoder.address(for: output.scriptPubKey, network: network) else { return nil }
+            return PaymentRecipient(id: index, address: address, amount: output.value,
+                                    person: people[output.scriptPubKey])
+        }
+    }
+
+    func loadPaymentDetails(_ entry: HistoryEntry) async throws {
+        guard entry.rawTransaction == nil, let wallet, let stack else { return }
+        let transaction: BitcoinTransaction
+        if let raw = await stack.broadcaster.rawTransaction(entry.txid) {
+            transaction = try BitcoinTransaction.decode(raw)
+        } else if entry.height > 0, let filters = stack.filters {
+            transaction = try await filters.transaction(entry.txid, at: entry.height)
+        } else {
+            throw AppError.paymentDetailsUnavailable
+        }
+        try Task.checkCancellation()
+        guard self.wallet === wallet else { return }
+        try await wallet.rememberTransaction(transaction)
+        await refresh()
     }
 
     /// The address the next payment to `person` derives, peeked without
@@ -1804,16 +1860,7 @@ final class AppModel {
 
     /// Every script a person could have been paid at so far, for labelling
     /// the outputs of a shared-savings spend.
-    func personScripts() -> [Data: String] {
-        var scripts: [Data: String] = [:]
-        for person in people {
-            guard let payTo = person.payTo,
-                  let list = try? payTo.scripts(upTo: person.nextPaymentIndex + Wallet.gapLimit, network: network)
-            else { continue }
-            for script in list where scripts[script] == nil { scripts[script] = person.name }
-        }
-        return scripts
-    }
+    func personScripts() -> [Data: String] { recipientByScript.mapValues(\.name) }
 
     /// Builds the k-of-n vault behind "Savings with Alice, Bob": the chosen
     /// people's signer keys plus this wallet's own, and files it as a vault.

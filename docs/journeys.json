@@ -49,15 +49,16 @@
     "id": "people",
     "section": "everyday",
     "title": "Pay someone again",
-    "description": "Save someone’s payment card in People. Next time, choose their name instead of pasting an address.",
+    "description": "Name someone you’ve paid, or save their payment card. Next time, choose them in Send.",
     "journey": [
-      "Add a payment card and select the saved person.",
-      "Send a payment and check that the next payment uses a new address."
+      "Send to a new address, open that payment in Wallet, save the recipient, and rename them.",
+      "Reopen the app and check the name on the payment. Remove and re-add the saved recipient without losing the label.",
+      "Choose a saved address in Send and check the address-reuse notice. Pay a saved card, then check that the next payment uses a fresh address."
     ],
     "tests": [
-      "test10PeopleAddAndPay"
+      "test10SaveRecipientFromPayment"
     ],
-    "image": "24-people"
+    "image": "24-saved-recipient"
   },
   {
     "id": "savings",

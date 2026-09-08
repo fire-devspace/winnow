@@ -13,9 +13,11 @@ struct TransactionBuilderTests {
         let script = try AddressDecoder.scriptPubKey(for: address, network: .mainnet)
         #expect(script.count == 34 && script.starts(with: [0x51, 0x20]))
         #expect(AddressDecoder.isP2TR(script))
+        #expect(AddressDecoder.address(for: script, network: .mainnet) == address)
         // Same output key on the signet HRP.
         let signetAddress = try SegwitAddress.encode(hrp: "tb", version: 1, program: script.suffix(32))
         #expect(try AddressDecoder.scriptPubKey(for: signetAddress, network: .signet) == script)
+        #expect(AddressDecoder.address(for: script, network: .signet) == signetAddress)
         // Wrong network is rejected.
         #expect(throws: AddressError.self) {
             _ = try AddressDecoder.scriptPubKey(for: address, network: .signet)
@@ -38,6 +40,11 @@ struct TransactionBuilderTests {
         // P2SH (prefix 0x05): hash160 0x89ABCDEFABCDABCDABCDABCDABCDABCDABCDABCD.
         let p2sh = try AddressDecoder.scriptPubKey(for: "3EExK1K1WioG5caKFqP724ymoEXJNsTjnK", network: .mainnet)
         #expect(p2sh == Data(hex: "a91489abcdefabcdabcdabcdabcdabcdabcdabcdabcd87"))
+        #expect(AddressDecoder.address(for: p2wpkh, network: .mainnet) == "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+        #expect(AddressDecoder.address(for: p2pkh, network: .mainnet) == "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH")
+        #expect(AddressDecoder.address(for: p2pkh, network: .signet) == "mrCDrCybB6J1vRfbwM5hemdJz73FwDBC8r")
+        #expect(AddressDecoder.address(for: p2sh, network: .mainnet) == "3EExK1K1WioG5caKFqP724ymoEXJNsTjnK")
+        #expect(AddressDecoder.address(for: Data([0x6a, 0x01, 0x01]), network: .mainnet) == nil)
         // Wrong network is rejected for base58 too: mainnet P2PKH on signet.
         #expect(throws: AddressError.self) {
             _ = try AddressDecoder.scriptPubKey(for: "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH", network: .signet)
@@ -49,6 +56,7 @@ struct TransactionBuilderTests {
         let p2mrShape = try SegwitAddress.encode(
             hrp: "bc", version: 2, program: Data(repeating: 0x42, count: 32))
         #expect(p2mrShape.hasPrefix("bc1z"))
+        #expect(AddressDecoder.address(for: Data([0x52, 0x20]) + Data(repeating: 0x42, count: 32), network: .mainnet) == nil)
         #expect(throws: AddressError.unsupportedWitnessVersion(2)) {
             _ = try AddressDecoder.scriptPubKey(for: p2mrShape, network: .mainnet)
         }

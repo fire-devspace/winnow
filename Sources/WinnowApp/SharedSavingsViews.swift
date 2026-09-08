@@ -43,7 +43,7 @@ struct SharedSavingsCreateView: View {
                 }
             }
             .navigationTitle(created == nil ? "New shared savings" : "Share the savings")
-            .sheet(isPresented: $showAddPerson) { AddPersonView() }
+            .sheet(isPresented: $showAddPerson) { AddPersonView(forSigning: true) }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if created == nil {
@@ -297,7 +297,7 @@ struct SharedSavingsDetailView: View {
 
                 Section {
                     if let savings {
-                        Text(SharedSavingsRow.caption(for: savings))
+                        Text(([savings.includesYou ? "you" : nil].compactMap { $0 } + savings.coOwners.map(\.name)).joined(separator: ", "))
                             .accessibilityIdentifier("savingsCoOwners")
                     }
                     Button("Share the savings card") { showShare = true }
@@ -394,7 +394,7 @@ struct AskApprovalView: View {
         guard let selectedPersonID else { return nil }
         return model.people.first { $0.id == selectedPersonID && $0.payTo != nil }
     }
-    private var payablePeople: [PersonRecord] { model.people.filter { $0.payTo != nil } }
+    private var payablePeople: [PersonRecord] { model.savedRecipients }
 
     private var canBuild: Bool {
         guard let amount = Int64(amountText), amount > 0 else { return false }

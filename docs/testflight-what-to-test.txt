@@ -1,9 +1,11 @@
-People and shared savings
+Saved recipients and shared savings
 
-Open People and tap Share my card: give it a name and send the card to someone (or to your other device). On the other side, Add person and paste it: it should read "Fresh address each payment" and "Can co-own savings". Pay that person from their screen twice; the review names them, shows the address underneath, and the second payment goes to a different address.
+Send a payment, then open it in Wallet and save the recipient. Rename them and restart the app: the payment should show the new name. Remove them from Saved recipients in Send: the old payment should keep its name. You can save them again from that payment.
 
-Create shared savings with one or two people: the threshold defaults to 2, and creating ends on the savings card. Share that card and add it on the other phone before sending any money in. Then send a small amount to the savings' address, wait for a block, and use Ask for approval on one phone and Approve a request on the other; when enough have approved, Finish sends it.
+Open Receive and tap Share my card. Give it a name and share it with another device. There, open Send → Saved recipients → Add and paste the card. It should say “Fresh address each payment.” Pay twice and check that each review names the recipient and uses a different address. A saved fixed address should explain that repeated payments can be linked.
+
+Create shared savings from Wallet and choose the co-owners. Share the account card and add it on the other phone before funding it. Send a small amount, wait for confirmation, then use Ask for approval and Approve a request. Finish sends the payment once enough people have approved.
 
 Beginner mode
 
-The wallet starts with four tabs and a one-line sync status. Settings shows Backup, the Advanced mode switch, About and Delete wallet only. Turn Advanced mode on: the test network, peers, chain verification, the block explorer, build details and a Vaults section on the People tab appear. Turn it off again: they go, and anything you set stays.
+The wallet has three tabs: Wallet, Send, Settings. Turn on Advanced mode in Settings to see network and fee controls. Custom account creation appears in Wallet alongside your other accounts. Turn Advanced off again: those controls disappear and your saved settings remain.

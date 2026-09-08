@@ -21,6 +21,8 @@ struct HomeView: View {
     @State private var showReceive = false
     @State private var showSharedSavings = false
     @State private var showExtraDevice = false
+    @State private var showAddSavings = false
+    @State private var showAdvancedAccount = false
 
     var body: some View {
         NavigationStack {
@@ -63,7 +65,11 @@ struct HomeView: View {
                     }
                     Button("Save with other people") { showSharedSavings = true }
                         .accessibilityIdentifier("walletSharedSavingsButton")
+                    Button("Add a shared account") { showAddSavings = true }
+                        .accessibilityIdentifier("addSharedSavingsButton")
                     if model.advancedMode {
+                        Button("New account with custom rules") { showAdvancedAccount = true }
+                            .accessibilityIdentifier("newVaultButton")
                         Button("Require another signing device") { showExtraDevice = true }
                             .accessibilityIdentifier("walletExtraDeviceButton")
                     }
@@ -148,13 +154,13 @@ struct HomeView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(Array(model.status.history.enumerated()), id: \.offset) { _, entry in
-                        HistoryRow(entry: entry,
-                                   canBump: model.advancedMode
-                                       && model.status.feeBumpableTxids.contains(entry.txid))
+                        NavigationLink(value: entry.txid) { HistoryRow(entry: entry) }
+                        .accessibilityIdentifier("historyPayment-\(entry.txid.displayHex)")
                     }
                 }
             }
             .navigationTitle("Winnow")
+            .navigationDestination(for: Data.self) { PaymentDetailView(txid: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Receive") { showReceive = true }
@@ -165,6 +171,8 @@ struct HomeView: View {
                 ReceiveView()
             }
             .sheet(isPresented: $showSharedSavings) { SharedSavingsCreateView() }
+            .sheet(isPresented: $showAddSavings) { AddSharedSavingsView() }
+            .sheet(isPresented: $showAdvancedAccount) { VaultCreateView() }
             .sheet(isPresented: $showExtraDevice) { VaultCreateView(role: .muSig2) }
             .refreshable {
                 await model.syncNow()
@@ -176,32 +184,13 @@ struct HomeView: View {
 private struct HistoryRow: View {
     @Environment(AppModel.self) private var model
     let entry: HistoryEntry
-    let canBump: Bool
-    @State private var showFeeBump = false
 
     /// Net effect on the wallet: received (incl. our own change) minus spent.
     private var net: Int64 { entry.received - entry.spent }
 
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(net >= 0 ? "Received" : "Sent")
-                    .font(.headline)
-                CopyableIdentifier(value: entry.txid.displayHex, abbreviated: true,
-                                   accessibilityID: "copyTransactionIDButton")
-                WarnedExplorerLink(
-                    title: "View transaction",
-                    url: model.esploraTransactionURL(entry.txid),
-                    exposedItem: "transaction ID",
-                    accessibilityID: "explorerTransactionButton")
-                    .font(.caption)
-                if canBump {
-                    Button("Bump fee") { showFeeBump = true }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("bumpFeeButton")
-                }
-            }
+            Text(title).font(.headline)
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(net >= 0 ? "+" : "−")\(abs(net).formatted()) sats")
@@ -228,9 +217,84 @@ private struct HistoryRow: View {
                 }
             }
         }
-        .sheet(isPresented: $showFeeBump) {
-            FeeBumpView(txid: entry.txid)
+    }
+
+    private var title: String {
+        guard net < 0 else { return "Received" }
+        let recipients = model.paymentRecipients(entry)
+        if recipients.count == 1, let person = recipients.first?.person { return "Sent to \(person.name)" }
+        return "Sent"
+    }
+}
+
+private struct PaymentDetailView: View {
+    let txid: Data
+    @Environment(AppModel.self) private var model
+    @State private var editing: AppModel.PaymentRecipient?
+    @State private var showFeeBump = false
+    @State private var loading = false
+    @State private var error: String?
+
+    private var entry: HistoryEntry? { model.status.history.first { $0.txid == txid } }
+
+    var body: some View {
+        Form {
+            if let entry {
+                Section { HistoryRow(entry: entry) }
+                ForEach(model.paymentRecipients(entry)) { recipient in
+                    Section {
+                        if let person = recipient.person { Text(person.name).font(.headline) }
+                        CopyableTextBlock(text: recipient.address)
+                        Text(satsText(recipient.amount))
+                        Button(recipient.person?.isSavedRecipient == true ? "Rename recipient" : "Save recipient") {
+                            editing = recipient
+                        }
+                        .accessibilityIdentifier("savePaymentRecipient-\(recipient.id)")
+                        .disabled(model.peopleStorageNotice != nil)
+                        if let person = recipient.person, person.isSavedRecipient {
+                            Button("Remove from saved recipients", role: .destructive) {
+                                Task {
+                                    do { try await model.updateRecipient(id: person.id, saved: false) }
+                                    catch { self.error = error.localizedDescription }
+                                }
+                            }
+                            .accessibilityIdentifier("removePaymentRecipient-\(recipient.id)")
+                        }
+                    }
+                }
+                if entry.rawTransaction == nil, entry.spent > 0 {
+                    Section {
+                        if loading || model.status.syncing { ProgressView("Loading payment details…") }
+                        else { Button("Load payment details") { Task { await load() } } }
+                    }
+                }
+                if let error { Text(error).foregroundStyle(.red).accessibilityIdentifier("paymentDetailsError") }
+                Section("Transaction") {
+                    CopyableIdentifier(value: txid.displayHex, accessibilityID: "copyTransactionIDButton")
+                    WarnedExplorerLink(title: "View transaction", url: model.esploraTransactionURL(txid),
+                                       exposedItem: "transaction ID", accessibilityID: "explorerTransactionButton")
+                    if model.advancedMode, model.status.feeBumpableTxids.contains(txid) {
+                        Button("Bump fee") { showFeeBump = true }.accessibilityIdentifier("bumpFeeButton")
+                    }
+                }
+            } else { Text("This payment is no longer in the wallet’s history.") }
         }
+        .navigationTitle("Payment")
+        .sheet(item: $editing) { AddPersonView(person: $0.person, address: $0.address) }
+        .sheet(isPresented: $showFeeBump) { FeeBumpView(txid: txid) }
+        .task(id: model.status.syncing) {
+            if !model.status.syncing { await load() }
+        }
+    }
+
+    private func load() async {
+        guard let entry, entry.spent > 0, entry.rawTransaction == nil, !loading else { return }
+        loading = true
+        error = nil
+        defer { loading = false }
+        do { try await model.loadPaymentDetails(entry) }
+        catch is CancellationError { }
+        catch { self.error = error.localizedDescription }
     }
 }
 

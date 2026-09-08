@@ -173,6 +173,11 @@ struct FilterSyncTests {
         let collector = MatchCollector()
         try await sync.sync(watchScripts: [synthetic.watchScript]) { match in
             collector.add(match)
+            // An on-screen lookup cannot take replies belonging to a scan.
+            do {
+                _ = try await sync.transaction(match.block.transactions[0].txid, at: match.height)
+                Issue.record("a historical lookup overlapped the active scan")
+            } catch { #expect(error as? FilterSyncError == .busy) }
         }
         let matches = collector.matches
 
@@ -186,6 +191,11 @@ struct FilterSyncTests {
         // The whole filter header chain got pinned.
         #expect(await sync.filterHeader(at: 6) != nil)
 
+        // Opening an old payment reuses block validation without moving the scan.
+        let old = synthetic.blocks[2].transactions[0]
+        #expect(try await sync.transaction(old.txid, at: 2) == old)
+        #expect(await sync.nextScanHeight == 7)
+
         // Progress persists across instances.
         let reloaded = try FilterSync(pool: pool, chain: chain, startHeight: 1,
                                       storageURL: progressFile, requiredCheckpointPeers: peerCount)
@@ -194,6 +204,28 @@ struct FilterSyncTests {
 
         await pool.stop()
         try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent())
+    }
+
+    @Test("historical receipts reject an altered block and a transaction outside the block", arguments: [false, true])
+    func historicalReceiptValidation(altered: Bool) async throws {
+        let synthetic = makeSyntheticChain(length: 4, watchHeight: 3)
+        var blocks = synthetic.blocks
+        let txid = blocks[3].transactions[0].txid
+        if altered { blocks[3].transactions[0].outputs[0].value += 1 }
+        let node = LoopbackNode(params: synthetic.params, chain: blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1, manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("receipt-peers.json"))
+        await pool.start()
+        let chain = try HeaderChain(params: synthetic.params)
+        _ = try await pool.syncHeaders(chain)
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1, requiredCheckpointPeers: 1)
+        await #expect(throws: FilterSyncError.self) {
+            try await sync.transaction(altered ? txid : Data(repeating: 9, count: 32), at: 3)
+        }
+        #expect(await sync.nextScanHeight == 1)
+        await pool.stop()
     }
 
     @Test("a lying filter fails verification against the pinned header chain")

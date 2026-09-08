@@ -45,4 +45,26 @@ final class HistoryDisplayTests: XCTestCase {
         XCTAssertEqual(Set(displayed.map(\.txid)), Set(history.map(\.txid)))
         XCTAssertEqual(displayed.first?.txid, entry(4).txid)
     }
+    func testRecipientActionsUseActualExternalOutputs() throws {
+        let addresses = [
+            "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+            "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+        ]
+        let scripts = try addresses.map { try AddressDecoder.scriptPubKey(for: $0, network: .mainnet) }
+        let alice = PersonRecord(id: "alice", name: "Alice", payTo: .address(addresses[0]), signerKey: nil)
+        let transaction = Transaction(version: 2, inputs: [Transaction.Input(
+            previousOutput: Transaction.Outpoint(txid: Data(repeating: 1, count: 32), vout: 0), scriptSig: Data(), sequence: 0xffff_fffd)],
+            outputs: scripts.map { Transaction.Output(value: 1_000, scriptPubKey: $0) }, locktime: 0)
+        var receipt = HistoryEntry(txid: transaction.txid, height: 10, received: 1_000, spent: 2_100,
+                                   rawTransaction: transaction.serialized(includeWitness: false))
+        let recipients = AppModel.paymentRecipients(receipt, owned: [scripts[1]],
+                                                    people: [scripts[0]: alice], network: .mainnet)
+        XCTAssertEqual(recipients.map(\.address), [addresses[0]])
+        XCTAssertEqual(recipients.first?.person?.name, "Alice")
+        XCTAssertEqual(AppModel.paymentRecipients(receipt, owned: [], people: [:], network: .mainnet).count, 2)
+        receipt.spent = 0
+        XCTAssertTrue(AppModel.paymentRecipients(receipt, owned: [], people: [:], network: .mainnet).isEmpty,
+                      "incoming outputs do not identify a sender")
+    }
+
 }

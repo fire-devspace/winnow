@@ -34,6 +34,24 @@ public enum AddressDecoder {
         }
     }
 
+    /// The standard address for a payment output, if Winnow can pay it.
+    public static func address(for script: Data, network: BitcoinNetwork) -> String? {
+        let bytes = Array(script)
+        if bytes.count == 25, bytes.prefix(3) == [0x76, 0xa9, 0x14], bytes.suffix(2) == [0x88, 0xac] {
+            return Base58Check.encode(Data([network == .mainnet ? 0x00 : 0x6f]) + script.dropFirst(3).prefix(20))
+        }
+        if bytes.count == 23, bytes.prefix(2) == [0xa9, 0x14], bytes.last == 0x87 {
+            return Base58Check.encode(Data([network == .mainnet ? 0x05 : 0xc4]) + script.dropFirst(2).prefix(20))
+        }
+        guard bytes.count >= 4, Int(bytes[1]) == bytes.count - 2,
+              bytes[0] == 0 || bytes[0] == 0x51,
+              let address = try? SegwitAddress.encode(hrp: hrp(for: network),
+                                                       version: bytes[0] == 0 ? 0 : 1,
+                                                       program: Data(script.dropFirst(2))),
+              (try? scriptPubKey(for: address, network: network)) == script else { return nil }
+        return address
+    }
+
     /// Decodes an address to its output scriptPubKey, enforcing the network.
     public static func scriptPubKey(for address: String, network: BitcoinNetwork) throws -> Data {
         let lowercased = address.lowercased()

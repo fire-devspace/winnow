@@ -31,16 +31,8 @@ struct SendReviewInputs: Equatable {
 struct SendView: View {
     @Environment(AppModel.self) private var model
 
-    /// Preselected when opened from a person's screen, where the view is a
-    /// sheet and needs its own way out.
-    init(recipient: PersonRecord? = nil) {
-        _selectedPersonID = State(initialValue: recipient?.id)
-        presentedAsSheet = recipient != nil
-    }
-
-    private let presentedAsSheet: Bool
-    @Environment(\.dismiss) private var dismiss
     @State private var selectedPersonID: String?
+    @State private var showRecipients = false
     @State private var destination = ""
     @State private var amountText = ""
     @State private var priority: FeePolicy.Priority = .medium
@@ -62,11 +54,7 @@ struct SendView: View {
 
     private var selectedPerson: PersonRecord? {
         guard let selectedPersonID else { return nil }
-        return model.people.first { $0.id == selectedPersonID && $0.payTo != nil }
-    }
-
-    private var payablePeople: [PersonRecord] {
-        model.people.filter { $0.payTo != nil }
+        return model.people.first { $0.id == selectedPersonID && $0.isSavedRecipient }
     }
 
     private var reviewInputs: SendReviewInputs {
@@ -114,11 +102,11 @@ struct SendView: View {
                     Spacer()
                     Button("Done") { focusedField = nil }
                 }
-                if presentedAsSheet {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
-                            .accessibilityIdentifier("sendSheetDoneButton")
-                    }
+            }
+            .sheet(isPresented: $showRecipients) {
+                SavedRecipientsView { person in
+                    selectedPersonID = person.id
+                    destination = ""
                 }
             }
             .task(id: feeInputs) {
@@ -165,18 +153,8 @@ struct SendView: View {
                         }
                         .accessibilityIdentifier("pasteDestinationButton")
                     }
-                    if !payablePeople.isEmpty {
-                        Menu("Choose a person") {
-                            ForEach(payablePeople) { person in
-                                Button(person.name) {
-                                    selectedPersonID = person.id
-                                    destination = ""
-                                }
-                                .accessibilityIdentifier("choosePerson-\(person.name)")
-                            }
-                        }
-                        .accessibilityIdentifier("choosePersonMenu")
-                    }
+                    Button("Saved recipients") { showRecipients = true }
+                        .accessibilityIdentifier("savedRecipientsButton")
                 }
             }
             Section {

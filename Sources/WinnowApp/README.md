@@ -3,8 +3,13 @@
 # The iPhone wallet
 
 SwiftUI screens and AppModel turn wallet and network state into receiving,
-sending, recovery, people, and shared-savings flows. The app owns user review,
+sending, recovery, saved recipients, and shared accounts. The app owns user review,
 authentication, presentation, and lifecycle; WalletCore owns the Bitcoin rules.
+
+Wallet is the one account and transaction list. Payment details save or rename a
+recipient; Send holds the saved-recipient picker. Removing a shortcut preserves
+past labels, signer identities, and fresh-address counters in the existing
+people.json store. Receive shares the wallet’s payment card.
 
 [Documented journeys](../../docs/journeys.json) identify the supported experiences.
 [App tests](../../AppTests/README.md) check state and protected actions;

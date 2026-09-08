@@ -98,8 +98,9 @@ tests, webpages, tooling and other text; generated peers, binaries and LFS
 pointers are excluded. See [the counting policy](scripts/report-loc.py).
 
 Mainnet is the default network, and the app starts in beginner mode: Wallet,
-Send, People, Settings. Turn on Advanced mode in Settings for the test
-network, your own peers, chain verification, the block explorer, custom fees,
+Send, Settings. Open a payment in Wallet to save or rename its recipient,
+then pick them from Saved recipients in Send. Turn on Advanced mode in Settings
+for the test network, your own peers, chain verification, the block explorer, custom fees,
 fee bumping, build details and the raw vault tools; a peer or setting you already have
 stays visible until you remove it. Switch to signet there for development. Point the app at your own
 filter-serving node (Settings → Manual peers); the node needs
