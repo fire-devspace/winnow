@@ -71,10 +71,20 @@ bitcoin-cli -signet -rpcwallet=winnow-signer \
 </ol>
 <p>The final <code>false</code> asks Core to leave the signing data available for Winnow to combine. The app handles the file format conversion. Keep its signing screen open during the exchange.</p>
 <p>If you leave the screen or lock the phone, tap <strong>Start again</strong> and exchange the fresh request with Core. Do not reuse an old reply.</p>
+<figure>
+<img src="screenshots/36-extra-device-review.png" width="1206" height="2622" loading="lazy" alt="Payment review showing the recipient, change, and fee before approval.">
+<img src="screenshots/37-extra-device-waiting.png" width="1206" height="2622" loading="lazy" alt="After the phone approves, Winnow asks for the other signer’s reply. Sending remains unavailable.">
+<img src="screenshots/39-extra-device-sent.png" width="1206" height="2622" loading="lazy" alt="Payment sent, with its transaction ID and a button to close the screen.">
+<figcaption>Check the payment, exchange approvals, then send. These screens come from the same <a href="https://github.com/winnowwallet/winnow/actions/runs/34253766409">app test run</a>.</figcaption>
+</figure>
 
 <h2 id="backups">5. Keep a backup of both sides</h2>
 <p>In the account, choose <strong>Back up this wallet</strong>. Save that file and the phone’s recovery words. Back up Core’s wallet on the desktop as well. Wait for pending payments to confirm before exporting.</p>
 <p>The phone’s file includes the account and its tracked funds. Restoring an older file checks for later payments, so an already-spent coin does not come back as available. The file does not contain Core’s private key or a live signing exchange. Losing either required key and all its backups leaves this account unable to spend.</p>
+<figure>
+<img src="screenshots/38-extra-device-restored.png" width="1206" height="2622" loading="lazy" alt="The restored two-key account showing the balance left after the payment.">
+<figcaption>The test restores the backup saved before payment and checks that the remaining balance is correct.</figcaption>
+</figure>
 
 <h2 id="a-2-of-3-with-bitcoin-core">A shared 2-of-3 account</h2>
 <p>For shared decisions, create a three-key account and require two approvals. One or two of those keys can belong to Core wallets. Get each public expression as above; for this setup, keep the <code>/&lt;0;1&gt;/*</code> suffix on each participant.</p>

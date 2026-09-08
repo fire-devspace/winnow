@@ -94,6 +94,7 @@
       "test13GroupCosignerVault"
     ],
     "guide": "/core-cosigner",
+    "image": "35-extra-device-policy",
     "limitations": "Bitcoin Core 31.1 is the tested second signer. A hardware wallet needs its own compatibility test. Keep the wallet backup file, the phone’s recovery words, and a separate backup of the other signer’s key. Every key is required."
   },
   {

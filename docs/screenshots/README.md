@@ -24,3 +24,14 @@ including editing a payment, keeping custom fees out of beginner mode, opening
 payment diagnostics, and following Bitcoin Core confirmation.
 The [run artifact](https://github.com/winnowwallet/winnow/actions/runs/34171647009/artifacts/10036468223)
 contains the original captures, log, and result bundle.
+
+The extra-device captures (`35` through `39`) come from
+[app revision 75d08be](https://github.com/winnowwallet/winnow/commit/75d08be333311ee1bd53d1e2eb4d6a3118a747d9).
+All 16 app scenarios passed in
+[this UI run](https://github.com/winnowwallet/winnow/actions/runs/34253766409).
+The Core-backed journey covers account setup, review, interruption and restart,
+both approvals, the sent receipt, and restoring the pre-payment backup to find
+the remaining balance. The images are unchanged originals from the
+[run artifact](https://github.com/winnowwallet/winnow/actions/runs/34253766409/artifacts/10068373928),
+which also includes the log and result bundle. They show an iPhone simulator on
+a private test chain; they do not show a hardware-wallet integration.
