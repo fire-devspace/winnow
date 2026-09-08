@@ -233,6 +233,43 @@ struct ImportBundleTests {
         }
     }
 
+    /// The v2 schema is frozen and its `KnownTransaction` has no place for an
+    /// output breakdown, so a restore comes back with `outputs` not known —
+    /// the same state as an entry written before the breakdown existed, and
+    /// deliberately not an empty one, which would claim the send paid nobody.
+    ///
+    /// Worth pinning rather than leaving to the reader: the export walks the
+    /// history field by field, so adding a field to `HistoryEntry` and
+    /// forgetting the schema is frozen is exactly the change this catches.
+    @Test("a recorded output breakdown does not cross an export")
+    func recordedOutputsDoNotCrossAnExport() async throws {
+        let wallet = try await TestSupport.fundedWallet(
+            coins: [(.receive, 0, 150_000, 100)]).wallet
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        let signed = prepared.built.transaction
+        // Confirm it: an export refuses a wallet with a send in flight, and
+        // the breakdown is the thing that outlives the pending record anyway.
+        try await wallet.apply(match: fakeMatch(height: 150, transactions: [signed]))
+        try await wallet.recordScanHeight(151)
+        let recorded = try #require(await wallet.history.first { $0.txid == signed.txid }?.outputs)
+        #expect(!recorded.external.isEmpty, "the wallet knows where this send paid")
+
+        let bundle = try await wallet.exportBundle()
+        let json = try bundle.serialized()
+        #expect(!json.contains("\"outputs\""), "the frozen schema carries no breakdown")
+
+        let restored = try Wallet.importing(
+            try ImportBundle.decode(json: json), keyStore: InMemoryKeyStore())
+        let entry = try #require(await restored.history.first { $0.txid == signed.txid })
+        #expect(entry.outputs == nil, "not known, which is not the same as paid nobody")
+        // Everything the schema does carry still made the trip.
+        #expect(entry.spent == 150_000)
+        #expect(entry.height == 150)
+    }
+
     @Test("export with the mnemonic is opt-in and yields a spendable wallet")
     func exportWithMnemonic() async throws {
         let original = try await fundedWallet()

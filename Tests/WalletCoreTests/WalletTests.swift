@@ -238,6 +238,35 @@ struct WalletTests {
         }
     }
 
+    /// The replacement path signs through the same `sign(transaction:...)`,
+    /// so it gets the same one-derivation-per-operation guarantee — and it is
+    /// the path where the cost was doubled, because a bumped send re-signs
+    /// every input the original one did. Three inputs, so a per-input
+    /// derivation would read the store three times and not one.
+    @Test("a fee bump derives the master key once, not once per input it re-signs")
+    func feeBumpDerivesMasterOncePerSigning() async throws {
+        let keyStore = CountingKeyStore()
+        let (wallet, _) = try await fundedWallet(keyStore: keyStore, coins: [
+            (.receive, 0, 100_000, 100), (.receive, 1, 60_000, 101), (.receive, 2, 40_000, 102),
+        ])
+        let original = try await wallet.buildSend(
+            payments: [Payment(amount: 180_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(original)
+        let txid = original.built.transaction.txid
+        let rate = try await wallet.pendingFeeRate(txid: txid)
+
+        let loadsBefore = keyStore.loads
+        let replacement = try await wallet.buildFeeBump(txid: txid, feeRateSatPerVByte: rate + 1)
+        #expect(replacement.built.transaction.inputs.count == 3)
+        #expect(keyStore.loads - loadsBefore == 1)
+
+        // And the replacement is still a valid, committable transaction: the
+        // shared master produced each input's own key, not one key three times.
+        try await wallet.commitFeeBump(replacement)
+        #expect(await wallet.history.contains { $0.txid == replacement.built.transaction.txid })
+    }
+
     @Test("a signed transaction past the standard size limit is refused after signing")
     func standardSizeCeiling() throws {
         let output = Transaction.Output(value: 100_000, scriptPubKey: TestScripts.p2trDestination)
@@ -946,6 +975,114 @@ struct WalletTests {
         #expect(outputs.external.map(\.vout) == [2], "the 0-sat payment out is not money leaving")
         #expect(outputs.external.map(\.amount) == [50_000])
         #expect(outputs.change == [3], "the 0-sat change output is not a coin, so it is not change")
+    }
+
+    /// The other half of the hostile-input guard on a breakdown. Its vouts are
+    /// checked for self-consistency (`inconsistentOutputsAreRefused`); its
+    /// amounts are held to the monetary range the entry's own `received`,
+    /// `spent` and `fee` are held to. An external amount is the one number in
+    /// the breakdown a renderer would show as money, so a state file claiming
+    /// a send paid out more than exists — or a negative amount — must not
+    /// load at all.
+    @Test("a recorded external amount outside the monetary range is refused at load",
+          arguments: [BitcoinAmount.maximum + 1, -1])
+    func externalAmountOutOfRangeIsRefused(_ amount: Int64) async throws {
+        let url = tempFileURL("hostile-amount-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        // The file as written loads, so the refusal below is the edit's doing.
+        #expect(throws: Never.self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+
+        try Self.rewriteLastEntryOutputs(in: url) { outputs in
+            var hostile = outputs
+            var external = (outputs["external"] as? [[String: Any]]) ?? []
+            var first = external[0]
+            first["amount"] = NSNumber(value: amount)
+            external[0] = first
+            hostile["external"] = external
+            return hostile
+        }
+        #expect(throws: (any Error).self) { try Wallet.open(storageURL: url, keyStore: keyStore) }
+    }
+
+    /// `ExternalOutput` carries the locking script rather than an address, and
+    /// a script goes to disk as hex like a coin's. `Data(hex:)` answers nil on
+    /// anything that is not hex, so decoding has to turn that into a decoding
+    /// error rather than a nil script — a breakdown naming an unreadable
+    /// script is not one to load half of.
+    @Test("a recorded external script that is not hex is refused at load")
+    func externalScriptBadHexIsRefused() async throws {
+        let url = tempFileURL("bad-script-hex-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+        let good = try Data(contentsOf: url)
+
+        for bad in ["zz", "5120ff0"] { // not hex at all; odd-length hex
+            try good.write(to: url, options: .atomic)
+            try Self.rewriteLastEntryOutputs(in: url) { outputs in
+                var corrupt = outputs
+                var external = (outputs["external"] as? [[String: Any]]) ?? []
+                var first = external[0]
+                first["scriptPubKey"] = bad
+                external[0] = first
+                corrupt["external"] = external
+                return corrupt
+            }
+            #expect(throws: (any Error).self, "scriptPubKey \(bad)") {
+                try Wallet.open(storageURL: url, keyStore: keyStore)
+            }
+        }
+    }
+
+    /// An entry that predates the breakdown is written back exactly as it was
+    /// read, which is what `encodeIfPresent` is for: not known must survive a
+    /// save, or the first thing a new build does to an old wallet is turn
+    /// "not known" into "paid nobody".
+    @Test("an entry with no recorded outputs is saved again without the key")
+    func legacyEntryIsSavedWithoutTheKey() async throws {
+        let url = tempFileURL("legacy-resave-wallet.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let keyStore = InMemoryKeyStore()
+        let (wallet, _) = try await fundedWallet(storageURL: url, keyStore: keyStore,
+                                                 coins: [(.receive, 0, 150_000, 100)])
+        let prepared = try await wallet.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        try await wallet.commit(prepared)
+
+        // Rewrite in the older shape, then reopen and save through an
+        // ordinary state change.
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        var json = try #require(object as? [String: Any])
+        json["history"] = try #require(json["history"] as? [[String: Any]]).map { entry in
+            var older = entry
+            older.removeValue(forKey: "outputs")
+            return older
+        }
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+
+        let reopened = try Wallet.open(storageURL: url, keyStore: keyStore)
+        try await reopened.recordScanHeight(400)
+        let saved = try Data(contentsOf: url)
+        #expect(!String(decoding: saved, as: UTF8.self).contains("\"outputs\""),
+                "a save must not invent a breakdown for an entry that has none")
+        let again = try Wallet.open(storageURL: url, keyStore: keyStore)
+        let entry = try #require(await again.history.first {
+            $0.txid == prepared.built.transaction.txid
+        })
+        #expect(entry.outputs == nil)
     }
 
     /// Reads the last history entry's `outputs` object out of a state file,

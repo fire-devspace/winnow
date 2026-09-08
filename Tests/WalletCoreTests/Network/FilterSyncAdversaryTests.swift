@@ -61,6 +61,12 @@ struct FilterSyncAdversaryTests {
         /// the client compares can disagree with it; what is wrong is the
         /// length.
         case checkpointsTruncated(to: Int)
+        /// An honest cfheaders/cfilters chain announced with this many
+        /// fabricated cfcheckpt entries appended past the ones the tip
+        /// implies -- the mirror of `checkpointsTruncated`. Nothing the
+        /// client pins reaches those heights, so no comparison it runs can
+        /// contradict them; what is wrong is again the length.
+        case checkpointsPadded(by: Int)
     }
 
     /// Everything one case needs: the started nodes, the pool seated on them,
@@ -106,6 +112,10 @@ struct FilterSyncAdversaryTests {
         case let .checkpointsTruncated(limit):
             return LoopbackNode(params: params, chain: blocks,
                                 cfcheckptEntryLimit: limit,
+                                versionDelay: versionDelay)
+        case let .checkpointsPadded(extra):
+            return LoopbackNode(params: params, chain: blocks,
+                                cfcheckptExtraEntries: extra,
                                 versionDelay: versionDelay)
         }
     }
@@ -574,6 +584,51 @@ struct FilterSyncAdversaryTests {
 
         // Refused before the first batch, so there is nothing to undo: no
         // match, no frontier movement, and no progress file at all.
+        #expect(collector.matches.isEmpty)
+        #expect(await fixture.sync.nextScanHeight == 1)
+        #expect(await fixture.sync.filterHeader(at: 1_000) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.progressFile.path),
+                "a sync that never ran a batch writes no progress")
+
+        await fixture.pool.stop()
+    }
+
+    /// The mirror of the short list: one longer than the tip's boundaries.
+    ///
+    /// The guard is an equality against `tip / 1000`, not a minimum, and this
+    /// is the half of it a truncating peer cannot reach. Nothing the client
+    /// pins goes as high as the fabricated entry, so every comparison it runs
+    /// passes it over in silence — `checkPinnedBoundaries` breaks out at
+    /// `height <= tip`, and the tail guard reads `filterHeaders.last`, which
+    /// is now a header for a boundary the chain does not have and would be
+    /// compared against a pinned header from a different height. A peer that
+    /// can pick which of its entries the tail guard reads is a peer choosing
+    /// which comparison runs, so the length is refused before any batch.
+    @Test("a checkpoint list longer than the tip implies is refused before any batch runs")
+    func overlongCheckpointListIsRefusedBeforeAnyBatch() async throws {
+        let fixture = try await Self.threePeerFixture(
+            liars: [.checkpointsPadded(by: 1), .checkpointsPadded(by: 1),
+                    .checkpointsPadded(by: 1)])
+        defer { fixture.stopNodes() }
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            try await fixture.sync.sync(watchScripts: [fixture.synthetic.watchScript]) {
+                collector.add($0)
+            }
+        } catch {
+            thrown = error
+        }
+        guard case let .checkpointMismatch(reason)? = thrown as? FilterSyncError else {
+            Issue.record("expected checkpointMismatch, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("announced 2 checkpoints for tip 1001"))
+        #expect(reason.contains("expected 1"))
+
+        // Same shape of refusal as the empty list: nothing ran, so there is
+        // nothing to undo.
         #expect(collector.matches.isEmpty)
         #expect(await fixture.sync.nextScanHeight == 1)
         #expect(await fixture.sync.filterHeader(at: 1_000) == nil)

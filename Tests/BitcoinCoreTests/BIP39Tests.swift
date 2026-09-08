@@ -57,6 +57,28 @@ struct BIP39Tests {
         }
     }
 
+    /// The vector file stores the Japanese sentences decomposed, so the case above feeds
+    /// one form and gets NFKD out of it. A person does not: an iOS keyboard and almost
+    /// every clipboard hand over composed text. Both forms have to land on the same
+    /// wallet, which is the property normalizing the *input* buys — and the reason
+    /// `seed` normalizes rather than assuming its caller did.
+    @Test("a composed mnemonic derives the same seed as the decomposed one")
+    func composedMnemonicMatchesDecomposed() throws {
+        let vectors = try Self.vectors(language: "japanese")
+        for vector in vectors {
+            let composed = vector.mnemonic.precomposedStringWithCanonicalMapping
+            #expect(try BIP39.seed(mnemonic: composed, passphrase: "TREZOR") == vector.seed)
+        }
+        // Compared as bytes, not as Strings: Swift's `==` is canonical
+        // equivalence, so the two forms are one value to it and the
+        // difference this case is about is invisible at that level. PBKDF2
+        // sees the bytes, which is exactly why `seed` has to normalize them.
+        #expect(vectors.contains { vector in
+            Data(vector.mnemonic.precomposedStringWithCanonicalMapping.utf8)
+                != Data(vector.mnemonic.utf8)
+        }, "the fixtures must actually differ by form")
+    }
+
     /// The passphrase is normalized the same way, and nothing in the vector file covers
     /// it: every language derives its seed under "TREZOR". U+FB01 LATIN SMALL LIGATURE FI
     /// folds to "fi" under NFKD and is left alone by NFD. The expected seed was derived

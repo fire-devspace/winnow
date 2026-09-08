@@ -281,6 +281,79 @@ struct FilterSyncTests {
         #expect(collector.matches.map(\.height) == [synthetic.watchHeight])
     }
 
+    /// The other end of `maxBlocks`: a run that may scan nothing. The ceiling
+    /// is resolved before the cfcheckpt round trip, so a caller handing back
+    /// control with no room left spends no round trips at all and leaves the
+    /// frontier exactly where it was — the state the next run resumes from.
+    @Test("a run bounded to zero blocks asks for nothing and moves nothing")
+    func zeroMaxBlocksScansNothing() async throws {
+        let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("zero-bounded-progress.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1)
+        let collector = MatchCollector()
+
+        try await sync.sync(watchScripts: [synthetic.watchScript], maxBlocks: 0) {
+            collector.add($0)
+        }
+        #expect(await sync.nextScanHeight == 1, "the frontier stands where it was")
+        #expect(collector.matches.isEmpty)
+        #expect(await sync.pinnedFilterHeadersForTest.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: progressFile.path),
+                "a run that scanned nothing has nothing to persist")
+
+        // Nothing was asked of the peer beyond the header sync — not even the
+        // checkpoint comparison, which is one round trip per peer.
+        let asked = await node.receivedMessages.filter { message in
+            switch message {
+            case .getcfcheckpt, .getcfheaders, .getcfilters: true
+            default: false
+            }
+        }
+        #expect(asked.isEmpty)
+
+        // And the run that follows it is unaffected: the ceiling bounds one
+        // run, it does not disable the sync.
+        try await sync.sync(watchScripts: [synthetic.watchScript]) { collector.add($0) }
+        #expect(await sync.nextScanHeight == 7)
+        #expect(collector.matches.map(\.height) == [synthetic.watchHeight])
+    }
+
+    /// A chunk size of zero would make each chunk's stop one below its start,
+    /// so the loop would never advance and a scan would hang rather than fail;
+    /// one above the batch length would ask a peer for filters past the batch
+    /// its headers were pinned over. Neither is a caller's to get wrong, which
+    /// is what the clamp is for.
+    @Test("the chunk size is clamped to a range a batch can be fetched in")
+    func chunkSizeIsClamped() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let chain = try HeaderChain(params: .signet)
+        func chunk(_ requested: UInt32) async throws -> UInt32 {
+            try await FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                 filtersPerChunk: requested).filtersPerChunk
+        }
+        #expect(try await chunk(0) == 1, "zero would never advance the chunk loop")
+        #expect(try await chunk(1) == 1)
+        #expect(try await chunk(100) == 100)
+        #expect(try await chunk(FilterSync.maxRangePerRequest) == FilterSync.maxRangePerRequest)
+        #expect(try await chunk(FilterSync.maxRangePerRequest + 1)
+            == FilterSync.maxRangePerRequest)
+        #expect(try await chunk(.max) == FilterSync.maxRangePerRequest)
+        // The default a caller who says nothing gets.
+        let standard = try FilterSync(pool: pool, chain: chain, startHeight: 1)
+        #expect(await standard.filtersPerChunk == FilterSync.defaultFiltersPerChunk)
+    }
+
     /// Chunking changes how the filters are fetched and nothing else, so the
     /// two paths have to agree on everything outside FilterSync: the same
     /// matches, and the same saved progress. What differs is what the scan
@@ -578,6 +651,45 @@ struct FilterSyncTests {
         #expect(FilterSync.prunedFilterHeaders(dense, frontier: 5_433) == dense)
         // And a frontier of zero has no anchor to speak of.
         #expect(FilterSync.prunedFilterHeaders(dense, frontier: 0) == dense)
+    }
+
+    /// Below the first checkpoint boundary there is no boundary to keep and no
+    /// older interval to reach back to, so the kept run starts at zero and the
+    /// prune is a no-op. A wallet in its first thousand blocks must not be
+    /// pruned down to its anchor: everything it has is inside the range a
+    /// reorg could rewind into.
+    @Test("a frontier below the first boundary keeps every header it has")
+    func pruneBelowTheFirstBoundaryKeepsEverything() {
+        let dense = pinsForEveryHeight(in: 1 ... 499)
+        #expect(FilterSync.prunedFilterHeaders(dense, frontier: 500) == dense)
+
+        // And one block past the first boundary, where `keepFrom` reaches back
+        // an interval and lands on zero rather than underflowing it.
+        let acrossTheFirst = pinsForEveryHeight(in: 1 ... 1_000)
+        #expect(FilterSync.prunedFilterHeaders(acrossTheFirst, frontier: 1_001)
+            == acrossTheFirst)
+    }
+
+    /// The store is a `[String: String]` on disk, so its keys are whatever a
+    /// file says they are. A key that is not a height cannot be compared
+    /// against a checkpoint, cannot anchor a batch, and cannot be rewound
+    /// into by a reorg — keeping it would grow the file forever with entries
+    /// no check can ever read.
+    @Test("a prune drops a stored key that is not a height")
+    func pruneDropsKeysThatAreNotHeights() {
+        var dense = pinsForEveryHeight(in: 1 ... 5_432)
+        dense["not-a-height"] = Data(repeating: 0xAB, count: 32).hex
+        dense["-1"] = Data(repeating: 0xCD, count: 32).hex
+        dense["99999999999999999999"] = Data(repeating: 0xEF, count: 32).hex
+
+        let pruned = FilterSync.prunedFilterHeaders(dense, frontier: 5_433)
+        #expect(pruned["not-a-height"] == nil)
+        #expect(pruned["-1"] == nil)
+        #expect(pruned["99999999999999999999"] == nil)
+        // The real headers are kept exactly as the case above says they are,
+        // so the junk was dropped rather than the prune refused.
+        #expect(pruned == FilterSync.prunedFilterHeaders(pinsForEveryHeight(in: 1 ... 5_432),
+                                                          frontier: 5_433))
     }
 
     @Test("batch after batch, the kept headers stay contiguous and bounded")

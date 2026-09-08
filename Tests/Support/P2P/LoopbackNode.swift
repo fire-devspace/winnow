@@ -53,6 +53,13 @@ public actor LoopbackNode {
     /// comparison in `FilterSync` reads the reference list by index, so a
     /// short list retires the comparisons it omits rather than failing them.
     public let cfcheckptEntryLimit: Int?
+    /// Announces this many fabricated entries *beyond* the ones our tip
+    /// implies, while serving an honest cfheaders/cfilters chain: the mirror
+    /// of `cfcheckptEntryLimit`. Core returns exactly `stopHeight / 1000`
+    /// headers, so a longer list speaks for boundaries the chain does not
+    /// have, and `FilterSync` compares the announced count against its own
+    /// tip rather than trusting the length it was handed.
+    public let cfcheckptExtraEntries: Int
     /// Distinguishes one liar's fabricated commitment chain from another's.
     /// The lie is a byte-flip on every filter hash; with a fixed flip, two
     /// lying nodes fabricate *identical* chains and form a majority for the
@@ -89,7 +96,7 @@ public actor LoopbackNode {
          corruptFilterAtHeight: Int? = nil,
          lieAboutFilterCommitments: Bool = false, lieSalt: UInt8 = 0xFF,
          cfcheckptStopHashOverride: Data? = nil, cfcheckptLieAtHeight: Int? = nil,
-         cfcheckptEntryLimit: Int? = nil,
+         cfcheckptEntryLimit: Int? = nil, cfcheckptExtraEntries: Int = 0,
          disconnectOnUnknownStopHash: Bool = false, claimedStartHeight: Int32? = nil,
          autoRequestDelay: Duration? = nil, transactions: [Transaction] = [],
          startSilent: Bool = false, versionDelay: Duration = .zero) {
@@ -105,6 +112,7 @@ public actor LoopbackNode {
         self.cfcheckptStopHashOverride = cfcheckptStopHashOverride
         self.cfcheckptLieAtHeight = cfcheckptLieAtHeight
         self.cfcheckptEntryLimit = cfcheckptEntryLimit
+        self.cfcheckptExtraEntries = cfcheckptExtraEntries
         self.autoRequestDelay = autoRequestDelay
         self.transactions = Dictionary(uniqueKeysWithValues: transactions.map { ($0.txid, $0) })
         self.versionDelay = versionDelay
@@ -376,6 +384,9 @@ public actor LoopbackNode {
                 height += Int(FilterSync.checkpointInterval)
             }
             if let limit = cfcheckptEntryLimit { headers = Array(headers.prefix(max(0, limit))) }
+            for extra in 0 ..< max(0, cfcheckptExtraEntries) {
+                headers.append(Data(repeating: UInt8(0xA0 &+ extra), count: 32))
+            }
             try await send(.cfcheckpt(CFCheckptMessage(
                 stopHash: cfcheckptStopHashOverride ?? request.stopHash, filterHeaders: headers)))
 

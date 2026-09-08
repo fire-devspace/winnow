@@ -184,6 +184,61 @@ struct CoinSelectionTests {
         }
     }
 
+    /// The ceiling is measured on the shape the caller will actually build,
+    /// which is why the check runs after the change decision rather than
+    /// before it. A dust remainder drops the change output, and the
+    /// transaction that gets built is one output shorter than the one the
+    /// selection loop priced.
+    ///
+    /// The two shapes are 43 vbytes apart and an input is 57, so there is a
+    /// window one input wide where the changeless transaction relays and the
+    /// one with change does not. That window is this case: at `fits` inputs
+    /// the case above already proves the with-change shape is refused, so a
+    /// dust-change selection of the same size succeeding is only possible if
+    /// the change output was left out of the measurement.
+    @Test("a dust-change selection is sized without the change output it will not build")
+    func standardSizeCeilingWithoutChange() throws {
+        let payment = Transaction.Output(value: 0, scriptPubKey: p2tr)
+        let withChange = [payment, Transaction.Output(value: 0, scriptPubKey: p2tr)]
+
+        // The largest input count whose *changeless* transaction still relays.
+        var fits = 1
+        while TransactionBuilder.signedVSize(inputCount: fits + 1, outputs: [payment])
+            <= TransactionBuilder.maximumStandardVSize { fits += 1 }
+        // The window this case needs: the same count with a change output is
+        // over the limit. Without it the case would pass on either shape.
+        #expect(TransactionBuilder.signedVSize(inputCount: fits, outputs: withChange)
+            > TransactionBuilder.maximumStandardVSize)
+
+        // Every coin is spent and the remainder is 100 sats — under the
+        // 330-sat P2TR dust threshold, so the change output is dropped and
+        // the remainder folds into the fee.
+        let coin: Int64 = 200_000
+        let remainder: Int64 = 100
+        func spendEveryCoinLeavingDust(count: Int) throws -> Selection {
+            let feeWithChange = Int64(TransactionBuilder.signedVSize(inputCount: count,
+                                                                     outputs: withChange))
+            let target = Int64(count) * coin - feeWithChange - remainder
+            return try CoinSelection.select(
+                utxos: (0 ..< count).map { utxo(coin, index: UInt32($0)) },
+                payments: [Payment(amount: target, scriptPubKey: p2tr)],
+                changeScriptPubKey: p2tr, feeRateSatPerVByte: 1)
+        }
+
+        let selection = try spendEveryCoinLeavingDust(count: fits)
+        #expect(selection.selected.count == fits)
+        #expect(selection.changeAmount == nil, "the remainder is dust, so there is no change output")
+
+        // One input past the changeless ceiling it is refused — and the vsize
+        // it reports is the changeless one, not the shape the loop priced.
+        let vsize = TransactionBuilder.signedVSize(inputCount: fits + 1, outputs: [payment])
+        #expect(vsize < TransactionBuilder.signedVSize(inputCount: fits + 1, outputs: withChange))
+        #expect(throws: CoinSelectionError.transactionTooLarge(
+            vsize: vsize, limit: TransactionBuilder.maximumStandardVSize)) {
+            _ = try spendEveryCoinLeavingDust(count: fits + 1)
+        }
+    }
+
     @Test("hostile amounts and malformed wallet coins fail without arithmetic traps")
     func hostileAmountsAndCoins() {
         let valid = utxo(1_000_000)
@@ -480,6 +535,44 @@ struct CoinSelectionTests {
             #expect(rate > 0)
             #expect(rate <= FeePolicy.maximumSatPerVByte)
         }
+    }
+
+    /// Discarding rather than clamping is what makes the order a fall-through
+    /// instead of a precedence: a junk override does not take the whole
+    /// resolution down to the preset with a better-informed number sitting
+    /// right beneath it. The cases above drop one source at a time; this is
+    /// the pair, which is the shape a real caller has — a stored override from
+    /// a text field beside an estimate from a gateway.
+    @Test("an unusable override falls through to the estimate, not past it")
+    func unusableOverrideFallsThroughToTheEstimate() {
+        #expect(FeePolicy.resolve(priority: .medium, override: .nan, estimated: 7) == 7)
+        #expect(FeePolicy.resolve(priority: .medium, override: -1, estimated: 7) == 7)
+        // The estimate is still floored at the observed median once it is used.
+        #expect(FeePolicy.resolve(priority: .medium, override: 0, estimated: 7, observed: [9]) == 9)
+        // And with the estimate unusable too, the median — not the preset.
+        #expect(FeePolicy.resolve(priority: .medium, override: .infinity, estimated: .nan,
+                                  observed: [9]) == 9)
+    }
+
+    /// `usable` names a half-open range at the bottom and a closed one at the
+    /// top, so the ceiling itself is a legal feerate at every source and the
+    /// first representable value above it is not. `CoinSelection` accepts the
+    /// same number (`acceptedFeeRateExtremes`), which is the point of the two
+    /// gates naming one constant.
+    @Test("the fee ceiling is usable at every source and the next value up is not")
+    func feeCeilingIsInclusive() {
+        let ceiling = FeePolicy.maximumSatPerVByte
+        #expect(FeePolicy.resolve(override: ceiling) == ceiling)
+        #expect(FeePolicy.resolve(estimated: ceiling) == ceiling)
+        #expect(FeePolicy.resolve(observed: [ceiling]) == ceiling)
+        #expect(FeePolicy.resolve(floorSatPerVByte: ceiling) == ceiling)
+
+        // One ulp past it, every source is discarded and the preset stands.
+        let past = ceiling.nextUp
+        #expect(FeePolicy.resolve(priority: .medium, override: past) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, estimated: past) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, observed: [past]) == 5)
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: past) == 5)
     }
 
     @Test("median of observed samples")
