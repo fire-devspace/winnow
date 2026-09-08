@@ -1556,7 +1556,7 @@ final class WinnowAppUITests: XCTestCase {
         let backedUpAccount = try XCTUnwrap(backup.vaults?.first { $0.name == name })
         XCTAssertEqual(backedUpAccount.descriptor, vault.descriptor.serialized())
         XCTAssertEqual(backedUpAccount.utxos.count, 1)
-        app.buttons["Done"].tap()
+        app.buttons["Close"].tap()
 
         XCTAssertTrue(scrollUntilExists(app, app.buttons["Create payment"]))
         app.buttons["Create payment"].tap()
@@ -1611,14 +1611,17 @@ final class WinnowAppUITests: XCTestCase {
         combine(try bothNonces.base64V0())
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
         XCTAssertTrue(app.buttons["musigSignButton"].isEnabled)
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["Check this payment"], up: true))
         Screenshots.capture(app, "36-extra-device-review", testCase: self)
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["musigSignButton"]))
         app.buttons["musigSignButton"].tap()
         XCTAssertTrue(poll(timeout: 30, interval: 1, "phone partial signature") {
             self.scrollUntilExists(app, psbtOutput)
                 && (try? PSBT(base64: psbtOutput.label).inputs[0].musig2PartialSigs.count) == 1
         })
-        Screenshots.capture(app, "37-extra-device-waiting", testCase: self)
         let phoneSigned = try PSBT(base64: psbtOutput.label)
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["musigNextStep"], up: true))
+        Screenshots.capture(app, "37-extra-device-waiting", testCase: self)
         XCTAssertTrue(scrollUntilExists(app, app.buttons["musigBroadcastButton"], up: true))
         XCTAssertFalse(app.buttons["musigBroadcastButton"].isEnabled, "phone alone must not spend")
         let signed = try external.process(phoneSigned)

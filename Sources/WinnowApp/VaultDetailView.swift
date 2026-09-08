@@ -178,7 +178,7 @@ struct VaultSpendView: View {
                     }
                 }
             }
-            .navigationTitle("Create spend")
+            .navigationTitle("Create payment")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
