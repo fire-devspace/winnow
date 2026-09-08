@@ -1,8 +1,11 @@
 import WalletCore
 import Foundation
 
-/// Regenerates the shipped mainnet checkpoint from a header file this code
-/// produced by syncing from genesis (#89), run by `scripts/refresh-checkpoint`.
+/// Regenerates a shipped header checkpoint from a header file this code
+/// produced by syncing that network from genesis (#89), run by
+/// `scripts/refresh-checkpoint`. `--network` picks which one; there is no
+/// second copy of this derivation per network, because a copy is how two
+/// networks end up with two different definitions of the same constant.
 ///
 /// The point of the checkpoint is that nobody has to take it on faith. So it is
 /// not derived by a separate parser that could agree with the constant while
@@ -24,6 +27,11 @@ enum CheckpointGenerator {
 
     struct Options {
         let source: URL
+        /// Which network's constant is being derived. The header file has to
+        /// be that network's: the loader holds a genesis-rooted file's first
+        /// header to the genesis these parameters describe, so the wrong file
+        /// is refused rather than turned into a plausible wrong constant.
+        let network: BitcoinNetwork
         /// nil derives at the shipped height, which checks the constant.
         let height: UInt32?
         let vectorOut: URL?
@@ -33,22 +41,23 @@ enum CheckpointGenerator {
                 throw GenerateError.usage("checkpoint needs the path of a genesis-rooted headers.bin")
             }
             source = URL(fileURLWithPath: (arguments[1] as NSString).expandingTildeInPath)
+            network = try WinnowGenerate.network(in: arguments)
             height = try WinnowGenerate.number("--height", in: arguments)
             vectorOut = WinnowGenerate.option("--vector-out", in: arguments).map { URL(fileURLWithPath: $0) }
         }
     }
 
     static func run(_ options: Options) async throws {
-        let params = NetworkParams.mainnet
+        let params = NetworkParams.params(for: options.network)
         guard let height = options.height ?? params.checkpoint?.height else {
-            throw GenerateError.usage("mainnet ships no checkpoint; pass --height")
+            throw GenerateError.usage("\(options.network.rawValue) ships no checkpoint; pass --height")
         }
         let raw = try Data(contentsOf: options.source)
 
         // Truncate to the checkpoint height and hand the copy to the real
         // loader. It re-validates linkage and proof of work on every header.
         let temp = FileManager.default.temporaryDirectory
-            .appending(path: "winnow-checkpoint-\(height + 1).bin")
+            .appending(path: "winnow-checkpoint-\(options.network.rawValue)-\(height + 1).bin")
         try truncated(raw, toHeaders: height + 1).write(to: temp, options: .atomic)
         defer { try? FileManager.default.removeItem(at: temp) }
         let fromGenesis = try HeaderChain(params: params, storageURL: temp)
@@ -60,7 +69,7 @@ enum CheckpointGenerator {
         print("\n" + literal(height: derived.height, header: tip, work: derived.chainwork) + "\n")
         try compare(derived, shipped: params.checkpoint)
 
-        let next = try await proveAgreement(raw, fromGenesis: fromGenesis, derived: derived)
+        let next = try await proveAgreement(raw, params: params, fromGenesis: fromGenesis, derived: derived)
         if let vectorOut = options.vectorOut {
             try Data(vectorText(next).utf8).write(to: vectorOut, options: .atomic)
             print("checkpoint: wrote \(next.count) headers past height \(height) to \(vectorOut.path)")
@@ -98,12 +107,12 @@ enum CheckpointGenerator {
     /// the genesis-rooted chain and a chain started from the derived
     /// checkpoint must reach the same tip with the same total work — the
     /// checkpoint start is not a different chain, just a later entrance.
-    static func proveAgreement(_ raw: Data, fromGenesis: HeaderChain,
+    static func proveAgreement(_ raw: Data, params: NetworkParams, fromGenesis: HeaderChain,
                                derived: NetworkParams.Checkpoint) async throws -> [BlockHeader] {
         let target = derived.height + agreementSpan
         let next = try headers(in: raw, from: derived.height + 1, throughInclusive: target)
         // No stored file at all, so it starts from the derived constant.
-        let fromCheckpoint = try HeaderChain(params: parameters(.mainnet, with: derived),
+        let fromCheckpoint = try HeaderChain(params: parameters(params, with: derived),
                                              storageURL: nil, start: .checkpoint)
         // They already agree at the checkpoint itself.
         try await requireAgreement(fromGenesis, fromCheckpoint, at: [derived.height])
@@ -154,9 +163,9 @@ enum CheckpointGenerator {
 
     // MARK: - Pure parts
 
-    /// Mainnet with the derived checkpoint in place of the shipped one, so the
-    /// checkpoint-rooted chain starts from what was just computed rather than
-    /// from the constant under test.
+    /// The network's parameters with the derived checkpoint in place of the
+    /// shipped one, so the checkpoint-rooted chain starts from what was just
+    /// computed rather than from the constant under test.
     static func parameters(_ base: NetworkParams, with checkpoint: NetworkParams.Checkpoint) -> NetworkParams {
         NetworkParams(network: base.network, magic: base.magic, defaultPort: base.defaultPort,
                       genesisTime: base.genesisTime, genesisBits: base.genesisBits,

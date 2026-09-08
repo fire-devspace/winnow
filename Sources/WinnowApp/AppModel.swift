@@ -596,7 +596,7 @@ final class AppModel {
             // header's linkage/work is intentionally CPU-heavy. Keep that
             // validation intact but off the MainActor so relaunching during
             // backup never freezes the onboarding sheet.
-            let start = await chainStart()
+            let start = await chainStart(params: params)
             let chain = try await Task.detached(priority: .userInitiated) {
                 try Self.openOrRebuildChain(params: params, storageURL: headersURL, start: start)
             }.value
@@ -765,11 +765,17 @@ final class AppModel {
     /// Where the header chain should begin for the wallet we actually have.
     /// The rule itself lives in `HeaderChain.Start.forWallet` so it can be
     /// tested; this only supplies the wallet's birthday.
-    private func chainStart() async -> HeaderChain.Start {
+    ///
+    /// The decision reads the checkpoint off the parameters the chain is
+    /// actually opened with, not off the public constant for `network`. An
+    /// E2E run on a custom signet shares the `.signet` case while carrying no
+    /// checkpoint of its own, so deciding from the public one would answer a
+    /// question about a chain nobody opened.
+    private func chainStart(params: NetworkParams) async -> HeaderChain.Start {
         var birthday: UInt32?
         if let wallet { birthday = min(await wallet.creationHeight, await wallet.nextScanHeight) }
         return .forWallet(birthday: birthday,
-                          checkpoint: NetworkParams.params(for: network).checkpoint,
+                          checkpoint: params.checkpoint,
                           verifyFromGenesis: verifyFromGenesis)
     }
 

@@ -2,20 +2,21 @@
 
 # Release-path generators
 
-`winnow-debug generate` produces two constants the app ships and that `swift test`
+`winnow-debug generate` produces the constants the app ships and that `swift test`
 cannot: the mainnet fallback-peer list (#161), which needs the live network,
-and the mainnet header checkpoint (#89), which needs a 77 MB genesis-validated
-header file. Both used to be test suites gated behind environment variables no
-workflow set, so they never ran. These commands share the `winnow-debug` debugging
-executable, outside the shipping app. Their sources live in
-`Tools/Debug/Sources/WinnowDebug`; this directory retains the generator runbook.
+and a network's header checkpoint (#89), which needs a genesis-validated header
+file for that network — 77 MB for mainnet, 24 MB for signet. Both used to be
+test suites gated behind environment variables no workflow set, so they never
+ran. These commands share the `winnow-debug` debugging executable, outside the
+shipping app. Their sources live in `Tools/Debug/Sources/WinnowDebug`; this
+directory retains the generator runbook.
 
 Run from the repository root:
 
 ```sh
 swift run winnow-debug generate --help
 scripts/generate-fallback-peers
-scripts/refresh-checkpoint ~/…/mainnet/headers.bin [height]
+scripts/refresh-checkpoint [--network mainnet|signet] ~/…/headers.bin [height]
 ```
 
 `fallback-peers` resolves the mainnet DNS seeds, dials candidates with the
@@ -35,10 +36,21 @@ claim in-process: a chain started from the derived checkpoint connects the
 next 2,000 real headers and must reach the same tip, height and cumulative
 work as the genesis-rooted chain; disagreement exits non-zero. `--vector-out`
 writes those 2,000 headers, one per line as hex, which is how
-`Tests/WalletCoreTests/Vectors/mainnet-headers-900001-902000.txt` is made and
-how `HeaderChainTests` replays real headers past the checkpoint on every
-CI run. Deriving the chainwork itself still needs the full file, so that part
-remains release-time only.
+`Tests/WalletCoreTests/Vectors/mainnet-headers-900001-902000.txt` and
+`signet-headers-300001-302000.txt` are made and how `HeaderChainTests` replays
+real headers past each checkpoint on every CI run. Deriving the chainwork
+itself still needs the full file, so that part remains release-time only.
+
+`--network` chooses which constant is derived, and the script follows it for
+the shipped height it compares against and the vector it writes. There is
+deliberately one derivation rather than one per network: a second copy is how
+two networks end up with two definitions of the same constant. A genesis-rooted
+header file for a network is whatever this code wrote by syncing it —
+`winnow-debug soak --network NET --state DIR` leaves one behind, and a
+simulator container holds one too. The signet constant currently in the tree
+was derived on a machine with no route to port 38333; `NetworkParams.swift`
+records where its header file came from instead, and what that provenance is
+and is not worth.
 
 The default output path is found from `#filePath`, so it lands in the
 checkout the tool was built from whatever the working directory. Selection,

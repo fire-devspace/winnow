@@ -55,9 +55,9 @@ public enum HeaderChainError: LocalizedError, Equatable {
 ///   on that schedule with no minimum-difficulty exception, so a change
 ///   inside a period is a lie about difficulty — the way a peer would extend
 ///   our tip with cheap headers until an honest branch replaced them. A
-///   checkpoint-rooted chain applies this from its first new header: the
-///   mainnet checkpoint at 900,000 is mid-period, so 900,001 is checked
-///   against the checkpoint itself.
+///   checkpoint-rooted chain applies this from its first new header: both
+///   shipped checkpoints sit mid-period (mainnet 900,000, signet 300,000), so
+///   the block after each is checked against the checkpoint itself.
 ///
 /// What is NOT validated (documented deviation from full validation):
 /// - the *value* `bits` take at a retarget boundary (the timespan-based
@@ -132,8 +132,8 @@ public actor HeaderChain {
     public init(params: NetworkParams, storageURL: URL? = nil, start: Start = .genesis) throws {
         self.params = params
         self.storageURL = storageURL
-        // A network without a checkpoint (signet, whose whole chain is small)
-        // starts at genesis whatever the setting says.
+        // A network without a checkpoint — a custom signet, or a chain the
+        // tests mine — starts at genesis whatever the setting says.
         let checkpoint = start == .checkpoint ? params.checkpoint : nil
 
         if let storageURL, FileManager.default.fileExists(atPath: storageURL.path) {

@@ -29,8 +29,10 @@ public struct NetworkParams: Sendable, Equatable {
     /// see the per-network value's comment). Dialed alongside the DNS-seed
     /// results so a fresh launch works even when seed results are dead.
     public let fallbackPeers: [PeerEndpoint]
-    /// Optional trusted start for header sync (#89). Present only where
-    /// syncing from genesis is slow enough to matter, which today is mainnet.
+    /// Optional trusted start for header sync (#89). Present where syncing
+    /// from genesis is slow enough to matter, which is both public networks;
+    /// it stays optional because a custom signet (`customSignet`) and the
+    /// synthetic chains the tests mine have no settled height to trust.
     public let checkpoint: Checkpoint?
 
     /// A header far enough back to be settled, with the cumulative work of
@@ -217,7 +219,48 @@ public struct NetworkParams: Sendable, Equatable {
         dnsSeeds: [
             "seed.signet.bitcoin.sprovoost.nl",
             "seed.signet.achownodes.xyz",
-        ]
+        ],
+        // Derived the same way mainnet's is, by the same command: the file was
+        // loaded through HeaderChain, which proof-of-work-checked all 300,001
+        // headers up to this height, and `winnow-debug generate checkpoint
+        // --network signet` printed the three values below and proved a chain
+        // started from them agrees with the genesis-rooted chain 2,000 blocks
+        // on. Those 2,000 headers are the vector `HeaderChainTests` replays.
+        //
+        // Taken from a chain of 302,010 headers whose tip was height 302,009,
+        // 000000028b5b3b05bd7ab8dbdce034b2cbaabfc9cee31f5f48d88f1464a814bf.
+        // The signet tip that day, 2026-09-08, was 321,267.
+        //
+        // Where the header file came from, plainly, because it is not the
+        // mainnet story. The machine that derived this had no route to port
+        // 38333, so the chain was not synced over P2P. Each block's header
+        // fields were read from four independent public signet explorers
+        // (mempool.space, mempool.emzy.de, explorer.bc-2.jp, mempool.ninja),
+        // re-serialized locally, hashed, and required to equal the block id
+        // that explorer reported and to link to its parent; this block's 80
+        // bytes and hash were then confirmed identical at all four. On a
+        // machine with signet peers, `winnow-debug soak --network signet
+        // --state DIR` writes the genesis-rooted headers.bin that
+        // `scripts/refresh-checkpoint --network signet` wants, and that is the
+        // way to reproduce this rather than trust the paragraph above.
+        //
+        // Say the limit out loud: signet proof of work is trivially cheap and
+        // a signet block's signature lives in the coinbase, not in the header,
+        // so header validation alone cannot authenticate a signet chain the
+        // way it authenticates mainnet's. Agreement across four independent
+        // sources is what stands behind these bytes.
+        //
+        // Block 300,000 hash, display order:
+        //   000000073002e4e1de008de89ee41db4baf8734c0f4e5ba9447bb0f1a301b02c
+        checkpoint: Checkpoint(
+            height: 300_000,
+            header: Data(hex:
+                "0000002091895bf82cf71598c30ca977cdc36d73a7c7428481bff79d6f24341707000000"
+                + "1991de83deadae180910d84541571e875d691e82d97418fff93755fb03ce1317"
+                + "5aaedd69df43151d01b5ce04")!,
+            chainwork: Data(hex:
+                "00000000000000000000000000000000000000000000000000000c88cd095e60")!
+        )
     )
 }
 

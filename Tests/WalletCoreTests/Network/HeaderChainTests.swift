@@ -3,8 +3,8 @@ import Testing
 import TestSupport
 @testable import WalletCore
 
-/// HeaderChain by subject: consensus and fork choice, the shipped mainnet
-/// checkpoint, starting somewhere other than block 0 and the policy that
+/// HeaderChain by subject: consensus and fork choice, the shipped
+/// checkpoints, starting somewhere other than block 0 and the policy that
 /// chooses where, replayed headers, and reorg visibility.
 ///
 /// Combined from `HeaderChainTests` (which already held four suites in one
@@ -310,24 +310,78 @@ struct HeaderChainTests {
         }
     }
 
-    // MARK: - Mainnet checkpoint
+    // MARK: - Shipped checkpoints
     //
     // A shipped checkpoint is a constant someone has to trust, so it should be
     // impossible to get wrong quietly. These are the checks that can run
-    // without the 900,000 headers it was derived from (#89).
+    // without the headers it was derived from (#89), and they run for every
+    // network that ships one: a second constant earns the same scrutiny as the
+    // first, and the way to give it that is a parameter, not a copy.
 
-    private var checkpoint: NetworkParams.Checkpoint {
-        get throws {
-            guard let cp = NetworkParams.params(for: .mainnet).checkpoint else {
-                throw HeaderChainError.storageCorrupt("mainnet has no checkpoint")
-            }
-            return cp
+    /// What a shipped checkpoint claims, written out here rather than read
+    /// back off the constant under test. An expectation derived from the value
+    /// it is checking agrees with a typo exactly as happily as with the truth.
+    struct Shipped: Sendable {
+        let network: BitcoinNetwork
+        let height: UInt32
+        /// The block hash in display order, as the provenance comment records it.
+        let displayHash: String
+        /// Cumulative work through `height`, big-endian, as hex.
+        let chainwork: String
+        /// The serialized header of the block right after the checkpoint.
+        let nextHeader: Data
+        /// The 2,000 headers after the checkpoint, as `--vector-out` wrote them.
+        let vector: String
+    }
+
+    /// Block 900,001, right after the shipped mainnet checkpoint.
+    /// 00000000000000000001a8ff030609a6248e0f6e77f9f141aeb21e4eac4f83fc
+    static let block900_001 = Data(hex:
+        "00e000208a96960d6d1ca4ee4a283fd83da309b8d5d2bfed380501000000000000000000"
+        + "371c9ffd63d75fb36c57d58eb842d23c0e7ec049daf16d94cc38805c346e9d52"
+        + "e880426874370217973dc83b")!
+
+    /// Block 300,001, right after the shipped signet checkpoint.
+    /// 00000003782561b797667f4d0ed3fd36d2b0825f4c15205fb92d6bfaaefd9d0b
+    static let block300_001 = Data(hex:
+        "000000202cb001a3f1b07b44a95b4e0f4c73f8bab41de49ee88d00dee1e4023007000000"
+        + "fb319148f2a3021590810415d48e3b4031a60f449850b08a5092298328c26ea6"
+        + "ddb0dd69df43151d1f446912")!
+
+    static let shippedCheckpoints: [Shipped] = [
+        Shipped(network: .mainnet, height: 900_000,
+                displayHash: "000000000000000000010538edbfd2d5b809a33dd83f284aeea41c6d0d96968a",
+                chainwork: "0000000000000000000000000000000000000000c8bbeae4127a204b0317861c",
+                nextHeader: block900_001,
+                vector: "mainnet-headers-900001-902000.txt"),
+        Shipped(network: .signet, height: 300_000,
+                displayHash: "000000073002e4e1de008de89ee41db4baf8734c0f4e5ba9447bb0f1a301b02c",
+                chainwork: "00000000000000000000000000000000000000000000000000000c88cd095e60",
+                nextHeader: block300_001,
+                vector: "signet-headers-300001-302000.txt"),
+    ]
+
+    private func constant(_ shipped: Shipped) throws -> NetworkParams.Checkpoint {
+        guard let checkpoint = NetworkParams.params(for: shipped.network).checkpoint else {
+            throw HeaderChainError.storageCorrupt("\(shipped.network.rawValue) has no checkpoint")
+        }
+        return checkpoint
+    }
+
+    /// The table above is the parameter list for everything below it, so a
+    /// network missing from it would be a shipped constant nothing here reads.
+    @Test("every network the app runs on ships a checkpoint this file checks")
+    func everyNetworkIsChecked() {
+        #expect(Set(Self.shippedCheckpoints.map(\.network)) == Set(BitcoinNetwork.allCases))
+        for shipped in Self.shippedCheckpoints {
+            #expect(NetworkParams.params(for: shipped.network).checkpoint?.height == shipped.height)
         }
     }
 
-    @Test("the header is well formed and satisfies its own proof of work")
-    func headerIsValid() throws {
-        let cp = try checkpoint
+    @Test("the header is well formed and satisfies its own proof of work",
+          arguments: Self.shippedCheckpoints)
+    func headerIsValid(_ shipped: Shipped) throws {
+        let cp = try constant(shipped)
         let header = try BlockHeader.decode(cp.header)
         #expect(cp.header.count == 80)
         #expect(cp.chainwork.count == 32)
@@ -336,29 +390,30 @@ struct HeaderChainTests {
         // the bytes fails here rather than 900,000 blocks later.
         let target = try #require(UInt256.target(compact: header.bits))
         #expect(UInt256(littleEndian: header.hash) <= target)
-        #expect(target <= UInt256(littleEndian: NetworkParams.params(for: .mainnet).powLimit))
+        #expect(target <= UInt256(littleEndian: NetworkParams.params(for: shipped.network).powLimit))
     }
 
-    @Test("the hash matches the block recorded in the source comment")
-    func hashMatchesRecordedValue() throws {
-        let header = try BlockHeader.decode(try checkpoint.header)
+    @Test("the hash matches the block recorded in the source comment",
+          arguments: Self.shippedCheckpoints)
+    func hashMatchesRecordedValue(_ shipped: Shipped) throws {
+        let header = try BlockHeader.decode(try constant(shipped).header)
         // Display order is the reverse of internal order.
         let display = Data(header.hash.reversed()).map { String(format: "%02x", $0) }.joined()
-        #expect(display == "000000000000000000010538edbfd2d5b809a33dd83f284aeea41c6d0d96968a")
+        #expect(display == shipped.displayHash)
     }
 
-    @Test("cumulative work is plausible for the height and below the total supply of work")
-    func chainworkSane() throws {
-        let cp = try checkpoint
+    @Test("cumulative work is plausible for the height and below the total supply of work",
+          arguments: Self.shippedCheckpoints)
+    func chainworkSane(_ shipped: Shipped) throws {
+        let cp = try constant(shipped)
         // Orientation first. `Data(hex:)` keeps byte order and
         // `Data(displayHex:)` reverses it, and a reversed 32-byte chainwork is
         // still enormous and still non-zero — so every plausibility check below
         // passes just as happily on garbage. Pin the actual bytes: leading
-        // zeros at the front, the low-order byte at the end.
+        // zeros at the front, and then the whole spelling, which fixes the
+        // low-order byte at the end as surely as naming it did.
         #expect(cp.chainwork.prefix(20).allSatisfy { $0 == 0 })
-        #expect(cp.chainwork.last == 0x1c)
-        #expect(cp.chainwork.map { String(format: "%02x", $0) }.joined()
-            == "0000000000000000000000000000000000000000c8bbeae4127a204b0317861c")
+        #expect(cp.chainwork.map { String(format: "%02x", $0) }.joined() == shipped.chainwork)
 
         let work = UInt256(bigEndian: cp.chainwork)
         // Non-zero, and far above the work of any single block: a checkpoint
@@ -369,7 +424,7 @@ struct HeaderChainTests {
         let target = try #require(UInt256.target(compact: header.bits))
         let single = try #require(UInt256.blockWork(target: target))
         #expect(work > single)
-        #expect(cp.height == 900_000)
+        #expect(cp.height == shipped.height)
     }
 
     // MARK: - Checkpoint start
@@ -377,29 +432,22 @@ struct HeaderChainTests {
     // Starting the chain somewhere other than block 0, end to end (#89 phase
     // 3).
     //
-    // These run everywhere. The fixtures are block 900,001's header and the
-    // 2,000 real mainnet headers after the checkpoint, 160 KB of hex, which is
-    // enough to make a checkpoint-rooted chain do real proof-of-work checks at
-    // mainnet difficulty — across the retarget at 901,152 — and write and
-    // reread a real file. What they cannot prove is the checkpoint's
-    // chainwork: that number summarises the 900,000 headers below it, and only
-    // `winnow-generate checkpoint`, run against a genesis-validated header file
-    // at release time, recomputes it and proves the genesis-rooted and
-    // checkpoint-rooted chains agree (Tools/Generate/README.md).
+    // These run everywhere. The fixtures are the block after each checkpoint
+    // and the 2,000 real headers that follow it, which is enough to make a
+    // checkpoint-rooted chain do real proof-of-work checks at that network's
+    // difficulty — across a retarget boundary — and write and reread a real
+    // file. What they cannot prove is the checkpoint's chainwork: that number
+    // summarises every header below it, and only `winnow-debug generate
+    // checkpoint`, run against a genesis-validated header file at release
+    // time, recomputes it and proves the genesis-rooted and checkpoint-rooted
+    // chains agree (Tools/Generate/README.md).
 
-    /// The block right after the shipped mainnet checkpoint.
-    /// 00000000000000000001a8ff030609a6248e0f6e77f9f141aeb21e4eac4f83fc
-    static let block900_001 = Data(hex:
-        "00e000208a96960d6d1ca4ee4a283fd83da309b8d5d2bfed380501000000000000000000"
-        + "371c9ffd63d75fb36c57d58eb842d23c0e7ec049daf16d94cc38805c346e9d52"
-        + "e880426874370217973dc83b")!
-
-    /// Heights 900,001 through 902,000, one 80-byte header per line as hex —
-    /// what `winnow-generate checkpoint --vector-out` writes from a
-    /// genesis-validated header file, and what the shipped constant was
-    /// checked against.
-    static func headersPastCheckpoint() throws -> [BlockHeader] {
-        let text = try String(decoding: Vectors.data("mainnet-headers-900001-902000.txt", in: .module), as: UTF8.self)
+    /// The 2,000 headers past `shipped`'s checkpoint, one 80-byte header per
+    /// line as hex — what `winnow-debug generate checkpoint --vector-out`
+    /// writes from a genesis-validated header file, and what the shipped
+    /// constant was checked against.
+    static func headersPastCheckpoint(_ shipped: Shipped) throws -> [BlockHeader] {
+        let text = try String(decoding: Vectors.data(shipped.vector, in: .module), as: UTF8.self)
         return try text.split(separator: "\n").map { line in
             guard let bytes = Data(hex: String(line)), bytes.count == BlockHeader.serializedSize else {
                 throw VectorError.malformed(String(line))
@@ -414,43 +462,81 @@ struct HeaderChainTests {
         return url
     }
 
-    @Test("a fresh checkpoint-started chain begins at the checkpoint, not at zero")
-    func startsAtCheckpoint() async throws {
-        let params = NetworkParams.params(for: .mainnet)
+    @Test("a fresh checkpoint-started chain begins at the checkpoint, not at zero",
+          arguments: Self.shippedCheckpoints)
+    func startsAtCheckpoint(_ shipped: Shipped) async throws {
+        let params = NetworkParams.params(for: shipped.network)
         let cp = try #require(params.checkpoint)
         let chain = try HeaderChain(params: params, storageURL: nil, start: .checkpoint)
         #expect(await chain.startHeight == cp.height)
         #expect(await chain.height == cp.height)
         #expect(await chain.tip.serialized == cp.header)
         #expect(await chain.tipWork == cp.chainwork)
+        // The tip is the block the constant names, not merely 80 bytes that parse.
+        #expect(await chain.tipHash.displayHex == shipped.displayHash)
         // It genuinely does not hold what it skipped — no silent zero-filling.
         #expect(await chain.header(at: cp.height - 1) == nil)
         #expect(await chain.header(at: 0) == nil)
     }
 
-    @Test("the default is still genesis, so existing callers are unchanged")
-    func defaultIsGenesis() async throws {
-        let chain = try HeaderChain(params: .mainnet, storageURL: nil)
+    @Test("the default is still genesis, so existing callers are unchanged",
+          arguments: Self.shippedCheckpoints)
+    func defaultIsGenesis(_ shipped: Shipped) async throws {
+        let chain = try HeaderChain(params: NetworkParams.params(for: shipped.network), storageURL: nil)
         #expect(await chain.startHeight == 0)
         #expect(await chain.height == 0)
     }
 
+    /// Both public networks ship a checkpoint now, so the network that proves
+    /// this rule is a synthetic one — which is the shape every custom signet
+    /// and every mined test chain has, and why the field stays optional.
     @Test("a network with no checkpoint starts at genesis whatever the setting says")
-    func signetIgnoresTheSetting() async throws {
-        let chain = try HeaderChain(params: .signet, storageURL: nil, start: .checkpoint)
+    func noCheckpointIgnoresTheSetting() async throws {
+        let params = makeSyntheticChain(length: 1, watchHeight: 1).params
+        #expect(params.checkpoint == nil)
+        let chain = try HeaderChain(params: params, storageURL: nil, start: .checkpoint)
         #expect(await chain.startHeight == 0)
-        #expect(await chain.tip == HeaderChain.genesisHeader(for: .signet))
+        #expect(await chain.tip == HeaderChain.genesisHeader(for: params))
     }
 
-    @Test("a checkpoint-rooted chain connects real headers and reloads from its own file")
-    func roundTrip() async throws {
-        let params = NetworkParams.params(for: .mainnet)
+    /// A checkpoint-rooted chain holds one block and nothing below it, so the
+    /// only headers it can accept are the ones that build on that block. This
+    /// is the check that a wrong constant cannot be papered over by a peer
+    /// serving some other branch of the same network.
+    @Test("headers that do not build on the checkpoint are refused",
+          arguments: Self.shippedCheckpoints)
+    func refusesHeadersThatMissTheCheckpoint(_ shipped: Shipped) async throws {
+        let params = NetworkParams.params(for: shipped.network)
+        let cp = try constant(shipped)
+        let chain = try HeaderChain(params: params, storageURL: nil, start: .checkpoint)
+
+        // This network's own genesis header: entirely real, and still refused,
+        // because a chain rooted at the checkpoint holds nothing it links to.
+        await #expect(throws: HeaderChainError.doesNotConnect) {
+            try await chain.connect([HeaderChain.genesisHeader(for: params)])
+        }
+        // Real headers from further up the same chain, offered without the one
+        // that joins them to the checkpoint.
+        let vector = try Self.headersPastCheckpoint(shipped)
+        await #expect(throws: HeaderChainError.doesNotConnect) {
+            try await chain.connect(Array(vector[1 ... 2]))
+        }
+        // And the true successor connects, so the refusals above are about
+        // linkage rather than a chain that refuses everything.
+        #expect(try await chain.connect([vector[0]]).appended == 1)
+        #expect(await chain.height == cp.height + 1)
+    }
+
+    @Test("a checkpoint-rooted chain connects real headers and reloads from its own file",
+          arguments: Self.shippedCheckpoints)
+    func roundTrip(_ shipped: Shipped) async throws {
+        let params = NetworkParams.params(for: shipped.network)
         let cp = try #require(params.checkpoint)
-        let url = tempURL("checkpoint-roundtrip")
+        let url = tempURL("checkpoint-roundtrip-\(shipped.network.rawValue)")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
-        let next = try BlockHeader.decode(Self.block900_001)
+        let next = try BlockHeader.decode(shipped.nextHeader)
         #expect(try await chain.connect([next]).appended == 1)
         #expect(await chain.height == cp.height + 1)
         let workAfter = await chain.tipWork
@@ -466,8 +552,8 @@ struct HeaderChainTests {
 
         // Then the 2,000 real headers past the checkpoint, the same blocks the
         // release-time agreement check connects: every one proof-of-work
-        // checked at mainnet difficulty, then written and read back.
-        let vector = try Self.headersPastCheckpoint()
+        // checked at this network's difficulty, then written and read back.
+        let vector = try Self.headersPastCheckpoint(shipped)
         #expect(vector.count == 2_000)
         #expect(vector.first == next)
         #expect(try BlockHeader.decode(cp.header).hash == vector.first?.previousHash)
@@ -487,15 +573,16 @@ struct HeaderChainTests {
         #expect(await reloaded.header(at: cp.height - 1) == nil)
     }
 
-    @Test("turning verification on refuses the checkpoint-rooted file instead of misreading it")
-    func genesisRefusesCheckpointFile() async throws {
-        let params = NetworkParams.params(for: .mainnet)
+    @Test("turning verification on refuses the checkpoint-rooted file instead of misreading it",
+          arguments: Self.shippedCheckpoints)
+    func genesisRefusesCheckpointFile(_ shipped: Shipped) async throws {
+        let params = NetworkParams.params(for: shipped.network)
         let cp = try #require(params.checkpoint)
-        let url = tempURL("checkpoint-then-genesis")
+        let url = tempURL("checkpoint-then-genesis-\(shipped.network.rawValue)")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let chain = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
-        #expect(try await chain.connect([try BlockHeader.decode(Self.block900_001)]).appended == 1)
+        #expect(try await chain.connect([try BlockHeader.decode(shipped.nextHeader)]).appended == 1)
 
         // The file is not damaged; it just answers a different question. Saying
         // so lets the app rebuild rather than treat block 900,000 as block 0.
@@ -504,12 +591,23 @@ struct HeaderChainTests {
         }
     }
 
-    @Test("turning verification off keeps a chain that was already verified from genesis")
-    func checkpointAcceptsGenesisFile() async throws {
-        let params = NetworkParams.params(for: .signet)
-        let url = tempURL("genesis-then-checkpoint")
+    @Test("turning verification off keeps a chain that was already verified from genesis",
+          arguments: Self.shippedCheckpoints)
+    func checkpointAcceptsGenesisFile(_ shipped: Shipped) async throws {
+        let params = NetworkParams.params(for: shipped.network)
+        let url = tempURL("genesis-then-checkpoint-\(shipped.network.rawValue)")
         defer { try? FileManager.default.removeItem(at: url) }
-        // Any genesis-rooted file will do; signet's is cheap to make.
+        // A genesis-rooted file holding nothing but block 0: a count, then
+        // this network's real genesis header, which the loader proof-of-work
+        // and lineage checks like any other. Writing it by hand is what makes
+        // the reopen below read a stored file rather than build a fresh chain
+        // — which is the whole case, now that both networks ship a checkpoint
+        // the setting could otherwise start from.
+        var stored = Data()
+        stored.appendUInt32(1)
+        stored.append(HeaderChain.genesisHeader(for: params).serialized)
+        try stored.write(to: url)
+
         let chain = try HeaderChain(params: params, storageURL: url, start: .genesis)
         #expect(await chain.startHeight == 0)
 
@@ -518,6 +616,8 @@ struct HeaderChainTests {
         // away and re-sync.
         let reopened = try HeaderChain(params: params, storageURL: url, start: .checkpoint)
         #expect(await reopened.startHeight == 0)
+        #expect(await reopened.height == 0)
+        #expect(await reopened.tip == HeaderChain.genesisHeader(for: params))
     }
 
     // MARK: - Checkpoint start policy
@@ -527,46 +627,53 @@ struct HeaderChainTests {
     // This is the rule that keeps a speed optimisation from becoming a wrong
     // balance, so it is worth stating case by case.
 
-    private let mainnet = NetworkParams.params(for: .mainnet).checkpoint
-    private var cpHeight: UInt32 { mainnet?.height ?? 0 }
-
-    @Test("no wallet yet: the checkpoint is free to use")
-    func noWallet() {
-        #expect(HeaderChain.Start.forWallet(birthday: nil, checkpoint: mainnet,
+    @Test("no wallet yet: the checkpoint is free to use", arguments: Self.shippedCheckpoints)
+    func noWallet(_ shipped: Shipped) throws {
+        let cp = try constant(shipped)
+        #expect(HeaderChain.Start.forWallet(birthday: nil, checkpoint: cp,
                                             verifyFromGenesis: false) == .checkpoint)
     }
 
-    @Test("a wallet born at or after the checkpoint keeps the fast path")
-    func modernWallet() {
-        #expect(HeaderChain.Start.forWallet(birthday: cpHeight, checkpoint: mainnet,
+    @Test("a wallet born at or after the checkpoint keeps the fast path",
+          arguments: Self.shippedCheckpoints)
+    func modernWallet(_ shipped: Shipped) throws {
+        let cp = try constant(shipped)
+        #expect(HeaderChain.Start.forWallet(birthday: cp.height, checkpoint: cp,
                                             verifyFromGenesis: false) == .checkpoint)
-        #expect(HeaderChain.Start.forWallet(birthday: cpHeight + 50_000, checkpoint: mainnet,
+        #expect(HeaderChain.Start.forWallet(birthday: cp.height + 50_000, checkpoint: cp,
                                             verifyFromGenesis: false) == .checkpoint)
     }
 
-    @Test("a wallet older than the checkpoint gets the whole chain, setting or not")
-    func olderWalletOverridesTheDefault() {
+    @Test("a wallet older than the checkpoint gets the whole chain, setting or not",
+          arguments: Self.shippedCheckpoints)
+    func olderWalletOverridesTheDefault(_ shipped: Shipped) throws {
         // The blocks holding its coins are below the checkpoint, and filters
         // are fetched by block hash — a checkpoint-rooted chain simply cannot
         // ask about them. Reporting a balance short by whatever is down there
         // would be worse than a slow first launch.
-        #expect(HeaderChain.Start.forWallet(birthday: 0, checkpoint: mainnet,
+        let cp = try constant(shipped)
+        #expect(HeaderChain.Start.forWallet(birthday: 0, checkpoint: cp,
                                             verifyFromGenesis: false) == .genesis)
-        #expect(HeaderChain.Start.forWallet(birthday: cpHeight - 1, checkpoint: mainnet,
+        #expect(HeaderChain.Start.forWallet(birthday: cp.height - 1, checkpoint: cp,
                                             verifyFromGenesis: false) == .genesis)
     }
 
-    @Test("the setting always wins toward more verification, never toward less")
-    func settingOnlyAddsWork() {
-        for birthday: UInt32? in [nil, 0, cpHeight, cpHeight + 1] {
-            #expect(HeaderChain.Start.forWallet(birthday: birthday, checkpoint: mainnet,
+    @Test("the setting always wins toward more verification, never toward less",
+          arguments: Self.shippedCheckpoints)
+    func settingOnlyAddsWork(_ shipped: Shipped) throws {
+        let cp = try constant(shipped)
+        for birthday: UInt32? in [nil, 0, cp.height, cp.height + 1] {
+            #expect(HeaderChain.Start.forWallet(birthday: birthday, checkpoint: cp,
                                                 verifyFromGenesis: true) == .genesis)
         }
     }
 
     @Test("a network with no checkpoint always starts at genesis")
     func noCheckpoint() {
-        #expect(NetworkParams.params(for: .signet).checkpoint == nil)
+        // Neither public network is this case any more, so name the ones that
+        // are: a custom BIP325 signet, and the chains the tests mine.
+        #expect(NetworkParams.customSignet(challenge: Data([0x51, 0x51])).checkpoint == nil)
+        #expect(makeSyntheticChain(length: 1, watchHeight: 1).params.checkpoint == nil)
         #expect(HeaderChain.Start.forWallet(birthday: 900_000, checkpoint: nil,
                                             verifyFromGenesis: false) == .genesis)
     }

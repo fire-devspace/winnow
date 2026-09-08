@@ -144,7 +144,7 @@ struct WinnowGenerateTests {
         #expect(FallbackPeerGenerator.commentSafe("a\nb\tc\u{7F}d\u{E9}") == "a?b?c?d?")
     }
 
-    @Test("checkpoint options need a source path and take a height")
+    @Test("checkpoint options need a source path and take a height and a network")
     func checkpointOptions() throws {
         let options = try CheckpointGenerator.Options(
             ["checkpoint", "~/headers.bin", "--height", "950000", "--vector-out", "out.txt"])
@@ -155,6 +155,23 @@ struct WinnowGenerateTests {
         #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin"]).height == nil)
         #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint"]) }
         #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint", "--height", "1"]) }
+
+        // Mainnet is the default because it was the only network before
+        // signet's constant existed; an unspelled --network must not quietly
+        // derive one network's checkpoint under another one's name.
+        #expect(options.network == .mainnet)
+        #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin"]).network == .mainnet)
+        #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin", "--network", "signet"])
+            .network == .signet)
+        #expect(throws: GenerateError.self) {
+            try CheckpointGenerator.Options(["checkpoint", "h.bin", "--network", "regtest"])
+        }
+        // Every case of the enum is spellable, so a new network is reachable
+        // from the command line the day it is added.
+        for network in BitcoinNetwork.allCases {
+            #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin", "--network", network.rawValue])
+                .network == network)
+        }
     }
 
     @Test("truncation keeps exactly the requested headers and refuses the wrong source")
@@ -191,9 +208,10 @@ struct WinnowGenerateTests {
         #expect(CheckpointGenerator.grouped(0, separator: "_") == "0")
     }
 
-    @Test("the literal for the shipped checkpoint is the source, line for line")
-    func literalMatchesSource() throws {
-        let shipped = try #require(NetworkParams.mainnet.checkpoint)
+    @Test("the literal for each shipped checkpoint is the source, line for line",
+          arguments: BitcoinNetwork.allCases)
+    func literalMatchesSource(_ network: BitcoinNetwork) throws {
+        let shipped = try #require(NetworkParams.params(for: network).checkpoint)
         let literal = CheckpointGenerator.literal(height: shipped.height,
                                                   header: try BlockHeader.decode(shipped.header),
                                                   work: shipped.chainwork)

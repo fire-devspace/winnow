@@ -1,8 +1,13 @@
 #!/bin/bash
-# Refresh the shipped mainnet header checkpoint (#89) from a genesis-validated
-# headers.bin — any file this code produced by syncing mainnet from genesis
-# past the wanted height, a simulator container's included. Release-time,
-# manual (owner decision 2026-08-24); see Tools/Generate/README.md.
+# Refresh a shipped header checkpoint (#89) from a genesis-validated
+# headers.bin — any file this code produced by syncing that network from
+# genesis past the wanted height, a simulator container's included, or the
+# state directory `winnow-debug soak --network NET --state DIR` leaves behind.
+# Release-time, manual (owner decision 2026-08-24); see Tools/Generate/README.md.
+#
+# --network picks which constant is refreshed; the shipped height, the vector
+# name and the derivation all follow it, so there is no second copy of this
+# procedure per network.
 #
 # The tool derives the constant through HeaderChain itself, prints it as a
 # paste-ready literal for NetworkParams.swift, proves a chain started from it
@@ -10,16 +15,41 @@
 # vector those 2,000 headers become for the always-on HeaderChainTests.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-if [ $# -lt 1 ]; then
-  echo 'usage: scripts/refresh-checkpoint <headers.bin> [height]' >&2
+usage() {
+  echo 'usage: scripts/refresh-checkpoint [--network mainnet|signet] <headers.bin> [height]' >&2
+  exit 64
+}
+network=mainnet
+positional=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --network) [ $# -ge 2 ] || usage; network=$2; shift 2 ;;
+    -*) usage ;;
+    *) positional+=("$1"); shift ;;
+  esac
+done
+set -- ${positional[@]+"${positional[@]}"}
+[ $# -ge 1 ] || usage
+headers=$1
+# The height this network ships, not whichever network's literal comes first
+# in the file: every network's checkpoint spells its height the same way, so a
+# plain grep would keep refreshing mainnet whatever --network said.
+shipped=$(awk -v net="$network" '
+  $0 ~ "public static let " net " = NetworkParams\\(" { inside = 1 }
+  inside && /^ +height: [0-9_]+,/ { gsub(/[^0-9]/, "", $0); print; exit }
+' Sources/WalletCore/Network/Protocol/NetworkParams.swift)
+if [ $# -lt 2 ] && [ -z "$shipped" ]; then
+  # Either the network ships no checkpoint yet or the name is not one this
+  # build knows. Both look identical from here, so say both rather than
+  # asserting the network exists; the tool refuses an unknown name by itself.
+  echo "no checkpoint for '$network' in NetworkParams.swift" >&2
+  echo "pass the height to derive one, or check the network name" >&2
   exit 64
 fi
-headers=$1
-shipped=$(grep -m1 -E '^\s+height: [0-9_]+,' Sources/WalletCore/Network/Protocol/NetworkParams.swift | tr -dc '0-9')
 height=${2:-$shipped}
-vector="Tests/WalletCoreTests/Vectors/mainnet-headers-$((height + 1))-$((height + 2000)).txt"
+vector="Tests/WalletCoreTests/Vectors/$network-headers-$((height + 1))-$((height + 2000)).txt"
 swift run --configuration release winnow-debug generate checkpoint "$headers" \
-  --height "$height" --vector-out "$vector"
+  --network "$network" --height "$height" --vector-out "$vector"
 if [ "$height" != "$shipped" ]; then
   echo "Paste the literal above into NetworkParams.swift, update its provenance note," >&2
   echo "point HeaderChainTests at $vector, remove the old vector, then rerun this." >&2

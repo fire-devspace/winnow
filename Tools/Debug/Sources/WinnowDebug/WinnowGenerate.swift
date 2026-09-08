@@ -1,15 +1,16 @@
 import WalletCore
 import Foundation
 
-/// Release-path generators for two constants the app ships: the mainnet
-/// fallback-peer list (#161) and the mainnet header checkpoint (#89).
+/// Release-path generators for the constants the app ships and `swift test`
+/// cannot produce: the mainnet fallback-peer list (#161) and a network's
+/// header checkpoint (#89), one command each however many networks ship one.
 ///
-/// Both need something `swift test` never has — the live network, or a 77 MB
+/// Both need something `swift test` never has — the live network, or a
 /// genesis-validated header file — so as env-gated test suites they never ran.
 /// These explicit development commands use WalletCore outside the shipping app.
 ///
 ///   winnow-debug generate fallback-peers [--out PATH] [--target 96] [--floor 24]
-///   winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
+///   winnow-debug generate checkpoint <headers.bin> [--network N] [--height H] [--vector-out PATH]
 enum WinnowGenerate {
     static func execute(_ arguments: [String]) async throws {
         guard let command = arguments.first, !["help", "--help", "-h"].contains(command) else {
@@ -40,6 +41,18 @@ enum WinnowGenerate {
         return arguments[index + 1]
     }
 
+    /// `--network`, defaulting to mainnet. Spelled as `BitcoinNetwork`'s own
+    /// raw values so adding a network to the enum adds it here too, rather
+    /// than leaving a switch behind that silently rejects it.
+    static func network(in arguments: [String]) throws -> BitcoinNetwork {
+        guard let name = option("--network", in: arguments) else { return .mainnet }
+        guard let network = BitcoinNetwork(rawValue: name) else {
+            throw GenerateError.usage("unknown network \(name); one of "
+                                      + BitcoinNetwork.allCases.map(\.rawValue).joined(separator: ", "))
+        }
+        return network
+    }
+
     static func number<Value: FixedWidthInteger>(_ name: String, in arguments: [String]) throws -> Value? {
         guard let text = option(name, in: arguments) else { return nil }
         guard let value = Value(text) else { throw GenerateError.usage("\(name) needs a whole number, not \(text)") }
@@ -58,12 +71,13 @@ enum WinnowGenerate {
           PeerConnection, keep a /16-spread selection near the median tip and
           rewrite Sources/WalletCore/Network/Protocol/FallbackPeersGenerated.swift.
 
-      swift run winnow-debug generate checkpoint <headers.bin> [--height H] [--vector-out PATH]
-          Derive the mainnet checkpoint at H (default: the shipped height) from a
-          genesis-rooted header file, through HeaderChain itself; print it as a
-          paste-ready literal; then prove a chain started from it agrees with the
-          genesis-rooted chain 2,000 blocks on. --vector-out writes those 2,000
-          headers, one per line as hex, for HeaderChainTests.
+      swift run winnow-debug generate checkpoint <headers.bin> [--network N] [--height H] [--vector-out PATH]
+          Derive network N's checkpoint at H (default: mainnet, at the shipped
+          height) from a genesis-rooted header file for that network, through
+          HeaderChain itself; print it as a paste-ready literal; then prove a
+          chain started from it agrees with the genesis-rooted chain 2,000
+          blocks on. --vector-out writes those 2,000 headers, one per line as
+          hex, for HeaderChainTests.
     """
 }
 
