@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 
 /// One vault: receive address, tracked UTXOs, and the spend flow entry
-/// points (creator role here, signer/combiner in `VaultSignView`).
+/// points (creator role here, signer/combiner in `MuSig2SignView`).
 struct VaultDetailView: View {
     let recordID: String
     var send: () -> Void
@@ -84,7 +84,7 @@ struct VaultDetailView: View {
         }
         .navigationTitle(record?.name ?? "Vault")
         .sheet(isPresented: $showSign) {
-            VaultSignView(recordID: recordID)
+            MuSig2SignView(recordID: recordID)
         }
         .sheet(isPresented: $showBackup) {
             ExportBundleView()

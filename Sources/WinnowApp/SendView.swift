@@ -124,7 +124,7 @@ struct SendView: View {
                 if (try? model.vault(for: approval.record).isScriptPath) == true {
                     ApprovalView(recordID: approval.record.id, initialPSBT: approval.psbt)
                 } else {
-                    VaultSignView(recordID: approval.record.id, initialPSBT: approval.psbt)
+                    MuSig2SignView(recordID: approval.record.id, initialPSBT: approval.psbt)
                 }
             }
             .task(id: feeInputs) {

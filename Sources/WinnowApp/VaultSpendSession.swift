@@ -4,9 +4,8 @@ import UIKit
 
 /// The state of one shared-savings spend on this phone: the working PSBT,
 /// the review that says what it pays, who has approved so far, and the
-/// three moves a co-owner can make. Script-path k-of-n only; MuSig2 vaults
-/// stay on the expert screen. Every check runs through `AppModel`'s vault
-/// helpers, the same code the expert screen uses.
+/// three moves a co-owner can make. All script-path accounts use this flow;
+/// MuSig2 accounts use their own two-round signing exchange.
 @MainActor
 @Observable
 final class VaultSpendSession {
@@ -53,11 +52,12 @@ final class VaultSpendSession {
     private(set) var approvals: Set<Int> = []
     private(set) var signerNames: [Int: String] = [:]
     private(set) var ownPosition: Int?
-    /// The envelope to hand back after this device approved.
+    /// The current request or approval to share with another signer.
     private(set) var output: String?
     private(set) var error: String?
     private(set) var broadcastTxid: Data?
     private(set) var busy = false
+    private var operationTask: Task<Void, Never>?
 
     init(model: AppModel, recordID: String) {
         self.model = model
@@ -180,19 +180,15 @@ final class VaultSpendSession {
             if working == nil { error = SessionError.noWorkingPSBT.localizedDescription }
             return
         }
-        busy = true
-        error = nil
-        defer { busy = false }
-        do {
-            let signed = try await model.partialSignVaultSpend(
+        await perform {
+            let signed = try await self.model.partialSignVaultSpend(
                 initial, record: record, reason: "Approve this shared-savings payment")
-            try refresh(with: signed, record: record)
-            working = signed
-            output = try model.approvalRequest(for: record, psbt: signed).serialized()
-            model.journalApproval("approval.given", vaultID: record.id,
-                                  fields: ["approvals": String(approvals.count)])
-        } catch {
-            self.error = error.localizedDescription
+            try Task.checkCancellation()
+            try self.refresh(with: signed, record: record)
+            self.working = signed
+            self.output = try self.model.approvalRequest(for: record, psbt: signed).serialized()
+            self.model.journalApproval("approval.given", vaultID: record.id,
+                                       fields: ["approvals": String(self.approvals.count)])
         }
     }
 
@@ -200,20 +196,38 @@ final class VaultSpendSession {
     /// on every input.
     func finish() async {
         guard canFinish, let working, let record, !busy else { return }
-        busy = true
-        error = nil
-        defer { busy = false }
-        do {
-            let txid = try await model.finalizeAndBroadcastVaultSpend(working, record: record)
-            broadcastTxid = txid
-            model.journalApproval("approval.finished", vaultID: record.id,
-                                  fields: ["txid": txid.displayHex])
-        } catch {
-            self.error = error.localizedDescription
+        await perform {
+            let txid = try await self.model.finalizeAndBroadcastVaultSpend(working, record: record)
+            try Task.checkCancellation()
+            self.broadcastTxid = txid
+            self.model.journalApproval("approval.finished", vaultID: record.id,
+                                       fields: ["txid": txid.displayHex])
         }
     }
 
+    /// The session owns cancellation even if authentication finishes after dismissal.
+    private func perform(_ action: @escaping @MainActor () async throws -> Void) async {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        let task = Task { @MainActor in
+            do { try await action() }
+            catch is CancellationError { }
+            catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+            if !Task.isCancelled {
+                busy = false
+                operationTask = nil
+            }
+        }
+        operationTask = task
+        await task.value
+    }
+
     func clear() {
+        operationTask?.cancel()
+        operationTask = nil
         working = nil
         review = nil
         lines = []
@@ -231,10 +245,9 @@ final class VaultSpendSession {
     }
 }
 
-/// The beginner's approval screen: paste a request, read what it pays in
-/// plain words, approve, share the approval back, and finish when enough
-/// co-owners have. Sensitive state is dropped the moment the app backgrounds,
-/// as on the expert screen.
+/// The script-path approval screen: paste a request or raw PSBT, review,
+/// approve, share, and finish when enough co-owners have signed.
+/// Sensitive state is dropped when the app backgrounds or the sheet closes.
 struct ApprovalView: View {
     let recordID: String
     var initialPSBT: PSBT?
@@ -253,7 +266,7 @@ struct ApprovalView: View {
                     ProgressView()
                 }
             }
-            .navigationTitle("Approve a request")
+            .navigationTitle(session?.broadcastTxid == nil ? "Approve a request" : "Payment")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -282,20 +295,26 @@ struct ApprovalView: View {
 
     @ViewBuilder
     private func content(_ session: VaultSpendSession) -> some View {
-        if session.broadcastTxid == nil { requestSection(session) }
-        if session.working != nil { reviewSection(session) }
-        if session.working != nil, session.broadcastTxid == nil { decisionSection(session) }
-        if let error = session.error, session.review != nil || session.working == nil {
-            Section { Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("approvalError") }
+        if let txid = session.broadcastTxid {
+            sentSection(txid)
+        } else {
+            requestSection(session)
+            if session.working != nil {
+                reviewSection(session)
+                decisionSection(session)
+            }
+            if let error = session.error, session.review != nil || session.working == nil {
+                Section { Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("approvalError") }
+            }
+            if let output = session.output { shareSection(output, session: session) }
         }
-        if let output = session.output, session.broadcastTxid == nil { shareSection(output, approved: session.approvedByYou) }
-        if let txid = session.broadcastTxid { sentSection(txid) }
     }
 
     /// Where the request comes in.
     private func requestSection(_ session: VaultSpendSession) -> some View {
         Section {
             TextField("Paste the request", text: $pasted, axis: .vertical)
+                .lineLimit(1...4)
                 .font(.system(.caption, design: .monospaced))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -376,12 +395,19 @@ struct ApprovalView: View {
         }
     }
 
-    private func shareSection(_ output: String, approved: Bool) -> some View {
+    private func shareSection(_ output: String, session: VaultSpendSession) -> some View {
         Section {
             CopyableTextBlock(text: output)
                 .accessibilityIdentifier("approvalOutputBlock")
+            if model.advancedMode, let raw = try? session.working?.base64V0() {
+                DisclosureGroup("Raw PSBT") {
+                    CopyableTextBlock(text: raw)
+                        .accessibilityIdentifier("approvalRawPSBT")
+                }
+                .accessibilityIdentifier("approvalRawPSBTDisclosure")
+            }
         } header: {
-            Text(approved ? "Share your approval" : "Share payment request")
+            Text(session.approvedByYou ? "Share your approval" : "Share payment request")
         } footer: {
             Text("Send this back to a co-owner, or to whoever will finish the payment.")
         }

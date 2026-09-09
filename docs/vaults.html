@@ -39,6 +39,7 @@
 <h2>Share control: any two of three</h2>
 <p>For a family reserve or shared treasury, three independent keys can require any two approvals. One signer can be unavailable and the other two can still spend. Any two can also spend without the third person’s agreement.</p>
 <p>Start with <strong>Wallet → Save with other people</strong>. Choose co-owners and the threshold, then share the savings card before funding so each wallet starts watching. The account shows its actual signing policy and its confirmed balance.</p>
+<p>To approve or continue a shared payment, open the account and choose <strong>Approve a request</strong>. It accepts a Winnow request or a raw PSBT from another wallet. In Advanced mode, expand <strong>Raw PSBT</strong> to copy or share a reply that another wallet can read.</p>
 <p>The threshold is configurable. <strong>1-of-n permits one key to spend.</strong> A name or “shared savings” label does not change that rule. Distinct public keys also do not prove that different people hold their secrets.</p>
 <p>Winnow uses Taproot script-path multisig with an unspendable internal key: there is no secret key that bypasses the threshold. The receiving output alone does not reveal the threshold. Spending reveals the executed script, its keys, and the threshold. <a href="https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki">Taproot rules</a>.</p>
 <p><a href="/#savings">App journey and test evidence</a></p>

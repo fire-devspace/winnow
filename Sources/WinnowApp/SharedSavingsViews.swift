@@ -253,7 +253,6 @@ struct SharedSavingsDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showApprove = false
     @State private var showShare = false
-    @State private var showSign = false
     @State private var confirmRemove = false
 
     private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
@@ -326,7 +325,6 @@ struct SharedSavingsDetailView: View {
                                     .textSelection(.enabled)
                             }
                         }
-                        Button("Continue signing") { showSign = true }
                     }
                 }
 
@@ -356,7 +354,6 @@ struct SharedSavingsDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSign) { VaultSignView(recordID: recordID) }
         .confirmationDialog("Remove these savings from this phone?", isPresented: $confirmRemove) {
             Button("Remove", role: .destructive) {
                 Task {

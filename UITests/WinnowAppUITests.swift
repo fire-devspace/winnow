@@ -1130,54 +1130,60 @@ final class WinnowAppUITests: XCTestCase {
         reviewFromAccount(app, name: vaultName, address: try Self.fixtureAddress(0xE5), amount: "1000000", chooseInSend: true)
         Screenshots.capture(app, "31-group-spend-created", testCase: self)
         app.buttons["sendButton"].tap()
-        let request = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '\"winnow\":\"approval\"'")).firstMatch
-        XCTAssertTrue(scrollUntilExists(app, request))
-        let unsigned = try ApprovalRequest.decode(request.label, network: .signet).decodedPSBT().base64V0()
+        let progress = app.staticTexts["approvalProgress"]
+        XCTAssertTrue(scrollUntilExists(app, progress))
+        XCTAssertTrue(progress.label.contains("No approvals yet"))
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["approveButton"]))
+        app.buttons["approveButton"].tap()
+        XCTAssertTrue(poll(timeout: 60, "phone approves before the group") {
+            self.scrollUntilExists(app, progress, up: true) && progress.label.contains("1 of 2")
+        })
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["finishApprovalButton"]))
+        XCTAssertFalse(app.buttons["finishApprovalButton"].isEnabled, "phone approval alone enabled sending")
+        let rawDisclosure = app.buttons["approvalRawPSBTDisclosure"]
+        XCTAssertTrue(scrollUntilExists(app, rawDisclosure))
+        rawDisclosure.tap()
+        let rawRequest = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'cHNidP'")).firstMatch
+        XCTAssertTrue(scrollUntilExists(app, rawRequest))
+        let phoneSigned = rawRequest.label
+        XCTAssertEqual(try PSBT(base64: phoneSigned).inputs.first?.tapScriptSignatures.count, 1)
 
-        // 4. The group signs (the test is both members).
-        let signed = try Self.groupSign(base64: unsigned, memberSecrets: memberSecrets,
+        // 4. The group signs the raw request exported by the phone.
+        let signed = try Self.groupSign(base64: phoneSigned, memberSecrets: memberSecrets,
                                         synthetic: synthetic)
 
         // 5. Relaunch with the group's PSBT on the clipboard; the app pastes,
-        //    reviews, signs the device leg, finalizes, and broadcasts.
+        //    reviews both approvals, finalizes, and broadcasts.
         app = launchApp(clipboard: signed, advanced: true)
         app.tabBars.buttons["Wallet"].tap()
         let signingVaultRow = app.staticTexts[vaultName].firstMatch
         XCTAssertTrue(scrollUntilExists(app, signingVaultRow), "group vault row not reachable")
         signingVaultRow.tap()
-        let signButton = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Continue signing'")).firstMatch
-        XCTAssertTrue(scrollUntilExists(app, signButton))
-        signButton.tap()
-        XCTAssertTrue(app.buttons["psbtPasteButton"].waitForExistence(timeout: 20))
-        app.buttons["psbtPasteButton"].tap()
-        // The maturity check compares against the app's synced tip, and a
-        // fresh launch may still be catching up its headers — the persisted
-        // coin row proves nothing about the tip. Re-adding re-reviews at the
-        // current height, which is exactly what a person would do.
-        let review = app.staticTexts["Check this payment"]
-        poll(timeout: 240, interval: 5, "review accepted once the tip caught up") {
-            app.buttons["addPSBTButton"].tap()
-            _ = review.waitForExistence(timeout: 3)
-            return review.exists
-        }
-        if !review.exists {
-            Screenshots.capture(app, "debug-10-review-missing", testCase: self)
-            let unsafe = app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS 'unsafe' OR label CONTAINS 'invalid'")).firstMatch
-            XCTFail("review did not appear; sheet says: \(unsafe.exists ? unsafe.label : "no error text")")
-            return
-        }
-        _ = scrollUntilExists(app, review)
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["Sign with this device"]))
-        app.buttons["Sign with this device"].tap()
-        let finalize = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Finalize'")).firstMatch
-        XCTAssertTrue(scrollUntilExists(app, finalize), "finalize button missing")
-        finalize.tap()
-        XCTAssertTrue(app.staticTexts["vaultPaymentSent"].waitForExistence(timeout: 60),
-                      "payment success screen missing")
-        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this proposal"].exists)
+        XCTAssertFalse(app.buttons["Continue signing"].exists, "shared accounts still have a second signing entry")
+        let approveRequest = app.buttons["approveRequestButton"]
+        XCTAssertTrue(scrollUntilExists(app, approveRequest))
+        approveRequest.tap()
+        XCTAssertTrue(app.buttons["approvalPasteButton"].waitForExistence(timeout: 20))
+        app.buttons["approvalPasteButton"].tap()
+        let resumedProgress = app.staticTexts["approvalProgress"]
+        XCTAssertTrue(poll(timeout: 240, interval: 5, "group approval reviewed once the tip caught up") {
+            let review = app.buttons["reviewApprovalButton"]
+            guard self.scrollUntilExists(app, review) else { return false }
+            review.tap()
+            return self.scrollUntilExists(app, resumedProgress)
+        })
+        XCTAssertTrue(resumedProgress.label.contains("2 of 2"), "both approvals were not retained")
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["approveButton"]))
+        XCTAssertFalse(app.buttons["approveButton"].isEnabled, "the phone can approve a second time")
+        let finish = app.buttons["finishApprovalButton"]
+        XCTAssertTrue(scrollUntilExists(app, finish) && finish.isEnabled)
+        finish.tap()
+        XCTAssertTrue(poll(timeout: 60, "shared approval flow sends the group payment") {
+            self.scrollUntilExists(app, app.staticTexts["approvalBroadcast"])
+        })
+        XCTAssertFalse(app.staticTexts["Winnow cannot safely review this request"].exists,
+                       "a successful payment is still showing a stale-coin warning")
+        XCTAssertTrue(app.navigationBars["Payment"].exists)
         Screenshots.capture(app, "32-group-broadcast", testCase: self)
 
         // 6. The node is the judge — patiently: the app broadcasts over P2P

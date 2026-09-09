@@ -23,6 +23,73 @@ final class PeoplePaymentTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    private final class PausedAuthenticator: DeviceAuthenticating {
+        var entered: (() -> Void)?
+        var continuation: CheckedContinuation<Void, Never>?
+        var shouldPause = true
+
+        func authenticate(reason: String) async throws {
+            guard shouldPause else { return }
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                entered?()
+            }
+        }
+    }
+
+    func testClosingAnApprovalCancelsAuthenticationAndAllowsAFreshRequest() async throws {
+        let environment = ["WINNOW_E2E": "1", "WINNOW_E2E_RUN": "approval-\(UUID().uuidString)",
+                           "WINNOW_E2E_ENTROPY": String(repeating: "a1", count: 16), "WINNOW_E2E_DEVICE_AUTH": "1"]
+        guard case let .active(mode) = E2EMode.resolve(environment: environment),
+              case let .active(cleanup) = E2EMode.resolve(
+                environment: environment.merging(["WINNOW_E2E_RESET": "1"]) { _, reset in reset })
+        else { return XCTFail("could not create isolated approval fixture") }
+        defer { cleanup.wipeIfRequested() }
+        let authenticator = PausedAuthenticator()
+        let model = AppModel(deviceAuthenticator: authenticator, e2e: mode)
+        let directory = try FileManager.default.url(for: .applicationSupportDirectory,
+                                                     in: .userDomainMask, appropriateFor: nil, create: true)
+            .appending(path: mode.storageDirectoryName).appending(path: "signet")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        _ = try Wallet.create(network: .signet, keyStore: model.keyStore,
+                              storageURL: directory.appending(path: "wallet.json"), entropy: mode.entropy)
+        await model.boot()
+        let (vault, _) = try TestVaults.multiAVault()
+        let descriptor = vault.descriptor.serialized()
+        let coin = try TestVaults.funding(vault: vault, amount: 80_000, height: 0)
+        let record = VaultRecord(id: String(descriptor.split(separator: "#").last!), name: "Savings",
+                                 descriptor: descriptor, createdAtHeight: 0, nextReceiveIndex: 1, allUtxos: [coin])
+        try await model.vaultStore.restore([record])
+        await model.refresh()
+        let proposal = try vault.createSpend(utxos: [coin], payments: [Payment(amount: 20_000, scriptPubKey: Data([0x51]))],
+                                              changeIndex: 0, feeRateSatPerVByte: 2, chainTip: 0)
+        let session = VaultSpendSession(model: model, recordID: record.id)
+        session.add(text: proposal.base64)
+        XCTAssertNotNil(session.review)
+        let entered = expectation(description: "authentication suspended")
+        authenticator.entered = { entered.fulfill() }
+        let pending = Task { await session.approve() }
+        await fulfillment(of: [entered], timeout: 5)
+        session.clear()
+        authenticator.continuation?.resume()
+        authenticator.continuation = nil
+        await pending.value
+        XCTAssertNil(session.working)
+        XCTAssertNil(session.output)
+        XCTAssertNil(session.error)
+        XCTAssertFalse(session.busy)
+        XCTAssertFalse(session.canFinish)
+
+        authenticator.shouldPause = false
+        session.add(text: proposal.base64)
+        await session.approve()
+        XCTAssertNil(session.error)
+        XCTAssertTrue(session.approvedByYou)
+        XCTAssertEqual(session.approvals.count, 1)
+        XCTAssertFalse(session.canFinish, "one approval must not finish two-of-three savings")
+    }
+
     func testAReviewIsInvalidatedByTheRecipientOrTheirAddressIndex() {
         let base = SendReviewInputs(destination: "", amountText: "1000", priority: .medium,
                                     overrideText: "", network: .signet, personID: "alice", paymentIndex: 3)

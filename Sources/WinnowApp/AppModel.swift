@@ -2053,7 +2053,7 @@ final class AppModel {
     }
 
     /// Records only the public PSBT exchanged with cosigners. Secret MuSig2
-    /// nonces never enter a PSBT and remain in `VaultSignView` memory.
+    /// nonces never enter a PSBT and remain in `MuSig2SignView` memory.
     func journalPSBT(stage: String, psbt: PSBT) {
         e2e?.journal("psbt.generated", fields: [
             "stage": stage,

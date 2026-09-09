@@ -2,16 +2,11 @@ import WalletCore
 import SwiftUI
 import UIKit
 
-/// Signer/combiner/finalizer roles for vault spends (BIP370/371/373).
-///
-/// multi_a k-of-n: collect partial-signed PSBTs, sign with this device's key,
-/// combine when every input carries k signatures, finalize → broadcast.
-///
 /// MuSig2 n-of-n: round 1 attaches this device's public nonce (the secret
 /// nonces stay in this screen's memory — leaving before round 2 abandons the
 /// session), cosigners' nonce-bearing PSBTs are combined, round 2 signs,
 /// partials are combined, aggregated → broadcast.
-struct VaultSignView: View {
+struct MuSig2SignView: View {
     let recordID: String
     var initialPSBT: PSBT?
     @Environment(AppModel.self) private var model
@@ -53,18 +48,12 @@ struct VaultSignView: View {
     private var record: VaultRecord? { model.vaults.first { $0.id == recordID } }
     private var vault: Vault? { record.flatMap { try? Vault($0.descriptor, network: model.network) } }
 
-    private var threshold: Int? {
-        guard case let .multiA(k, _, _, _) = vault?.policy else { return nil }
-        return k
-    }
-
     private var participantCount: Int? {
         guard case let .muSig2(participants, _) = vault?.policy else { return nil }
         return participants.count
     }
 
     /// The lowest per-input count — the spend is ready only when every input is.
-    private var minSignatures: Int { working?.inputs.map(\.tapScriptSignatures.count).min() ?? 0 }
     private var minNonces: Int { working?.inputs.map(\.musig2PubNonces.count).min() ?? 0 }
     private var minPartialSigs: Int { working?.inputs.map(\.musig2PartialSigs.count).min() ?? 0 }
     private var workingInputsRemainAvailable: Bool { spendReview != nil }
@@ -260,11 +249,7 @@ struct VaultSignView: View {
 
     @ViewBuilder
     private var progressSection: some View {
-        if let threshold {
-            Section("Progress") {
-                LabeledContent("Signatures", value: "\(minSignatures) of \(threshold) per input")
-            }
-        } else if let participantCount {
+        if let participantCount {
             Section("Next step") {
                 Text(signingInstruction(required: participantCount))
                     .accessibilityIdentifier("musigNextStep")
@@ -279,20 +264,7 @@ struct VaultSignView: View {
 
     @ViewBuilder
     private var actionsSection: some View {
-        if let threshold {
-            Section("Actions") {
-                Button("Sign with this device") { signMultiA() }
-                    .disabled(authorizing || !workingInputsRemainAvailable || broadcastTxid != nil)
-                Button(broadcasting ? "Broadcasting…" : "Finalize & broadcast") {
-                    finalizeAndBroadcast()
-                }
-                .disabled(minSignatures < threshold || !workingInputsRemainAvailable
-                    || authorizing || broadcasting || broadcastTxid != nil)
-                if !workingInputsRemainAvailable {
-                    stalePSBTMessage
-                }
-            }
-        } else if let participantCount {
+        if let participantCount {
             Section("Actions") {
                 Button("Prepare this phone") { attachNonces() }
                     .accessibilityIdentifier("musigNonceButton")
@@ -414,62 +386,6 @@ struct VaultSignView: View {
               let utxo = record.utxos.first(where: { $0.txid == txid && $0.vout == vout })
         else { throw SignError.unknownInput }
         return try vault.muSig2Context(choice: utxo.chain.rawValue, index: utxo.index)
-    }
-
-    // MARK: - multi_a
-
-    private func signMultiA() {
-        guard let initial = working else {
-            error = SignError.noWorkingPSBT.localizedDescription
-            return
-        }
-        operationTask?.cancel()
-        let token = operationEpoch.begin()
-        authorizing = true
-        error = nil
-        operationTask = Task { @MainActor in
-            do {
-                guard let record else { throw SignError.unknownInput }
-                let psbt = try await model.partialSignVaultSpend(
-                    initial, record: record, reason: "Sign this shared-vault transaction")
-                try Task.checkCancellation()
-                guard accepts(token) else { return }
-                let reply = try psbt.base64V0()
-                working = psbt
-                output = reply
-            } catch is CancellationError {
-                // Inactive/background transitions deliberately abandon output.
-            } catch {
-                if accepts(token) { self.error = error.localizedDescription }
-            }
-            guard accepts(token) else { return }
-            authorizing = false
-            operationTask = nil
-        }
-    }
-
-    private func finalizeAndBroadcast() {
-        guard !broadcasting, broadcastTxid == nil,
-              let psbt = working, let record else { return }
-        operationTask?.cancel()
-        let token = operationEpoch.begin()
-        broadcasting = true
-        operationTask = Task { @MainActor in
-            do {
-                try Task.checkCancellation()
-                let txid = try await model.finalizeAndBroadcastVaultSpend(psbt, record: record)
-                guard accepts(token) else { return }
-                broadcastTxid = txid
-            } catch is CancellationError {
-                // Broadcast may already have crossed its external commit
-                // point; AppModel remains the source of truth after dismissal.
-            } catch {
-                if accepts(token) { self.error = error.localizedDescription }
-            }
-            guard accepts(token) else { return }
-            broadcasting = false
-            operationTask = nil
-        }
     }
 
     // MARK: - MuSig2
@@ -598,8 +514,8 @@ struct VaultSignView: View {
                 guard accepts(token) else { return }
                 broadcastTxid = txid
             } catch is CancellationError {
-                // See finalizeAndBroadcast: the persistent model reconciles
-                // an operation that crossed the broadcast boundary.
+                // The persistent model reconciles an operation that already
+                // crossed the broadcast boundary.
             } catch {
                 if accepts(token) { self.error = error.localizedDescription }
             }
