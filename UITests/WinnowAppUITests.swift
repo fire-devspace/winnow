@@ -588,7 +588,7 @@ final class WinnowAppUITests: XCTestCase {
         // coins from earlier attempts, so "non-zero" would not prove the
         // app has scanned the coin this request is about to spend.
         savingsRow.tap()
-        let balance = app.staticTexts["savingsBalance"]
+        let balance = app.staticTexts["accountBalance"]
         func shownBalance() -> Int64 {
             guard balance.exists else { return -1 }
             let text = balance.label.isEmpty ? ((balance.value as? String) ?? "") : balance.label
@@ -965,6 +965,7 @@ final class WinnowAppUITests: XCTestCase {
             let threshold = app.descendants(matching: .any).matching(
                 NSPredicate(format: "label CONTAINS '2 of 3' OR value CONTAINS '2 of 3'")).firstMatch
             XCTAssertTrue(threshold.waitForExistence(timeout: 5), "the threshold did not settle at 2 of 3")
+            app.typeInto("savingsNameField", savingsName)
             XCTAssertTrue(scrollUntilExists(app, app.buttons["createSharedSavingsButton"]))
             app.buttons["createSharedSavingsButton"].tap()
             XCTAssertTrue(app.staticTexts["savingsShareNotice"].waitForExistence(timeout: 60),
@@ -1018,6 +1019,10 @@ final class WinnowAppUITests: XCTestCase {
             savingsRow.tap()
             return false
         })
+        let backup = try accountBackup(in: app)
+        let savedAccount = try XCTUnwrap(backup.vaults?.first { $0.name == savingsName })
+        XCTAssertFalse(savedAccount.utxos.isEmpty, "the shared-account backup lost its funded outputs")
+        XCTAssertTrue(scrollUntilExists(app, ask, up: true))
         ask.tap()
         XCTAssertTrue(app.tabBars.buttons["Send"].isSelected)
         app.buttons["savedRecipientsButton"].tap()
@@ -1113,9 +1118,8 @@ final class WinnowAppUITests: XCTestCase {
         let vaultRow = app.staticTexts[vaultName].firstMatch
         XCTAssertTrue(scrollUntilExists(app, vaultRow), "group vault row not reachable")
         vaultRow.tap()
-        // Wallet opens the shared-savings detail, which shows a balance
-        // rather than the raw vault's individual coin rows.
-        let fundedBalance = app.staticTexts["savingsBalance"]
+        // Read the account's confirmed balance before spending.
+        let fundedBalance = app.staticTexts["accountBalance"]
         XCTAssertTrue(scrollUntilExists(app, fundedBalance), "no shared-savings balance")
         poll(timeout: 300, interval: 5, "group vault funding scanned in") {
             if fundedBalance.exists, !fundedBalance.label.isEmpty, fundedBalance.label != "0 sats" {
@@ -1379,6 +1383,20 @@ final class WinnowAppUITests: XCTestCase {
         importApp.terminate()
     }
 
+    /// Both account types use the same backup action and omit the phone key by default.
+    private func accountBackup(in app: XCUIApplication) throws -> ImportBundle {
+        XCTAssertTrue(scrollUntilExists(app, app.buttons["accountBackupButton"]))
+        app.buttons["accountBackupButton"].tap()
+        XCTAssertTrue(app.buttons["exportConfirmButton"].waitForExistence(timeout: 20))
+        app.buttons["exportConfirmButton"].tap()
+        let preview = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "\"lastKnownHeight\"")).firstMatch
+        XCTAssertTrue(scrollUntilExists(app, preview))
+        let backup = try ImportBundle.decode(json: preview.label)
+        XCTAssertNil(backup.mnemonic, "the normal backup must not expose the phone key")
+        app.buttons["Close"].tap()
+        return backup
+    }
+
     // MARK: - 08 Export bundle (Settings -> Backup, #18)
 
     /// Walks the export flow on the funded "main" wallet: watch-only by
@@ -1589,8 +1607,8 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"]))
         app.buttons["walletSavings-\(name)"].tap()
         XCTAssertTrue(poll(timeout: 240, interval: 5, "extra-device balance scanned") {
-            if self.scrollUntilExists(app, app.staticTexts["vaultBalance"]),
-               app.staticTexts["vaultBalance"].label != "0 sats" { return true }
+            if self.scrollUntilExists(app, app.staticTexts["accountBalance"]),
+               app.staticTexts["accountBalance"].label != "0 sats" { return true }
             app.navigationBars.buttons["Winnow"].tap()
             self.nudgeSync(app)
             _ = self.scrollUntilExists(app, app.buttons["walletSavings-\(name)"], up: true)
@@ -1600,18 +1618,10 @@ final class WinnowAppUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultSingleKeyRule"]))
         XCTAssertEqual(app.staticTexts["vaultSingleKeyRule"].label, "One signing key cannot spend these funds.")
         Screenshots.capture(app, "35-extra-device-policy", testCase: self)
-        XCTAssertTrue(scrollUntilExists(app, app.buttons["vaultBackupButton"]))
-        app.buttons["vaultBackupButton"].tap()
-        XCTAssertTrue(app.buttons["exportConfirmButton"].waitForExistence(timeout: 20))
-        app.buttons["exportConfirmButton"].tap()
-        let backupPreview = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "\"lastKnownHeight\"")).firstMatch
-        XCTAssertTrue(scrollUntilExists(app, backupPreview))
-        var backup = try ImportBundle.decode(json: backupPreview.label)
-        XCTAssertNil(backup.mnemonic, "the normal backup must not expose the phone key")
+        var backup = try accountBackup(in: app)
         let backedUpAccount = try XCTUnwrap(backup.vaults?.first { $0.name == name })
         XCTAssertEqual(backedUpAccount.descriptor, vault.descriptor.serialized())
         XCTAssertEqual(backedUpAccount.utxos.count, 1)
-        app.buttons["Close"].tap()
 
         reviewFromAccount(app, name: name, address: try Self.fixtureAddress(0xE5), amount: "1000000")
         app.buttons["sendButton"].tap()
@@ -1716,8 +1726,8 @@ final class WinnowAppUITests: XCTestCase {
         app.buttons["importContinueButton"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["walletSavings-\(name)"]))
         app.buttons["walletSavings-\(name)"].tap()
-        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["vaultBalance"]))
-        let restoredBalance = app.staticTexts["vaultBalance"].label.filter(\.isNumber)
+        XCTAssertTrue(scrollUntilExists(app, app.staticTexts["accountBalance"]))
+        let restoredBalance = app.staticTexts["accountBalance"].label.filter(\.isNumber)
         XCTAssertEqual(Int64(restoredBalance), expectedChange, "restoring replayed the old balance")
         Screenshots.capture(app, "38-extra-device-restored", testCase: self)
 

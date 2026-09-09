@@ -14,6 +14,10 @@ method keeps its own approval rules. Every script-path account uses Approve a
 request, including raw PSBTs and group co-signers; there is no second Advanced
 signing screen for the same account. Advanced mode exposes Raw PSBT for exchanges
 with other wallets. MuSig2 keeps its separate two-round exchange.
+Shared savings and extra-device accounts also use one detail screen for receiving,
+balances, Send, and backup. Their approval actions follow the descriptor's rules;
+co-owner cards belong to shared savings. Advanced mode keeps coins and the raw
+descriptor under Technical details.
 Removing a shortcut preserves
 past labels, signer identities, and fresh-address counters in the existing
 people.json store. Receive shares the wallet’s payment card.

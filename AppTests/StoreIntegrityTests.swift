@@ -790,7 +790,7 @@ final class RelayStoreQuarantineTests: XCTestCase {
 /// Vault coins are marked spent rather than deleted (#127, groundwork).
 ///
 /// The vault store had the same destructive removal as the wallet, in two
-/// places, and one extra hazard: `VaultDetailView` passes `record.utxos`
+/// places, and one extra hazard: `AppModel` passes `record.utxos`
 /// straight into `createSpend`. So the filter has to live on the accessor
 /// rather than at the call sites, or a spent vault coin is one forgotten
 /// filter away from being selected for a spend.

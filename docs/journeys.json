@@ -67,7 +67,7 @@
     "description": "Choose who shares the wallet and how many approvals a payment needs. With two approvals out of three, one person can be away and the other two can still pay.",
     "journey": [
       "Create shared savings from Wallet and choose who can approve payments.",
-      "Open Send from the funded account, choose a saved recipient, and check the account, amount, and fee.",
+      "Back up the funded account from its detail screen, then open Send, choose a saved recipient, and check the account, amount, and fee.",
       "Continue straight to approvals without copying the request into another screen. Complete two approvals without the third person."
     ],
     "tests": [

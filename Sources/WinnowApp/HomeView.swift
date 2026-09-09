@@ -48,11 +48,7 @@ struct HomeView: View {
                     ForEach(model.vaults) { record in
                         if let vault = try? model.vault(for: record) {
                             NavigationLink {
-                                if vault.isScriptPath {
-                                    SharedSavingsDetailView(recordID: record.id) { sendFrom(record.id) }
-                                } else {
-                                    VaultDetailView(recordID: record.id) { sendFrom(record.id) }
-                                }
+                                AccountDetailView(recordID: record.id) { sendFrom(record.id) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(record.name)

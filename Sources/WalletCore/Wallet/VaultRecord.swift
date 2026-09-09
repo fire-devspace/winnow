@@ -33,7 +33,7 @@ public struct VaultRecord: Codable, Equatable, Identifiable, Sendable {
     ///
     /// Computed rather than stored so a spent row cannot reach the balance,
     /// the spend screen, or `createSpend` by anyone forgetting to filter --
-    /// `VaultDetailView` passes this straight into coin selection (#127).
+    /// `AppModel` passes this straight into coin selection (#127).
     public var utxos: [WalletUTXO] { allUtxos.filter { !$0.isSpent } }
 
     public var balance: Int64 { utxos.reduce(0) { $0 + $1.amount } }
