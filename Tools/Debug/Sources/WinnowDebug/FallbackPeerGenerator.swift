@@ -32,12 +32,13 @@ enum FallbackPeerGenerator {
         let out: URL
 
         init(_ arguments: [String]) throws {
-            target = try WinnowGenerate.number("--target", in: arguments) ?? 96
-            floor = try WinnowGenerate.number("--floor", in: arguments) ?? 24
+            let flags = try WinnowGenerate.flags(["--out", "--target", "--floor"], in: arguments.dropFirst())
+            target = try WinnowGenerate.number("--target", in: flags) ?? 96
+            floor = try WinnowGenerate.number("--floor", in: flags) ?? 24
             guard floor >= 1, target >= floor else {
                 throw GenerateError.usage("--floor must be at least 1 and no more than --target")
             }
-            out = WinnowGenerate.option("--out", in: arguments).map { URL(fileURLWithPath: $0) }
+            out = flags["--out"].map { URL(fileURLWithPath: $0) }
                 ?? WinnowGenerate.packageRoot.appending(path: Self.defaultOutput)
         }
     }

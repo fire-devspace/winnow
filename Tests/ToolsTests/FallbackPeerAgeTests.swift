@@ -150,6 +150,56 @@ struct FallbackPeerAgeTests {
         }
     }
 
+    /// A flag with nothing after it used to read as no flag at all, and
+    /// anything no option read was never there. So `--as-of` with its value
+    /// eaten by the shell, `--asof 2026-09-24T00:00:00Z`, `-as-of` with one
+    /// dash, the bare instant left behind when a `$FLAG` expanded to nothing,
+    /// and a trailing `-h` all measured the list against today's clock and
+    /// answered green: the one answer a freshness gate must never give to a
+    /// question it was not asked. A flag given twice is refused too, rather
+    /// than one of its two clocks being chosen without a word. The first line
+    /// of the refusal names what was refused; the usage text after it spells
+    /// every flag and so proves nothing on its own.
+    @Test("a flag with no value, one the check does not know, or a stray word is refused by name")
+    func strayFlags() async throws {
+        for (arguments, detail) in [
+            (["fallback-peers", "--as-of"], "--as-of needs a value"),
+            (["fallback-peers", "--in"], "--in needs a value"),
+            (["fallback-peers", "--as-of", "--in", "/tmp/peers.swift"], "--as-of needs a value"),
+            (["fallback-peers", "--asof", "2026-09-24T00:00:00Z"],
+             "unknown option --asof; the options are --in, --as-of"),
+            (["fallback-peers", "-as-of", "2026-09-24T00:00:00Z"],
+             "unknown option -as-of; the options are --in, --as-of"),
+            (["fallback-peers", "2026-09-24T00:00:00Z"],
+             "unexpected argument 2026-09-24T00:00:00Z; the options are --in, --as-of"),
+            (["fallback-peers", "-h"], "unknown option -h; the options are --in, --as-of"),
+            (["fallback-peers", "--as-of", "2026-09-24T00:00:00Z", "--as-of", "2026-09-25T00:00:00Z"],
+             "--as-of given twice"),
+        ] {
+            do {
+                _ = try FallbackPeerList.Options(arguments)
+                Issue.record("\(arguments) parsed, and would have checked something else")
+            } catch let DebugError.usage(message) {
+                #expect(message.split(separator: "\n").first == Substring(detail), "\(arguments)")
+            } catch {
+                Issue.record("\(arguments): \(error)")
+            }
+        }
+
+        // The whole command refuses too, on a list that is fresh by the clock
+        // each of these would otherwise have been checked against. That is
+        // the exit status `scripts/check-fallback-peer-age` hands a lane.
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("winnow-fallback-flags-\(UUID().uuidString).swift")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data(list(Date()).utf8).write(to: file)
+        for trailing in [["--as-of"], ["-as-of", "2026-09-24T00:00:00Z"], ["2026-09-24T00:00:00Z"], ["-h"]] {
+            await #expect(throws: DebugError.self, "\(trailing)") {
+                try await WinnowDebug.execute(["check", "fallback-peers", "--in", file.path] + trailing)
+            }
+        }
+    }
+
     /// What a lane actually consumes is the exit status, which is this throw.
     @Test("the command succeeds on a current list and fails on a stale one")
     func commandExitStatus() async throws {

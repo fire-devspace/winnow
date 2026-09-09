@@ -41,9 +41,11 @@ enum CheckpointGenerator {
                 throw GenerateError.usage("checkpoint needs the path of a genesis-rooted headers.bin")
             }
             source = URL(fileURLWithPath: (arguments[1] as NSString).expandingTildeInPath)
-            network = try WinnowGenerate.network(in: arguments)
-            height = try WinnowGenerate.number("--height", in: arguments)
-            vectorOut = WinnowGenerate.option("--vector-out", in: arguments).map { URL(fileURLWithPath: $0) }
+            let flags = try WinnowGenerate.flags(["--network", "--height", "--vector-out"],
+                                                 in: arguments.dropFirst(2))
+            network = try WinnowGenerate.network(in: flags)
+            height = try WinnowGenerate.number("--height", in: flags)
+            vectorOut = flags["--vector-out"].map { URL(fileURLWithPath: $0) }
         }
     }
 

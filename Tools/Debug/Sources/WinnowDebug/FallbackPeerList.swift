@@ -36,16 +36,23 @@ enum FallbackPeerList {
         /// never again.
         let now: Date
 
+        /// Strict about its arguments, because this is a gate: a `--as-of`
+        /// whose value the shell ate, an `--asof` or `-as-of` nothing reads,
+        /// or the bare instant left behind when the flag itself was lost, must
+        /// fail the command rather than quietly turn it into a check of the
+        /// committed file against today, whose green answer is to the wrong
+        /// question.
         init(_ arguments: [String]) throws {
-            source = WinnowGenerate.option("--in", in: arguments).map { URL(fileURLWithPath: $0) }
+            let usage: (String) -> any Error = { DebugError.usage("\($0)\n\n\(usageText)") }
+            let flags = try WinnowGenerate.flags(["--in", "--as-of"], in: arguments.dropFirst(), usage: usage)
+            source = flags["--in"].map { URL(fileURLWithPath: $0) }
                 ?? WinnowGenerate.packageRoot.appending(path: FallbackPeerGenerator.Options.defaultOutput)
-            guard let text = WinnowGenerate.option("--as-of", in: arguments) else {
+            guard let text = flags["--as-of"] else {
                 now = Date()
                 return
             }
             guard let date = ISO8601DateFormatter().date(from: text) else {
-                throw DebugError.usage("--as-of needs an ISO 8601 instant such as "
-                                       + "2026-09-24T00:00:00Z, not \(text)\n\n\(usageText)")
+                throw usage("--as-of needs an ISO 8601 instant such as 2026-09-24T00:00:00Z, not \(text)")
             }
             now = date
         }

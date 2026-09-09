@@ -43,6 +43,12 @@ checkpoint refreshes. The soak preserves its JSONL metrics and optional
 header/filter/peer state, defaults to public signet and three peers, and takes
 one sample per minute. `--minutes 0` or omission runs until interrupted.
 Help performs no network work; invalid soak options retain exit status 2.
+`check` and `generate` read what follows their subject as `--flag value` pairs
+and refuse anything else by name: a flag with no value after it, a flag the
+command does not know with one dash or two, a bare word, or a flag given twice
+is a usage error, not an argument quietly ignored. A `--as-of` the shell
+emptied must not become a check against today's clock, and a trailing `-h`
+must not become a run.
 
 `ToolsTests` covers the generator decisions, command dispatch, soak options,
 diagnostics arguments, subprocess output handling and fuzz regressions.

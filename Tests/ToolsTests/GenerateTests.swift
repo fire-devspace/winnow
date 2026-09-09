@@ -43,6 +43,12 @@ struct WinnowGenerateTests {
         try await WinnowGenerate.execute([])
         try await WinnowGenerate.execute(["--help"])
         await #expect(throws: GenerateError.self) { try await WinnowGenerate.execute(["nope"]) }
+        // A -h after the subject is refused before the source is opened. The
+        // file error this used to throw instead meant the options had parsed
+        // and the run had begun; for fallback-peers that run is a dial.
+        await #expect(throws: GenerateError.self) {
+            try await WinnowGenerate.execute(["checkpoint", "/nonexistent/headers.bin", "-h"])
+        }
     }
 
     @Test("the package root is the checkout this tool was compiled in")
@@ -68,6 +74,21 @@ struct WinnowGenerateTests {
         }
         #expect(throws: GenerateError.self) {
             try FallbackPeerGenerator.Options(["fallback-peers", "--target", "many"])
+        }
+        // A flag with no value, or one the generator does not know, was a run
+        // with the defaults under a different name. So was a one-dash flag, a
+        // bare number, a flag given twice, or a trailing -h: nothing read them,
+        // and a run the options do not refuse dials the network.
+        #expect(throws: GenerateError.self) {
+            try FallbackPeerGenerator.Options(["fallback-peers", "--out"])
+        }
+        #expect(throws: GenerateError.self) {
+            try FallbackPeerGenerator.Options(["fallback-peers", "--taget", "40"])
+        }
+        for stray in [["-target", "40"], ["40"], ["--target", "40", "--target", "50"], ["-h"]] {
+            #expect(throws: GenerateError.self, "\(stray)") {
+                try FallbackPeerGenerator.Options(["fallback-peers"] + stray)
+            }
         }
     }
 
@@ -155,6 +176,13 @@ struct WinnowGenerateTests {
         #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin"]).height == nil)
         #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint"]) }
         #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint", "--height", "1"]) }
+        #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint", "h.bin", "--vector-out"]) }
+        #expect(throws: GenerateError.self) { try CheckpointGenerator.Options(["checkpoint", "h.bin", "--hieght", "1"]) }
+        for stray in [["-height", "1"], ["extra.bin"], ["--height", "1", "--height", "2"], ["-h"]] {
+            #expect(throws: GenerateError.self, "\(stray)") {
+                try CheckpointGenerator.Options(["checkpoint", "h.bin"] + stray)
+            }
+        }
 
         // Mainnet is the default because it was the only network before
         // signet's constant existed; an unspelled --network must not quietly

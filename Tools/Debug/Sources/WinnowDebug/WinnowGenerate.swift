@@ -36,16 +36,46 @@ enum WinnowGenerate {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
 
-    static func option(_ name: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else { return nil }
-        return arguments[index + 1]
+    /// The `--flag value` pairs after a command's subject, and nothing else.
+    ///
+    /// A walk that consumes each flag with its value and refuses whatever is
+    /// left over: a flag with nothing after it, or with something flag-shaped
+    /// where its value belongs; a flag the command does not know, with one
+    /// dash or two; a bare word, which is what a `$FLAG` that expanded to
+    /// nothing leaves behind; and a flag given twice. Reading any of them as
+    /// "not given" is how `check fallback-peers --as-of`, its value eaten by
+    /// the shell, came to measure the list against today's clock and answer
+    /// green for a question nobody asked, and how a trailing `-h` became a
+    /// run rather than help. Only a flag's own values are read after this, so
+    /// nothing the walk refused can reach a command. `usage` makes the error,
+    /// because `generate` and `check` report a usage fault through different
+    /// types with different help text.
+    static func flags(_ known: [String], in arguments: ArraySlice<String>,
+                      usage: (String) -> any Error = { GenerateError.usage($0) }) throws -> [String: String] {
+        var values: [String: String] = [:]
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            let flag = arguments[index]
+            guard known.contains(flag) else {
+                let fault = flag.hasPrefix("-") ? "unknown option" : "unexpected argument"
+                throw usage("\(fault) \(flag); the options are " + known.joined(separator: ", "))
+            }
+            guard values[flag] == nil else { throw usage("\(flag) given twice") }
+            let next = arguments.index(after: index)
+            guard next < arguments.endIndex, !arguments[next].isEmpty, !arguments[next].hasPrefix("-") else {
+                throw usage("\(flag) needs a value")
+            }
+            values[flag] = arguments[next]
+            index = arguments.index(after: next)
+        }
+        return values
     }
 
     /// `--network`, defaulting to mainnet. Spelled as `BitcoinNetwork`'s own
     /// raw values so adding a network to the enum adds it here too, rather
     /// than leaving a switch behind that silently rejects it.
-    static func network(in arguments: [String]) throws -> BitcoinNetwork {
-        guard let name = option("--network", in: arguments) else { return .mainnet }
+    static func network(in flags: [String: String]) throws -> BitcoinNetwork {
+        guard let name = flags["--network"] else { return .mainnet }
         guard let network = BitcoinNetwork(rawValue: name) else {
             throw GenerateError.usage("unknown network \(name); one of "
                                       + BitcoinNetwork.allCases.map(\.rawValue).joined(separator: ", "))
@@ -53,8 +83,8 @@ enum WinnowGenerate {
         return network
     }
 
-    static func number<Value: FixedWidthInteger>(_ name: String, in arguments: [String]) throws -> Value? {
-        guard let text = option(name, in: arguments) else { return nil }
+    static func number<Value: FixedWidthInteger>(_ name: String, in flags: [String: String]) throws -> Value? {
+        guard let text = flags[name] else { return nil }
         guard let value = Value(text) else { throw GenerateError.usage("\(name) needs a whole number, not \(text)") }
         return value
     }
