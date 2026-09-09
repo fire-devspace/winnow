@@ -712,7 +712,7 @@ struct FilterSyncTests {
 
     @Test("a sync resumed over a pruned store makes the same checkpoint comparison")
     func resumedSyncComparesAgainstKeptBoundaries() async throws {
-        let synthetic = makeSyntheticChain(length: 2_016, watchHeight: 1_500)
+        let synthetic = makeSyntheticChain(length: 2_015, watchHeight: 1_500)
         let progressFile = tempFileURL("filter-prune-resume.json")
         defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
         try await syncFrom999(synthetic, nodeTip: 2_001, progressFile: progressFile)
@@ -749,7 +749,7 @@ struct FilterSyncTests {
     @Test("a peer lying about the filter chain is still caught at the oldest kept boundary")
     func prunedStoreStillCatchesALiar() async throws {
         // 2,016 blocks, short of the retarget the header chain verifies.
-        let synthetic = makeSyntheticChain(length: 2_016, watchHeight: 1_500)
+        let synthetic = makeSyntheticChain(length: 2_015, watchHeight: 1_500)
         let progressFile = tempFileURL("filter-prune-liar.json")
         defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
         try await syncFrom999(synthetic, nodeTip: 2_001, progressFile: progressFile)
