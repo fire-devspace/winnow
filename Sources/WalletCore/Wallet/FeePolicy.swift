@@ -23,8 +23,9 @@ import Foundation
 /// selector would refuse.
 ///
 /// The peer floor is the one input that comes from strangers, and this fork
-/// treats it as such (see `Wallet/README.md`). It is aggregated as the *median*
-/// of connected peers rather than the maximum, and then capped, because a
+/// treats it as such (see `Wallet/README.md`). It is aggregated as the *lower
+/// median over the pool's seats*, a seat that has sent nothing counting as 0
+/// (`seatMajorityFloor`), rather than the maximum, and then capped, because a
 /// `feefilter` is an unvalidated number a peer sends about itself: taking the
 /// maximum let any one seated peer set the floor for the whole wallet, and
 /// `usable` accepts anything up to `maximumSatPerVByte`, so the worst case was
@@ -107,33 +108,70 @@ public enum FeePolicy {
         let middle = sorted.count / 2
         return sorted.count % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
     }
+
+    /// The floor a pool of `seats` peers agrees on, from the `feefilter`
+    /// values the reporting peers have sent (sat/vB): the lower median over
+    /// every seat, a seat with no announcement, whether nobody is sitting in
+    /// it yet or its peer has simply not spoken, counted as 0. nil unless the
+    /// result is a positive number.
+    ///
+    /// Over the seats, not over the reporters, because the reporters choose
+    /// themselves. `median` over the peers that had spoken made the first
+    /// voice decisive: in a pool of three with one filter in, the median of
+    /// one number is that number, and with two in, the even-count average
+    /// still moved the floor halfway to whatever the second peer named. A
+    /// peer that has not sent a filter relays anything, so 0 is what its
+    /// silence means for relay as well as for this count. Counted this way a
+    /// floor needs more than half the seats to name a number at or above it,
+    /// and the lower median rather than an average means the number is one
+    /// some peer actually sent. A pool with a single seat is its own
+    /// majority, which is the price of asking one peer.
+    public static func seatMajorityFloor(reported: [Double], seats: Int) -> Double? {
+        let count = max(seats, reported.count)
+        guard count > 0 else { return nil }
+        let sorted = (reported + Array(repeating: 0, count: count - reported.count)).sorted()
+        let floor = sorted[(count - 1) / 2]
+        return floor > 0 ? floor : nil
+    }
 }
 
 extension PeerPool {
-    /// The typical BIP133 `feefilter` among connected peers, in sat/vB
-    /// (feefilter is sat/kvB). nil when no peer has sent one.
+    /// The BIP133 `feefilter` floor a majority of this pool's seats agree on,
+    /// in sat/vB (feefilter is sat/kvB): the lower median over `peerCount`
+    /// seats, with every seat that has sent no filter, whether it is empty or
+    /// its peer has not spoken, counted as 0. nil until more than half the
+    /// seats have named a positive number (`FeePolicy.seatMajorityFloor`).
     ///
-    /// The median, not the maximum, and that is this fork's choice rather than
+    /// Counted over the seats the pool is meant to fill, not over the peers
+    /// that have reported, and that is this fork's choice rather than
     /// upstream's (`Wallet/README.md` records it). A `feefilter` is a number a
     /// peer asserts about its own mempool: nothing validates it, and the pool
     /// seats whoever answers. Taking the maximum handed the whole wallet's
     /// floor to whichever seated peer named the largest number, so one peer
     /// advertising an absurd filter priced every send at it — real money, paid
-    /// to miners, for a claim nobody checked. The median needs most of the
-    /// pool to agree before it moves, which is the same reasoning the filter
-    /// checkpoint comparison already rests on, and `FeePolicy` caps what even
-    /// a unanimous pool can do with `maximumPeerFloorSatPerVByte`.
+    /// to miners, for a claim nobody checked. A median of only the peers that
+    /// had spoken was the same handover by another route: the first filter
+    /// to arrive in a pool of three was the median of one, and a second
+    /// honest one only averaged the liar down by half. A silent seat relays
+    /// anything, so it honestly counts as 0, and a floor now needs a strict
+    /// majority of the seats behind it before it moves, which is the same
+    /// reasoning the filter checkpoint comparison already rests on;
+    /// `FeePolicy` caps what even a unanimous pool can do with
+    /// `maximumPeerFloorSatPerVByte`.
     ///
     /// The cost is the honest case where one peer is stricter than the others:
-    /// a transaction at the median may not relay through that peer. It still
-    /// relays through the rest of the pool, which is what broadcasting needs,
-    /// and `TxBroadcaster` already reports `feeFloorExceeded` per peer.
+    /// a transaction at the majority's floor may not relay through that peer.
+    /// It still relays through the rest of the pool, which is what
+    /// broadcasting needs, and `TxBroadcaster` already reports
+    /// `feeFloorExceeded` per peer. A pool that has not yet heard from most
+    /// of its seats prices a send as if no floor were known, which is what it
+    /// did before any filter arrived.
     public func feeFilterFloorSatPerVByte() async -> Double? {
-        var floors: [Double] = []
+        var reported: [Double] = []
         for peer in connectedPeers() { // this extension method is already pool-isolated
-            if let floor = await peer.feeFilter { floors.append(Double(floor) / 1_000) }
+            if let floor = await peer.feeFilter { reported.append(Double(floor) / 1_000) }
         }
-        return FeePolicy.median(floors)
+        return FeePolicy.seatMajorityFloor(reported: reported, seats: peerCount)
     }
 }
 

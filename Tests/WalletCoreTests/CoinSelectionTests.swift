@@ -594,6 +594,38 @@ struct CoinSelectionTests {
         #expect(await pool.feeFilterFloorSatPerVByte() == nil)
     }
 
+    /// The floor is counted over the pool's seats, not over the peers that
+    /// happened to speak. A median of the reporters alone made the first
+    /// voice decisive: in a pool of three with one `feefilter` in, the
+    /// median of one number is that number, and with two in, the even-count
+    /// average still moved the floor halfway to whatever the liar named. A
+    /// seat that has said nothing relays anything, so it counts as 0, and a
+    /// floor then needs more than half the seats to name a number at or
+    /// above it. The lower median, never an average, so the answer is always
+    /// a number some peer actually sent.
+    @Test("the seat floor needs a majority of seats, silent seats counting as zero")
+    func seatMajorityFloor() {
+        let cap = FeePolicy.maximumPeerFloorSatPerVByte
+        // One reporter in three seats decides nothing.
+        #expect(FeePolicy.seatMajorityFloor(reported: [50], seats: 3) == nil)
+        // Two reporters and a silent seat: the lower of the two, not their average.
+        #expect(FeePolicy.seatMajorityFloor(reported: [20, 500], seats: 3) == 20)
+        #expect(FeePolicy.seatMajorityFloor(reported: [500, 20], seats: 3) == 20)
+        // Every seat reporting: the middle voice, so one liar still moves nothing.
+        #expect(FeePolicy.seatMajorityFloor(reported: [20, 30, 500], seats: 3) == 30)
+        // A pool that has only managed to seat one peer is one reporter in
+        // three seats, whatever that peer says, the cap included.
+        #expect(FeePolicy.seatMajorityFloor(reported: [cap], seats: 3) == nil)
+        // Four seats, two at the cap and two honest: the honest pair holds.
+        #expect(FeePolicy.seatMajorityFloor(reported: [cap, 5, cap, 6], seats: 4) == 6)
+        // Nothing reported, or no seats at all, is no floor.
+        #expect(FeePolicy.seatMajorityFloor(reported: [], seats: 3) == nil)
+        #expect(FeePolicy.seatMajorityFloor(reported: [], seats: 0) == nil)
+        // One seat is its own majority, which is what a `peerCount: 1` pool means.
+        #expect(FeePolicy.seatMajorityFloor(reported: [50], seats: 1) == 50)
+    }
+
+
     /// The peer floor is the only input to resolution that a stranger writes,
     /// and until this fork capped it, one seated peer could set it.
     ///
@@ -670,6 +702,52 @@ struct CoinSelectionTests {
         // the liar moves neither the floor nor the resolved feerate.
         #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: floor) == 5,
                 "a medium-priority send is still priced at its preset")
+        await pool.stop()
+    }
+
+    /// The same path from the wire, for the pool that has not heard from
+    /// everyone yet. Until this fork counted seats, the first `feefilter`
+    /// in set the floor by itself: a fresh pool seats three peers, the
+    /// one that speaks first names 500 sat/vB, and every send in the
+    /// meantime is priced at the cap on that one word. A seat that has not
+    /// announced relays anything, so it counts as 0, and one voice in three
+    /// is no floor at all.
+    @Test("one reporting peer in a pool of three sets no floor, and two give the lower")
+    func poolFloorNeedsAMajorityOfSeats() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        for _ in 0 ..< 3 {
+            let node = LoopbackNode(params: .signet)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: .signet, peerCount: 3, manualPeers: endpoints)
+        await pool.start()
+        let peers = await pool.connectedPeers()
+        try #require(peers.count == 3)
+        var byEndpoint: [PeerEndpoint: LoopbackNode] = [:]
+        for node in nodes { byEndpoint[await node.endpoint] = node }
+
+        // One peer announces 500 sat/vB; the other two have said nothing.
+        try await #require(byEndpoint[await peers[0].endpoint]).send(.feefilter(500_000))
+        #expect(await pollUntil(.seconds(10)) { await peers[0].feeFilter == 500_000 },
+                "the first peer must have announced before the floor is read")
+        #expect(await pool.feeFilterFloorSatPerVByte() == nil,
+                "one voice in three seats is not a floor")
+        #expect(FeePolicy.resolve(priority: .medium,
+                                  floorSatPerVByte: await pool.feeFilterFloorSatPerVByte()) == 5,
+                "a medium-priority send is still priced at its preset")
+
+        // A second peer announces 20 sat/vB: two of three seats have spoken,
+        // and the floor is the lower of them, not their average.
+        try await #require(byEndpoint[await peers[1].endpoint]).send(.feefilter(20_000))
+        #expect(await pollUntil(.seconds(10)) { await peers[1].feeFilter == 20_000 },
+                "the second peer must have announced before the floor is read")
+        #expect(await pool.feeFilterFloorSatPerVByte() == 20,
+                "the lower median of 500, 20 and a silent seat is 20")
         await pool.stop()
     }
 }
