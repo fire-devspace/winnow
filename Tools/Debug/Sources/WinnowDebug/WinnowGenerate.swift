@@ -73,12 +73,15 @@ enum WinnowGenerate {
 
     /// `--network`, defaulting to mainnet. Spelled as `BitcoinNetwork`'s own
     /// raw values so adding a network to the enum adds it here too, rather
-    /// than leaving a switch behind that silently rejects it.
+    /// than leaving a switch behind that silently rejects it. Only the
+    /// networks that ship a checkpoint are accepted: regtest begins at zero
+    /// on whichever machine runs it, so there is no constant to derive.
     static func network(in flags: [String: String]) throws -> BitcoinNetwork {
         guard let name = flags["--network"] else { return .mainnet }
-        guard let network = BitcoinNetwork(rawValue: name) else {
+        guard let network = BitcoinNetwork(rawValue: name),
+              BitcoinNetwork.checkpointed.contains(network) else {
             throw GenerateError.usage("unknown network \(name); one of "
-                                      + BitcoinNetwork.allCases.map(\.rawValue).joined(separator: ", "))
+                                      + BitcoinNetwork.checkpointed.map(\.rawValue).joined(separator: ", "))
         }
         return network
     }

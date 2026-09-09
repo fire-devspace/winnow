@@ -372,7 +372,7 @@ struct HeaderChainTests {
     /// network missing from it would be a shipped constant nothing here reads.
     @Test("every network the app runs on ships a checkpoint this file checks")
     func everyNetworkIsChecked() {
-        #expect(Set(Self.shippedCheckpoints.map(\.network)) == Set(BitcoinNetwork.allCases))
+        #expect(Set(Self.shippedCheckpoints.map(\.network)) == Set(BitcoinNetwork.checkpointed))
         for shipped in Self.shippedCheckpoints {
             #expect(NetworkParams.params(for: shipped.network).checkpoint?.height == shipped.height)
         }

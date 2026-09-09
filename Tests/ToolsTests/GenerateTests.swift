@@ -196,7 +196,7 @@ struct WinnowGenerateTests {
         }
         // Every case of the enum is spellable, so a new network is reachable
         // from the command line the day it is added.
-        for network in BitcoinNetwork.allCases {
+        for network in BitcoinNetwork.checkpointed {
             #expect(try CheckpointGenerator.Options(["checkpoint", "h.bin", "--network", network.rawValue])
                 .network == network)
         }
@@ -237,7 +237,7 @@ struct WinnowGenerateTests {
     }
 
     @Test("the literal for each shipped checkpoint is the source, line for line",
-          arguments: BitcoinNetwork.allCases)
+          arguments: BitcoinNetwork.checkpointed)
     func literalMatchesSource(_ network: BitcoinNetwork) throws {
         let shipped = try #require(NetworkParams.params(for: network).checkpoint)
         let literal = CheckpointGenerator.literal(height: shipped.height,

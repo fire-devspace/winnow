@@ -31,13 +31,17 @@ public enum AddressDecoder {
         switch network {
         case .mainnet: "bc"
         case .signet: "tb"
+        case .regtest: "bcrt"
         }
     }
 
     /// Decodes an address to its output scriptPubKey, enforcing the network.
     public static func scriptPubKey(for address: String, network: BitcoinNetwork) throws -> Data {
         let lowercased = address.lowercased()
-        if lowercased.hasPrefix("bc1") || lowercased.hasPrefix("tb1") {
+        // Every network's bech32 prefix, so a regtest address (`bcrt1…`) is
+        // read as segwit on the network it names and not as base58.
+        let segwitPrefixes = BitcoinNetwork.allCases.map { hrp(for: $0) + "1" }
+        if segwitPrefixes.contains(where: { lowercased.hasPrefix($0) }) {
             let expectedPrefix = hrp(for: network) + "1"
             guard lowercased.hasPrefix(expectedPrefix) else {
                 throw AddressError.wrongNetwork(address)
