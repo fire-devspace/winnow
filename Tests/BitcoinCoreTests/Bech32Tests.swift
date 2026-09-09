@@ -74,9 +74,16 @@ struct Bech32Tests {
     @Test("invalid Bech32m strings are rejected")
     func invalidBech32mRejected() throws {
         let strings = try Self.invalidBech32m()
-        #expect(strings.count == 14)
-        for string in strings {
-            #expect(throws: (any Error).self, "\(string)") {
+        // Reasons in the order of the BIP350 vectors above.
+        let errors: [Bech32Error] = [
+            .invalidCharacter, .invalidCharacter, .invalidCharacter, .tooLong,
+            .missingSeparator, .emptyHRP, .invalidCharacter, .invalidCharacter,
+            .invalidChecksum, .invalidCharacter, .invalidCharacter, .invalidChecksum,
+            .emptyHRP, .emptyHRP,
+        ]
+        try #require(strings.count == errors.count)
+        for (string, error) in zip(strings, errors) {
+            #expect(throws: error, "\(string)") {
                 try Bech32.decode(string)
             }
         }
@@ -87,12 +94,12 @@ struct Bech32Tests {
         let pairs = try Self.validSegwitAddresses()
         #expect(pairs.count == 8)
         for (address, expectedScript) in pairs {
-            let (version, program) = try SegwitAddress.decode(address)
+            let hrp = address.lowercased().hasPrefix("bc") ? "bc" : "tb"
+            let (version, program) = try SegwitAddress.decode(address, expectedHRP: hrp)
             var script = Data([version == 0 ? 0x00 : UInt8(0x50 + version), UInt8(program.count)])
             script.append(program)
             #expect(script.hex == expectedScript, "\(address)")
 
-            let hrp = address.hasPrefix("BC") || address.hasPrefix("bc") ? "bc" : "tb"
             let reencoded = try SegwitAddress.encode(hrp: hrp, version: version, program: program)
             #expect(reencoded.lowercased() == address.lowercased(), "\(address)")
         }
@@ -101,12 +108,20 @@ struct Bech32Tests {
     @Test("invalid segwit addresses are rejected")
     func invalidSegwitAddressesRejected() throws {
         let strings = try Self.invalidSegwitAddresses()
-        #expect(strings.count == 15)
-        for string in strings {
-            #expect(throws: (any Error).self, "\(string)") {
-                // "Invalid human-readable part" vectors (e.g. tc1...) must fail for both
-                // of the HRPs a Bitcoin wallet would ever accept.
-                for hrp in ["bc", "tb"] {
+        let errors: [Bech32Error] = [
+            .invalidHRP, .invalidChecksum, .invalidChecksum, .invalidChecksum,
+            .invalidChecksum, .invalidChecksum, .invalidCharacter, .invalidWitnessVersion,
+            .invalidProgramLength, .invalidProgramLength, .invalidProgramLength,
+            .mixedCase, .invalidPadding, .invalidPadding, .invalidWitnessVersion,
+        ]
+        try #require(strings.count == errors.count)
+        for (string, error) in zip(strings, errors) {
+            // Check the address on its own network so a prefix mismatch cannot
+            // hide a broken checksum, witness version, program length or padding.
+            // The tc1 vector must be rejected separately by both Bitcoin networks.
+            let hrps = error == .invalidHRP ? ["bc", "tb"] : [String(string.prefix(2)).lowercased()]
+            for hrp in hrps {
+                #expect(throws: error, "\(string), network \(hrp)") {
                     _ = try SegwitAddress.decode(string, expectedHRP: hrp)
                 }
             }
