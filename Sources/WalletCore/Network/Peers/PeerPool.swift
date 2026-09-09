@@ -246,11 +246,14 @@ public actor PeerPool {
     /// narrowing a pool that may be being read must cancel its scan and await
     /// it before calling this.
     ///
-    /// - Returns: the seats actually kept, which is zero when the pool is
-    ///   stopped or had no peers to keep. A zero-seat session announces to
-    ///   nobody and cannot dial one, so the count is the caller's cue to stop
-    ///   rather than to wait — `TxBroadcaster.enterRelayOnly(seats:)` reads it
-    ///   for exactly that.
+    /// - Returns: the seats the session actually holds once the narrowing is
+    ///   done: what is still seated after the dropped peers have been
+    ///   disconnected, not what the split set out to keep. Zero when the pool
+    ///   is stopped, had no peers to keep, or lost its kept seat to a removal
+    ///   that landed while the rest were being disconnected. A zero-seat
+    ///   session announces to nobody and cannot dial one, so the count is the
+    ///   caller's cue to stop rather than to wait — `TxBroadcaster.enterRelayOnly(seats:)`
+    ///   reads it for exactly that.
     @discardableResult
     public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async -> Int {
         guard started else { return 0 }
@@ -278,10 +281,17 @@ public actor PeerPool {
         // the seats it was looking at.
         let dropped = Array(peers.dropFirst(relaySeats))
         peers = Array(peers.prefix(relaySeats))
-        let kept = peers.count
         for peer in dropped { await peer.disconnect() }
         persistKnownGood()
-        return kept
+        // Counted after the loop, for the same reason the split is committed
+        // before it. The seat the split kept can be removed during these
+        // awaits by the same `transportFailure` or `misbehaving` that shifts
+        // the array, and a count taken before them reported that seat as
+        // held. `TxBroadcaster.enterRelayOnly(seats:)` opens a session on any
+        // count above zero, so the pool sat in a mode that dials nothing and
+        // runs no monitor, over no connection at all, and the payment was
+        // never announced again. What is returned is what is seated now.
+        return peers.count
     }
 
     /// Stops the pool, but only while it is still the relay-only session that

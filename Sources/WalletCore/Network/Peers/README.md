@@ -25,8 +25,11 @@ when the pool narrows goes on reading over the seats that remain — nothing in
 per-peer timeout — so it can still reach `misbehaving` and take the one seat the
 session was holding for a payment. **A caller that narrows a pool it may be
 reading cancels its scan and awaits it first.** `enterRelayOnly` reports how many
-seats it kept, and zero is not a session: a pool that was stopped, or whose peers
-had all gone, has nothing to announce over and cannot dial one.
+seats it holds once the narrowing is done, counted after the disconnects it awaits
+rather than before them, so a seat that such a removal takes while the rest are
+being torn down is not reported as held. Zero is not a session: a pool that was
+stopped, or whose peers had all gone, has nothing to announce over and cannot dial
+one.
 
 [FilterSync](../Filters/README.md) and
 [AppModel](../../../WinnowApp/AppModel.swift) consume the pool.

@@ -506,6 +506,75 @@ struct PeerPoolTests {
         }
     }
 
+    /// The count `enterRelayOnly` returns is what the session holds once the
+    /// narrowing is done, not what the split set out to keep.
+    ///
+    /// Committing the split before the first `await peer.disconnect()` closes
+    /// one side of that suspension; this is the other. The removals that land
+    /// there are the same ones: a scan still unwinding reports the kept seat
+    /// through `transportFailure`, which takes it out of `peers` while the
+    /// loop is still tearing down the rest. A count taken before the loop
+    /// reported that seat as held, and `TxBroadcaster.enterRelayOnly` opens a
+    /// session on any count above zero: relay-only mode, so nothing dials and
+    /// no monitor runs, over no connection at all, with the pending payment
+    /// never announced again and nothing left to drain the pending set.
+    ///
+    /// The return and the seat count are read as one job on the pool, so
+    /// nothing can land between them: whatever the interleaving, what
+    /// `enterRelayOnly` reports must be what the pool is seated on when it
+    /// returns. The failure is queued from inside that job, so it runs at the
+    /// narrowing's first suspension, and the pool drops four peers so the loop
+    /// suspends four times; the removal lands inside the loop on nearly every
+    /// round, and the run checks that it did at least once, so a fixture
+    /// change cannot leave this passing while testing nothing.
+    @Test("a seat lost while the pool narrows is not reported as held")
+    func relayOnlyCountsTheSeatsItStillHolds() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        for _ in 0 ..< 5 {
+            let node = LoopbackNode(params: params)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        // A fresh pool per round, as above: the failure cools its endpoint
+        // off per pool, and a reused one would run short of seats.
+        var lostInsideTheLoop = 0
+        for round in 0 ..< 20 {
+            let pool = PeerPool(params: params, peerCount: 5, manualPeers: endpoints,
+                                dialTimeout: .milliseconds(500))
+            await pool.start()
+            let seated = await pool.connectedPeers()
+            try #require(seated.count == 5, "round \(round) needs five seats to narrow")
+            // The split keeps a prefix, so the first seat is the one held.
+            let kept = try #require(seated.first)
+
+            let (reported, live) = await narrowWhileTheKeptSeatFails(pool, kept: kept)
+            #expect(reported == live,
+                    "round \(round): reported \(reported) seat(s) while holding \(live)")
+            if live == 0 { lostInsideTheLoop += 1 }
+            await pool.stop()
+        }
+        #expect(lostInsideTheLoop > 0,
+                "the removal never landed inside the narrowing, so nothing was tested")
+    }
+
+    /// One job on the pool. The failure is queued behind this job and so
+    /// runs at the narrowing's first suspension, and the count is read in
+    /// the same job as the return, with no suspension between the two.
+    private func narrowWhileTheKeptSeatFails(_ pool: isolated PeerPool,
+                                             kept: PeerConnection) async -> (reported: Int, live: Int) {
+        let failing = Task {
+            await pool.transportFailure(kept, reason: "test: the kept seat fails while the pool narrows")
+        }
+        let reported = await pool.enterRelayOnly(seats: 1)
+        let live = pool.connectedPeers().count
+        await failing.value
+        return (reported, live)
+    }
+
     /// `stopIfRelayOnly` is the whole re-read, done as one job on the pool.
     ///
     /// `TxBroadcaster` ends a session from a detached task and has to ask
