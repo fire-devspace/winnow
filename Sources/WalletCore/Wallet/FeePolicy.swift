@@ -165,7 +165,10 @@ extension PeerPool {
     /// broadcasting needs, and `TxBroadcaster` already reports
     /// `feeFloorExceeded` per peer. A pool that has not yet heard from most
     /// of its seats prices a send as if no floor were known, which is what it
-    /// did before any filter arrived.
+    /// did before any filter arrived. In a relay-only session the seats are
+    /// still `peerCount`, not the one seat the session kept, so the rule
+    /// yields no floor there by design: a lone peer never sets the floor,
+    /// whatever it announces.
     public func feeFilterFloorSatPerVByte() async -> Double? {
         var reported: [Double] = []
         for peer in connectedPeers() { // this extension method is already pool-isolated

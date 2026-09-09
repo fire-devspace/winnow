@@ -235,11 +235,17 @@ public actor TxBroadcaster {
     /// replacement broadcaster may reload the same store (reconnect), or the
     /// caller may deliberately remove the store while changing wallets.
     ///
-    /// A relay-only session ends here too, but the pool is left alone: a
-    /// caller shutting the broadcaster down is rebuilding the stack around it
-    /// and owns what happens to the peers next. Stopping the pool from here
-    /// would race a caller that shuts this broadcaster down and immediately
-    /// starts the pool for its replacement.
+    /// A relay-only session ends here too, and this call leaves the pool
+    /// alone: a caller shutting the broadcaster down is rebuilding the stack
+    /// around it and owns what happens to the peers next. Stopping the pool
+    /// from here would race a caller that shuts this broadcaster down and
+    /// immediately starts the pool for its replacement. The one thing that
+    /// still touches the pool afterwards is a narrowing already in flight:
+    /// `enterRelayOnly(seats:)` finds this broadcaster stopped when it
+    /// resumes and ends with `stopIfRelayOnly`, so a pool narrowed for a
+    /// broadcaster that is gone goes quiet rather than being held open, and
+    /// a caller that restarted the pool in the meantime keeps it, because
+    /// that re-read sees full service and does nothing.
     public func shutdown() {
         guard !stopped else { return }
         stopped = true
@@ -283,20 +289,23 @@ public actor TxBroadcaster {
     /// - Parameter seats: peers to keep, defaulting to `PeerPool.defaultRelaySeats`.
     /// - Returns: whether a session was opened, which is whether anything is
     ///   actually being relayed. False means the pool was stopped instead,
-    ///   for one of three reasons: nothing was pending, the pool kept no
-    ///   seat, or there was no session left to record by the time the pool
-    ///   had been narrowed. A zero-seat session — a pool already stopped, or
-    ///   one whose peers had all gone — announces to nobody and can never
-    ///   drain itself, because a confirmation needs the filter sync the mode
-    ///   refuses. It would be a pool held open forever with the caller told
-    ///   "relaying in the background", so it is reported as what it is and
-    ///   the pool goes quiet, which is what the caller asked for. The third
-    ///   reason is the same pool held open for the same nothing, reached the
-    ///   other way round: the narrowing is a suspension, and the last pending
-    ///   payment can confirm inside it, or `shutdown()` can run. For that one
-    ///   the pool is stopped only if it is still the relay-only session this
-    ///   call narrowed it to; a caller that resumed full service in the same
-    ///   gap has taken it back, and it is left as they put it.
+    ///   for one of these reasons: nothing was pending; the pool kept no
+    ///   seat, because it was already stopped, or its peers had all gone, or
+    ///   the seat it kept was lost while it tore down the rest; or the
+    ///   pending set drained, or the broadcaster was shut down, while the
+    ///   pool was being narrowed. A zero-seat session announces to nobody
+    ///   and can never drain itself, because a confirmation needs the filter
+    ///   sync the mode refuses. It would be a pool held open forever with
+    ///   the caller told "relaying in the background", so it is reported as
+    ///   what it is and the pool goes quiet, which is what the caller asked
+    ///   for. The last reason is the same pool held open for the same
+    ///   nothing, reached the other way round: the narrowing is a
+    ///   suspension, and the last pending payment can confirm inside it, or
+    ///   `shutdown()` can run. Every reason found on the far side of that
+    ///   suspension, the lost seat included, stops the pool only if it is
+    ///   still the relay-only session this call narrowed it to; a caller
+    ///   that resumed full service in the same gap has taken it back, and it
+    ///   is left as they put it.
     @discardableResult
     public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async throws -> Bool {
         guard !stopped else { throw TxBroadcasterError.stopped }
@@ -307,7 +316,20 @@ public actor TxBroadcaster {
         }
         guard await pool.enterRelayOnly(seats: seats) > 0 else {
             relayOnlySession = false
-            await pool.stop()
+            // Not a plain `stop()`. This branch is on the far side of the
+            // narrowing, the same suspension the re-check below guards, and a
+            // count of zero is what a `start()` landing inside it can leave
+            // behind: the kept seat fails while the pool is tearing down the
+            // rest, the app foregrounds and takes the pool back, and its
+            // dialling has not seated anyone yet when the count is read. A
+            // `stop()` here tore down the pool the caller had just resumed,
+            // and left them at zero peers with `retry()` refusing until the
+            // next full stop/start cycle. Re-reading the mode as one job on
+            // the pool is what `closeRelayOnlySession` does for the same
+            // race, and it is what is done here: a pool still narrowed for
+            // nothing goes quiet, and a pool back in full service is left as
+            // its caller put it.
+            await pool.stopIfRelayOnly()
             return false
         }
         // Both checks again, because the narrowing above is a suspension and

@@ -910,6 +910,69 @@ struct TxBroadcasterTests {
         #expect(await pool.mode == .full, "no session was left open on it")
         await pool.stop()
     }
+
+    /// The zero-seat branch sits on the far side of the same suspension, and
+    /// a `start()` can land inside it: the kept seat fails while the pool is
+    /// tearing down the rest, the app comes back to the foreground and takes
+    /// the pool back, and its dialling has seated nobody by the time the
+    /// narrowing reports its count. A plain `stop()` on that count tore down
+    /// the pool the caller had just resumed, which is the race
+    /// `stopIfRelayOnly` was made for, reached through a different branch.
+    ///
+    /// The seeds are stubbed to nothing and the one manual peer is cooling
+    /// after its failure, so the resume finds nothing to dial and the count
+    /// is genuinely zero when the narrowing returns. The pool is parked
+    /// inside the narrowing, as above, so the failure and the resume land
+    /// while the broadcaster is suspended on that call rather than near it.
+    @Test("a resume that lands while the pool is being narrowed is not undone by a zero seat count")
+    func relayOnlyZeroSeatsDoesNotUndoAResume() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint],
+                            dialTimeout: .milliseconds(500),
+                            seedResolver: SeedResolver { _, _, _ in [] })
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+        _ = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        let kept = try #require(await pool.connectedPeers().first)
+
+        let gate = NarrowingGate()
+        await pool.holdNarrowing { await gate.reach(); await gate.waitForRelease() }
+        let opening = Task { () -> Result<Bool, any Error> in
+            let outcome: Result<Bool, any Error>
+            do {
+                outcome = .success(try await broadcaster.enterRelayOnly(seats: 1))
+            } catch {
+                outcome = .failure(error)
+            }
+            await gate.reach()
+            return outcome
+        }
+        await gate.waitForReach()
+        #expect(await pool.mode == .relayOnly, "the pool is mid-narrowing")
+
+        // The kept seat goes, and the app comes back, both inside the narrowing.
+        await pool.transportFailure(kept, reason: "test: the kept seat fails while the pool narrows")
+        await pool.start()
+        #expect(await pool.isRunning, "the resume has taken the pool back")
+        #expect(await pool.mode == .full)
+        #expect(await pool.connectedPeers().isEmpty,
+                "nothing to dial yet, so the narrowing will report zero seats")
+        await gate.release()
+
+        let opened = try await opening.value.get()
+        #expect(opened == false, "no seat was held, so there is no session")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await pool.isRunning,
+                "a pool the caller resumed must be left as they put it, not stopped for the seat it lost")
+        #expect(await pool.mode == .full)
+        await pool.stop()
+    }
 }
 
 /// Parks the pool inside `enterRelayOnly` until the test lets it go, so the

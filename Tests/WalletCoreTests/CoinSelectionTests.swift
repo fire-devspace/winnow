@@ -625,7 +625,6 @@ struct CoinSelectionTests {
         #expect(FeePolicy.seatMajorityFloor(reported: [50], seats: 1) == 50)
     }
 
-
     /// The peer floor is the only input to resolution that a stranger writes,
     /// and until this fork capped it, one seated peer could set it.
     ///

@@ -193,9 +193,18 @@ struct FallbackPeerAgeTests {
             .appendingPathComponent("winnow-fallback-flags-\(UUID().uuidString).swift")
         defer { try? FileManager.default.removeItem(at: file) }
         try Data(list(Date()).utf8).write(to: file)
+        // `usage` by name, not `DebugError`: a temp file the tool could not
+        // read is refused as `check`, and that would have passed for the
+        // refusal this is about.
         for trailing in [["--as-of"], ["-as-of", "2026-09-24T00:00:00Z"], ["2026-09-24T00:00:00Z"], ["-h"]] {
-            await #expect(throws: DebugError.self, "\(trailing)") {
+            do {
                 try await WinnowDebug.execute(["check", "fallback-peers", "--in", file.path] + trailing)
+                Issue.record("\(trailing) ran, and would have checked something else")
+            } catch let DebugError.usage(message) {
+                #expect(message.split(separator: "\n").first?.contains(trailing[0]) == true,
+                        "\(trailing) must be refused by name")
+            } catch {
+                Issue.record("\(trailing): \(error), which is not the usage refusal")
             }
         }
     }

@@ -662,12 +662,21 @@ struct ImportBundleTests {
     /// transaction could name more outputs than the whole bundle may hold
     /// coins in a file a fraction of the byte limit, and every one of them
     /// was materialised and validated.
-    @Test("a transaction naming more outputs than the entry limit is refused")
-    func tooManyOutputsInOneTransactionRefused() throws {
-        let json = Self.bundle(transactions: Self.transaction(change: ImportBundle.maximumEntries + 1))
+    ///
+    /// This is the finding's bundle, and what refuses it is the
+    /// per-transaction ceiling: a single breakdown crosses what one standard
+    /// transaction can hold long before it crosses the entry limit, so the
+    /// error is asserted by its text to prove which guard spoke. The entry
+    /// limit standing on its own is `outputsSpreadPastTheEntryLimitRefused`,
+    /// where no single breakdown is anywhere near the ceiling.
+    @Test("one transaction naming more outputs than the bundle may hold is refused by the ceiling")
+    func oneTransactionPastTheEntryLimitRefusedByTheCeiling() throws {
+        let outputs = ImportBundle.maximumEntries + 1
+        let json = Self.bundle(transactions: Self.transaction(change: outputs))
         #expect(json.utf8.count < ImportBundle.maximumSerializedBytes,
                 "the count, not the byte limit, must be what refuses this")
-        #expect(throws: WalletError.self) {
+        #expect(throws: WalletError.invalidBundle(
+            "a transaction declares \(outputs) outputs, above the \(ImportBundle.maximumOutputsPerTransaction) limit")) {
             _ = try ImportBundle.decode(json: json)
         }
     }

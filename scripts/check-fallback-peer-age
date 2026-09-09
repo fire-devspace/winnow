@@ -16,9 +16,12 @@ set -euo pipefail
 invoked_from=$PWD
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Help means help. The subject below is hardcoded, so without this a --help
-# arrives as an unrecognized trailing argument and the operator asking how to
-# use the command is told how old the list is instead.
+# Help means help, and only as the first argument. The subject below is
+# hardcoded, and the tool reads everything after it as --flag value pairs, so
+# a --help that reaches it is refused by name as an unknown option, exit 1.
+# That is the right answer to a flag in the wrong place, but not to an
+# operator asking how to use the command, so the question is answered here
+# before the subject is added.
 case "${1:-}" in
   -h|--help|help) exec scripts/winnow-debug check --help ;;
 esac
