@@ -9,6 +9,10 @@ public enum BIP32Error: Error, Equatable {
     case derivationFailed
     case invalidSerializedKey
     case invalidVersion
+    /// The key is at depth 255, and a byte counts no deeper. A
+    /// deserialized key can name any depth, so the walk refuses rather than
+    /// overflowing.
+    case depthExhausted
 }
 
 /// BIP32 hierarchical deterministic key (secp256k1).
@@ -79,6 +83,7 @@ public struct HDKey: Sendable, Equatable {
 
     /// Child key derivation at a single index (>= hardenedOffset for hardened).
     public func child(at index: UInt32) throws -> HDKey {
+        guard depth < UInt8.max else { throw BIP32Error.depthExhausted }
         let hardened = index >= Self.hardenedOffset
         var data = Data()
         if hardened {

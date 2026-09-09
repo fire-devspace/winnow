@@ -117,6 +117,22 @@ struct BIP32Tests {
         }
     }
 
+    /// A serialized key can name any depth, including the last one a byte
+    /// can hold. Walking below it used to be `depth + 1` on a `UInt8`, which
+    /// traps; it is a refusal now, so an import bundle carrying such a key
+    /// is an error and not a crash at the first address.
+    @Test("a key at depth 255 refuses a child rather than trapping")
+    func depthExhausted() throws {
+        let master = try testMaster()
+        let last = HDKey(depth: 255, parentFingerprint: master.fingerprint, childIndex: 0,
+                         chainCode: master.chainCode, privateKey: master.privateKey, publicKey: master.publicKey)
+        #expect(throws: BIP32Error.depthExhausted) { _ = try last.child(at: 0) }
+        #expect(throws: BIP32Error.depthExhausted) { _ = try last.neutered.child(at: 0) }
+        let almost = HDKey(depth: 254, parentFingerprint: master.fingerprint, childIndex: 0,
+                           chainCode: master.chainCode, privateKey: master.privateKey, publicKey: master.publicKey)
+        #expect(try almost.child(at: 0).depth == 255)
+    }
+
     @Test("vector 5 invalid extended keys are rejected")
     func invalidKeysRejected() throws {
         let keys = try Self.invalidKeys()
