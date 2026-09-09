@@ -8,6 +8,8 @@ They protect the decisions behind payment review, recovery, and shared savings.
 
 The tests run in the [iOS app host](../Sources/WinnowApp/README.md) and share
 fixtures from [TestSupport](../Tests/Support/README.md).
+The local `makeModel` helper gives each test a separate settings suite and removes
+it at teardown. Pass the same suite to two models when testing persistence.
 [UI journeys](../UITests/README.md) provide the complementary screen-level checks.
 
 Run `scripts/ci-app-tests /tmp/winnow-app-tests` from the repository root with

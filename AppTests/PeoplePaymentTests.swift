@@ -6,23 +6,6 @@ import XCTest
 /// How people reach the send review and how vaults become shared savings.
 @MainActor
 final class PeoplePaymentTests: XCTestCase {
-    private var savedNetwork: String?
-
-    override func setUp() {
-        super.setUp()
-        savedNetwork = UserDefaults.standard.string(forKey: AppModel.DefaultsKey.network)
-        UserDefaults.standard.set(BitcoinNetwork.signet.rawValue, forKey: AppModel.DefaultsKey.network)
-    }
-
-    override func tearDown() {
-        if let savedNetwork {
-            UserDefaults.standard.set(savedNetwork, forKey: AppModel.DefaultsKey.network)
-        } else {
-            UserDefaults.standard.removeObject(forKey: AppModel.DefaultsKey.network)
-        }
-        super.tearDown()
-    }
-
     @MainActor
     private final class PausedAuthenticator: DeviceAuthenticating {
         var entered: (() -> Void)?
@@ -102,7 +85,7 @@ final class PeoplePaymentTests: XCTestCase {
     }
 
     func testSharedSavingsAreDerivedFromSignerKeysWhetherOrNotPeopleAreKnown() async throws {
-        let model = AppModel(deviceAuthenticator: SilentAuthenticator())
+        let model = makeModel(network: .signet)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("people-payment-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -156,7 +139,7 @@ final class PeoplePaymentTests: XCTestCase {
     }
 
     func testAnApprovalRequestForUnknownSavingsIsRefusedByName() async throws {
-        let model = AppModel(deviceAuthenticator: SilentAuthenticator())
+        let model = makeModel(network: .signet)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("people-approval-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -183,7 +166,7 @@ final class PeoplePaymentTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let model = AppModel(deviceAuthenticator: SilentAuthenticator())
+        let model = makeModel(network: .signet)
         await model.vaultStore.configure(storageURL: directory.appending(path: "vaults.json"), network: .signet)
         await model.peopleStore.configure(storageURL: directory.appending(path: "people.json"), network: .signet)
         let vaults = [try TestVaults.multiAVault().vault, try TestVaults.muSig2Vault().vault]

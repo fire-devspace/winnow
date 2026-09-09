@@ -2,52 +2,18 @@
 import WalletCore
 import XCTest
 
-/// What Settings stores, and who is allowed to see it.
-///
-/// Two questions with one answer surface: which rows a beginner is shown, and
-/// which values follow the network rather than the install. They keep separate
-/// classes because their fixtures are incompatible — AdvancedModeTests saves
-/// and restores keys in `UserDefaults.standard`, since the model reads that
-/// suite directly, while NetworkScopedSettingsTests builds a throwaway suite
-/// per test and passes it in. One `setUp` cannot serve both. Both class names
-/// are cited in docs/security/findings.md (SEC-013) and the invariant matrix.
-
-// MARK: - AdvancedModeTests
-
-/// Advanced mode gates everything a beginner should never have to read,
-/// starting with the network picker. Off by default, global rather than per
-/// network, and turning it off hides rather than deletes.
+/// Beginner controls and persisted preferences, with a fresh settings suite per test.
 @MainActor
 final class AdvancedModeTests: XCTestCase {
-    private var saved: [String: Any?] = [:]
-    private var trackedKeys: [String] {
-        [AppModel.DefaultsKey.network, AppModel.DefaultsKey.advancedMode,
-         AppModel.DefaultsKey.verifyFromGenesis,
-         AppModel.DefaultsKey.manualPeers(.mainnet), AppModel.DefaultsKey.esploraURL(.mainnet),
-         AppModel.DefaultsKey.explorerProvider(.mainnet)]
-    }
+    private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
-        for key in trackedKeys {
-            saved[key] = UserDefaults.standard.object(forKey: key)
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-
-    override func tearDown() {
-        for key in trackedKeys {
-            if let value = saved[key] ?? nil {
-                UserDefaults.standard.set(value, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-        super.tearDown()
+        defaults = makeDefaults()
     }
 
     func testBeginnerKeepsManualPeersWhileAnyAreSet() throws {
-        let model = makeModel()
+        let model = makeModel(defaults: defaults)
         XCTAssertFalse(model.showsManualPeers)
         try model.addManualPeer("127.0.0.1:38401")
         XCTAssertTrue(model.showsManualPeers, "a configured peer keeps its section")
@@ -61,15 +27,15 @@ final class AdvancedModeTests: XCTestCase {
     }
 
     func testBeginnerKeepsChainVerificationWhileOn() {
-        UserDefaults.standard.set(true, forKey: AppModel.DefaultsKey.verifyFromGenesis)
-        let model = makeModel()
+        defaults.set(true, forKey: AppModel.DefaultsKey.verifyFromGenesis)
+        let model = makeModel(defaults: defaults)
         XCTAssertFalse(model.advancedMode)
         XCTAssertTrue(model.showsChainVerification)
-        XCTAssertFalse(makeModel().showsExplorerSettings)
+        XCTAssertFalse(makeModel(defaults: defaults).showsExplorerSettings)
     }
 
     func testBeginnerKeepsExplorerSettingsWhileCustomised() {
-        let model = makeModel()
+        let model = makeModel(defaults: defaults)
         XCTAssertFalse(model.showsExplorerSettings)
         model.setEsploraURL("https://example.org")
         XCTAssertTrue(model.showsExplorerSettings)
@@ -80,7 +46,7 @@ final class AdvancedModeTests: XCTestCase {
     }
 
     func testAFreshInstallIsOnMainnetAndHidesTheNetworkPicker() {
-        let model = makeModel()
+        let model = makeModel(defaults: defaults)
         XCTAssertEqual(model.network, .mainnet, "#9: mainnet is the default")
         XCTAssertEqual(AppModel.defaultNetwork, .mainnet)
         XCTAssertFalse(model.showsNetworkPicker, "signet is an Advanced-mode concern")
@@ -91,21 +57,21 @@ final class AdvancedModeTests: XCTestCase {
     func testASignetWalletAlwaysKeepsTheNetworkPicker() {
         // Advanced mode off, but the stored network is signet: the row must
         // stay, or turning the flag off would strand the wallet there.
-        UserDefaults.standard.set(BitcoinNetwork.signet.rawValue, forKey: AppModel.DefaultsKey.network)
-        let model = makeModel()
+        defaults.set(BitcoinNetwork.signet.rawValue, forKey: AppModel.DefaultsKey.network)
+        let model = makeModel(defaults: defaults)
         XCTAssertEqual(model.network, .signet)
         XCTAssertFalse(model.advancedMode)
         XCTAssertTrue(model.showsNetworkPicker)
     }
 
     func testOffByDefaultAndPersistedWhenTurnedOn() {
-        let model = makeModel()
+        let model = makeModel(defaults: defaults)
         XCTAssertFalse(model.advancedMode, "a fresh install is a beginner")
         model.setAdvancedMode(true)
         XCTAssertTrue(model.advancedMode)
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: AppModel.DefaultsKey.advancedMode))
-        XCTAssertEqual(AppModel.DefaultsKey.advancedMode, "advancedMode",
-                       "global, not network-scoped: a statement about the user, not the chain")
+        XCTAssertTrue(defaults.bool(forKey: AppModel.DefaultsKey.advancedMode))
+        XCTAssertTrue(makeModel(defaults: defaults).advancedMode, "reopening keeps the preference")
+        XCTAssertFalse(makeModel().advancedMode, "a separate install still starts in beginner mode")
     }
 
     func testTheE2EFlagTurnsItOnForAUITestLaunch() throws {
@@ -128,32 +94,14 @@ final class AdvancedModeTests: XCTestCase {
 
 // MARK: - NetworkScopedSettingsTests
 
-/// Peer, explorer and tweak-index settings must not cross a network switch
-/// (epic #100, invariant S6; bug #81).
-///
-/// Keys and money were already separated — storage is under `root/<network>/`
-/// and derivation is SLIP-44 correct — so no signet key can produce a mainnet
-/// address. What leaked was three settings, and each fails in its own way.
-/// Manual peers are dialed *first*, so a signet node left configured spends a
-/// mainnet pool's opening attempts on a peer that will reject the handshake;
-/// that is the "sync looks broken" the bug was reported as. A signet explorer
-/// or tweak index is quieter and worse in kind: it answers mainnet queries
-/// with confidently wrong data.
+/// Peer and explorer preferences stay with their network, including after migration.
 @MainActor
 final class NetworkScopedSettingsTests: XCTestCase {
     private var defaults: UserDefaults!
-    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
-        suiteName = "winnow-network-scope-\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)
-    }
-
-    override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        super.tearDown()
+        defaults = makeDefaults()
     }
 
     private typealias Key = AppModel.DefaultsKey

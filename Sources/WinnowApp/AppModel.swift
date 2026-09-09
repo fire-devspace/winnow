@@ -342,12 +342,12 @@ final class AppModel {
     }
 
     init(deviceAuthenticator: any DeviceAuthenticating = LocalDeviceAuthenticator(),
-         e2e: E2EMode? = E2EMode.current) {
+         e2e: E2EMode? = E2EMode.current, defaults: UserDefaults = .standard) {
         self.deviceAuthenticator = deviceAuthenticator
         self.e2e = e2e
         e2e?.wipeIfRequested()
         keyStore = e2e.map { KeychainStore(service: $0.keychainService) } ?? KeychainStore()
-        let defaults = e2e?.defaults ?? .standard
+        let defaults = e2e?.defaults ?? defaults
         self.defaults = defaults
         // Mainnet is the default (#9). The E2E harness is a custom-signet
         // fixture, so a test launch that names no network still gets signet.

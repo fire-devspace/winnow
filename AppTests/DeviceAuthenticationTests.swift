@@ -17,7 +17,7 @@ final class DeviceAuthenticationTests: XCTestCase {
 
     func testSensitiveActionUsesInjectedDeviceAuthenticator() async throws {
         let authenticator = RecordingAuthenticator()
-        let model = AppModel(deviceAuthenticator: authenticator)
+        let model = makeModel(deviceAuthenticator: authenticator)
 
         try await model.authenticateSensitiveAction(reason: "Authorize test operation")
 
@@ -27,7 +27,7 @@ final class DeviceAuthenticationTests: XCTestCase {
     func testSensitiveActionFailsClosedWhenAuthenticationFails() async {
         let authenticator = RecordingAuthenticator()
         authenticator.shouldFail = true
-        let model = AppModel(deviceAuthenticator: authenticator)
+        let model = makeModel(deviceAuthenticator: authenticator)
 
         do {
             try await model.authenticateSensitiveAction(reason: "Authorize test operation")
