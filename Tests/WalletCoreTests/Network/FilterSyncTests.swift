@@ -484,6 +484,9 @@ struct FilterSyncTests {
             "the same chain, so the same adopted checkpoint answer")
         // The halves of the receipt that do not carry a port: the same classes
         // agreed, and as many of them.
+        // A receipt both runs failed to write would make every comparison
+        // below nil == nil; pin that there is one to compare.
+        #expect(whole.progress.crossCheck != nil)
         #expect(whole.progress.crossCheck?.sourceClasses
             == chunked.progress.crossCheck?.sourceClasses)
         #expect(whole.progress.crossCheck?.agreed.count
@@ -707,6 +710,7 @@ struct FilterSyncTests {
         #expect(saved.nextScanHeight == expected.progress.nextScanHeight)
         #expect(saved.filterHeaders == expected.progress.filterHeaders)
         #expect(saved.crossCheck?.answerDigest == expected.progress.crossCheck?.answerDigest)
+        #expect(saved.crossCheck != nil)
         #expect(saved.crossCheck?.sourceClasses == expected.progress.crossCheck?.sourceClasses)
         #expect(saved.crossCheck?.agreed.count == expected.progress.crossCheck?.agreed.count)
 
