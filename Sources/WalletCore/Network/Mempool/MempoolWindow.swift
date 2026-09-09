@@ -12,8 +12,9 @@ import Foundation
 /// indistinguishable from an ordinary full node. The relay bit
 /// (`relayPreference`) is a connect-time parameter of the pool's connections
 /// (PeerPool/PeerConnection); this actor bounds the expensive part: with no
-/// window open, invs are dropped by PeerConnection's bounded backlog and no
-/// getdata is ever sent.
+/// window open, invs are dropped by PeerConnection's bounded backlog — bounded
+/// in messages and in bytes, so a peer that floods them costs a fixed amount
+/// of memory and nothing else — and no getdata is ever sent.
 ///
 /// Lifecycle: `start(duration:)` opens the window (default 20 minutes),
 /// `extend(by:)` pushes the deadline out, `stop()` closes it — cancelling the
