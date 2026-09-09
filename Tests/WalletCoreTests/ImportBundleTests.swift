@@ -645,6 +645,92 @@ struct ImportBundleTests {
         #expect(bundle.utxos.count == ImportBundle.maximumEntries)
     }
 
+    /// A known transaction whose breakdown names `external` payments at the
+    /// first vouts and `change` at the vouts after them, ascending, so the
+    /// only thing a test built from it can be refused for is how many there
+    /// are.
+    static func transaction(external: Int = 0, change: Int) -> String {
+        let payments = (0 ..< external)
+            .map { #"{"vout":\#($0),"amount":1,"scriptPubKey":"51"}"# }
+            .joined(separator: ",")
+        let vouts = (external ..< external + change).map(String.init).joined(separator: ",")
+        return #"{"txid":"aa","height":1,"received":0,"spent":0,"outputs":{"external":[\#(payments)],"change":[\#(vouts)]}}"#
+    }
+
+    /// A breakdown is a list nested inside a list, and the entry limit
+    /// counted only the outer one. A change vout is a few bytes, so one
+    /// transaction could name more outputs than the whole bundle may hold
+    /// coins in a file a fraction of the byte limit, and every one of them
+    /// was materialised and validated.
+    @Test("a transaction naming more outputs than the entry limit is refused")
+    func tooManyOutputsInOneTransactionRefused() throws {
+        let json = Self.bundle(transactions: Self.transaction(change: ImportBundle.maximumEntries + 1))
+        #expect(json.utf8.count < ImportBundle.maximumSerializedBytes,
+                "the count, not the byte limit, must be what refuses this")
+        #expect(throws: WalletError.self) {
+            _ = try ImportBundle.decode(json: json)
+        }
+    }
+
+    /// `total` breakdown outputs spread over transactions of at most
+    /// `perTransaction` each, so a test can put the whole bundle at one
+    /// limit while every transaction stays inside the other.
+    static func transactions(totalOutputs total: Int, perTransaction: Int) -> String {
+        var parts: [String] = []
+        var remaining = total
+        while remaining > 0 {
+            let count = min(remaining, perTransaction)
+            parts.append(transaction(external: 1, change: count - 1))
+            remaining -= count
+        }
+        return parts.joined(separator: ",")
+    }
+
+    /// The per-transaction ceiling stands on its own: a bundle far inside
+    /// the entry limit is still refused when one breakdown names more
+    /// outputs than a standard transaction can hold. The one entry over is
+    /// an external payment, so both lists are being counted.
+    @Test("a breakdown past what one standard transaction can hold is refused")
+    func outputsPastThePerTransactionCeilingRefused() throws {
+        let transaction = Self.transaction(external: 1,
+                                           change: ImportBundle.maximumOutputsPerTransaction)
+        #expect(ImportBundle.maximumOutputsPerTransaction + 1 < ImportBundle.maximumEntries,
+                "the entry limit must not be what refuses this")
+        #expect(throws: WalletError.self) {
+            _ = try ImportBundle.decode(json: Self.bundle(transactions: transaction))
+        }
+    }
+
+    /// Positive control for both bounds: every transaction exactly at the
+    /// per-transaction ceiling and the bundle exactly at the entry limit
+    /// decodes with every entry intact.
+    @Test("breakdowns exactly at both limits are accepted")
+    func outputsAtTheLimitsAccepted() throws {
+        let json = Self.bundle(transactions: Self.transactions(
+            totalOutputs: ImportBundle.maximumEntries,
+            perTransaction: ImportBundle.maximumOutputsPerTransaction))
+        let bundle = try ImportBundle.decode(json: json)
+        let perTransaction = bundle.transactions.map {
+            ($0.outputs?.external.count ?? 0) + ($0.outputs?.change.count ?? 0)
+        }
+        #expect(perTransaction.reduce(0, +) == ImportBundle.maximumEntries)
+        #expect(perTransaction.max() == ImportBundle.maximumOutputsPerTransaction)
+    }
+
+    /// The bundle-wide limit stands on its own too: transactions each well
+    /// inside the per-transaction ceiling, whose breakdowns together name
+    /// one entry more than the bundle may hold.
+    @Test("breakdowns that together exceed the entry limit are refused")
+    func outputsSpreadPastTheEntryLimitRefused() throws {
+        let json = Self.bundle(transactions: Self.transactions(
+            totalOutputs: ImportBundle.maximumEntries + 1,
+            perTransaction: ImportBundle.maximumOutputsPerTransaction / 2))
+        #expect(json.utf8.count < ImportBundle.maximumSerializedBytes)
+        #expect(throws: WalletError.self) {
+            _ = try ImportBundle.decode(json: json)
+        }
+    }
+
     /// Malformed input still fails as an error rather than anything worse.
     @Test("truncated JSON is refused")
     func truncatedJSONRefused() {

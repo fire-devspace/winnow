@@ -234,6 +234,23 @@ public struct ImportBundle: Codable, Equatable, Sendable {
     public static let maximumEntries = 50_000
     public static let maximumVaults = 100
 
+    /// The most outputs one transaction's breakdown may name, which is the
+    /// most one standard transaction can hold. A standard transaction is at
+    /// most `TransactionBuilder.maximumStandardVSize`, 100,000 vB, and the
+    /// smallest output a default node relays is ten bytes: an eight-byte
+    /// value, a one-byte length, and a bare `OP_RETURN`. Every other
+    /// standard output is larger (a P2TR output is 43), and the header and
+    /// at least one input take their share of the same ceiling, so a
+    /// breakdown past this names more outputs than any transaction a peer
+    /// would have relayed, let alone one this wallet built and measured. A
+    /// breakdown that describes a transaction names each vout once, so its
+    /// two lists together are held to the same figure.
+    ///
+    /// `maximumEntries` bounds the bundle and this bounds one entry of it: a
+    /// breakdown is a list nested inside a list, and a count of transactions
+    /// says nothing about how long each one's lists are.
+    public static let maximumOutputsPerTransaction = TransactionBuilder.maximumStandardVSize / 10
+
     /// Decodes a bundle from untrusted text, refusing implausible sizes before
     /// allocating anything proportional to them.
     public static func decode(json: String) throws -> ImportBundle {
@@ -260,6 +277,27 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         guard (bundle.vaults?.count ?? 0) <= maximumVaults,
               (bundle.vaults ?? []).reduce(0, { $0 + $1.allUtxos.count }) <= maximumEntries else {
             throw WalletError.invalidBundle("too many shared accounts or account coins")
+        }
+        // The counts above see none of a breakdown's two lists, which sit a
+        // level down, and a change vout is a few bytes, so a handful of
+        // transactions could carry more entries than the whole bundle may
+        // hold coins in a file a fraction of the byte limit. Each breakdown
+        // is held to what one standard transaction can hold, and all of them
+        // together to the bundle's entry limit: the two answer different
+        // questions, and either alone leaves the other open.
+        var outputEntries = 0
+        for transaction in bundle.transactions {
+            guard let outputs = transaction.outputs else { continue }
+            let count = outputs.external.count + outputs.change.count
+            guard count <= maximumOutputsPerTransaction else {
+                throw WalletError.invalidBundle(
+                    "a transaction declares \(count) outputs, above the \(maximumOutputsPerTransaction) limit")
+            }
+            outputEntries += count
+        }
+        guard outputEntries <= maximumEntries else {
+            throw WalletError.invalidBundle(
+                "bundle declares \(outputEntries) transaction outputs, above the \(maximumEntries) limit")
         }
         return bundle
     }
