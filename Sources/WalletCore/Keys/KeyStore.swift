@@ -56,6 +56,15 @@ public enum WalletSecret: Equatable, Sendable {
     static let accountHeaderPrefix = "account/"
     static let accountHeader = accountHeaderPrefix + "1"
 
+    /// The version tag of an account header, and nothing else: the header
+    /// cut at the first character that is not a letter, a digit or a slash,
+    /// and at twenty-four characters. What an error may say about a blob it
+    /// could not read, when the "header" is the whole blob because its
+    /// separators were not newlines.
+    static func versionTag(of header: String) -> String {
+        String(header.prefix { $0.isLetter || $0.isNumber || $0 == "/" }.prefix(24))
+    }
+
     /// Tagged text encoding: a header line (`mnemonic` / `xprv` / `account/1`)
     /// and its payload lines. Versionable and inspectable; the bytes are what
     /// lands in the keychain.
@@ -94,8 +103,11 @@ public enum WalletSecret: Equatable, Sendable {
             self = .accountKey(xprv: String(lines[2]), masterFingerprint: fingerprint)
         case _ where header.hasPrefix(Self.accountHeaderPrefix):
             // Recognisably an account secret, in a version this build has no
-            // rules for. Naming it is the whole point of the tag.
-            throw KeyStoreError.unsupportedSecretVersion(header)
+            // rules for. Naming it is the whole point of the tag, and the
+            // TAG is all the error carries: the header is whatever came
+            // before the first newline, which is the whole blob, fingerprint
+            // and key included, when the separators are not newlines at all.
+            throw KeyStoreError.unsupportedSecretVersion(Self.versionTag(of: header))
         default: throw KeyStoreError.malformedSecret
         }
     }

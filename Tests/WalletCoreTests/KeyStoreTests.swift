@@ -51,6 +51,29 @@ struct KeyStoreTests {
         }
     }
 
+    /// An unknown version's error names the version and nothing else. A blob
+    /// whose separators are not newlines has the whole payload on its first
+    /// line, and the error must not carry the key out to a log or an alert.
+    @Test("an unsupported version's error carries the tag, never the payload")
+    func unsupportedVersionErrorCarriesOnlyTheTag() throws {
+        let account = try BIP86.accountKey(from: testMaster(), coinType: 1)
+            .serialized(network: .testnet)
+        let carriageReturns = Data("account/2\r73c5da0a\r\(account)".utf8)
+        #expect(throws: KeyStoreError.unsupportedSecretVersion("account/2")) {
+            _ = try WalletSecret(serialized: carriageReturns)
+        }
+        do {
+            _ = try WalletSecret(serialized: carriageReturns)
+        } catch let error as KeyStoreError {
+            #expect(!(error.errorDescription ?? "").contains(account))
+            #expect(!(error.errorDescription ?? "").contains("73c5da0a"))
+        }
+        #expect(WalletSecret.versionTag(of: "account/1a") == "account/1a")
+        #expect(WalletSecret.versionTag(of: "account/") == "account/")
+        #expect(WalletSecret.versionTag(of: "account/2\r73c5da0a\rxprv") == "account/2")
+        #expect(WalletSecret.versionTag(of: "account/" + String(repeating: "9", count: 40)).count == 24)
+    }
+
     /// One spelling of a fingerprint, decided by the writer. `serialized`
     /// writes lowercase, and every wallet ID and descriptor origin beside it is
     /// lowercase, so the same key must not have a second encoding that also
