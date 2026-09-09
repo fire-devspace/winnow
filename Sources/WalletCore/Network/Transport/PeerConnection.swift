@@ -95,6 +95,11 @@ public actor PeerConnection {
     /// address type 3), which is the only way a `.onion` or `.b32.i2p` peer
     /// is reachable at all. nil dials the endpoint directly.
     public let socksProxy: PeerEndpoint?
+    /// Payload bytes of unsolicited gossip this connection buffers before it
+    /// drops the oldest. A client with less memory to spend than the default
+    /// assumes may lower it; below `MessageFramer.maxPayloadSize` it also
+    /// starts refusing single messages the protocol allows.
+    public let backlogByteLimit: Int
 
     public private(set) var peerServices: UInt64 = 0
     public private(set) var peerUserAgent = ""
@@ -131,14 +136,45 @@ public actor PeerConnection {
     private var collectors: [UUID: PendingCollector] = [:]
     private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
     private var subscribers: [UUID: AsyncThrowingStream<PeerEvent, Error>.Continuation] = [:]
+
+    /// One unsolicited message and the payload size it arrived with. The size
+    /// travels with the message because `PeerMessage.payload` re-serializes
+    /// every time it is read, and the bounds below are counted on every frame.
+    private struct BacklogEntry {
+        let message: PeerMessage
+        let bytes: Int
+    }
+
     /// Messages that arrived with no waiter/collector registered (e.g. a
-    /// verack sent before we started waiting for it). Bounded; oldest dropped.
-    private var backlog: [PeerMessage] = []
-    private static let backlogLimit = 256
+    /// verack sent before we started waiting for it). Bounded in messages and
+    /// in bytes; oldest dropped past either.
+    private var backlog: [BacklogEntry] = []
+    /// Payload bytes the backlog holds, kept in step by every path that adds
+    /// or removes an entry.
+    private var backlogBytes = 0
+    static let backlogLimit = 256
+
+    /// How many payload bytes of unsolicited gossip a connection buffers by
+    /// default before it drops the oldest.
+    ///
+    /// The message cap bounds messages, not memory, and one message is
+    /// whatever the framer accepts: 256 of `MessageFramer.maxPayloadSize` is
+    /// a gigabyte held per peer, times the pool's seats, for gossip nobody
+    /// asked for, on a connection that stays up. The ceiling is derived from
+    /// the largest unsolicited messages a wallet legitimately keeps. An `inv`
+    /// carries at most 50,000 vectors of 36 bytes (`InventoryPayload`'s own
+    /// limit, Core's MAX_INV_SZ), so about 1.8 MB; a `headers` batch is 2,000
+    /// headers of 81 bytes, so about 162 KB. Eight megabytes holds four
+    /// maximal invs, which is every honest burst several times over, and
+    /// leaves a hostile peer under one percent of what it could hold before.
+    public static let defaultBacklogByteLimit = 8_000_000
 
     public init(endpoint: PeerEndpoint, params: NetworkParams,
                 localServices: UInt64 = 0, localStartHeight: Int32 = 0,
-                relayPreference: Bool = false, socksProxy: PeerEndpoint? = nil) {
+                relayPreference: Bool = false, socksProxy: PeerEndpoint? = nil,
+                backlogByteLimit: Int = PeerConnection.defaultBacklogByteLimit) {
+        precondition(backlogByteLimit > 0, "the gossip buffer needs a positive ceiling")
+        self.backlogByteLimit = backlogByteLimit
         self.endpoint = endpoint
         self.params = params
         self.localServices = localServices
@@ -370,7 +406,7 @@ public actor PeerConnection {
         // satisfied from the backlog — and must not be handed back as the
         // answer to this one. (An announcement dropped here is not lost: the
         // reply covers the same headers.)
-        backlog.removeAll { commands.contains($0.command) }
+        purgeBacklog { commands.contains($0.command) }
         async let response = waitFor(matching: commands, timeout: timeout)
         try await send(message)
         return try await response
@@ -396,7 +432,7 @@ public actor PeerConnection {
         // Same rule as `request`: a burst that timed out mid-delivery leaves
         // its trailing messages in the backlog, and they are not the answer
         // to the burst asked for now.
-        backlog.removeAll { $0.command == command }
+        purgeBacklog { $0.command == command }
         let id = UUID()
         scheduleTimeout(for: id, timeout: timeout)
         do {
@@ -424,10 +460,13 @@ public actor PeerConnection {
                          maxTotalBytes: Int?) async throws -> [PeerMessage] {
         var received: [PeerMessage] = []
         var receivedBytes = 0
-        while received.count < count, let index = backlog.firstIndex(where: { $0.command == command }) {
-            let message = backlog.remove(at: index)
-            receivedBytes += message.payload.count
-            received.append(message)
+        while received.count < count,
+              let index = backlog.firstIndex(where: { $0.message.command == command }) {
+            // The size recorded on arrival, not one re-serialized here: it is
+            // what the peer actually sent, and it is already counted.
+            let entry = takeFromBacklog(at: index)
+            receivedBytes += entry.bytes
+            received.append(entry.message)
         }
         if let maxTotalBytes, receivedBytes > maxTotalBytes {
             let violation = Self.burstTooLarge(command: command, bytes: receivedBytes,
@@ -635,16 +674,71 @@ public actor PeerConnection {
         }
         // No waiter yet: keep it for future waitFor/collect calls (the peer
         // owes us nothing about send/receive ordering) and notify subscribers.
-        backlog.append(message)
-        if backlog.count > Self.backlogLimit { backlog.removeFirst() }
+        buffer(message, bytes: payloadBytes)
+    }
+
+    /// Buffers an unsolicited message for a later `waitFor`/`collect` and
+    /// hands it to the event subscribers.
+    ///
+    /// Past either bound the oldest gossip goes. That is the recorded choice
+    /// for a flood: a peer that announces faster than a subscriber drains
+    /// loses its stale announcements, not its connection, because an honest
+    /// peer on a busy network does exactly that. The one thing it may not do
+    /// is arrive with a single message larger than the whole buffer. Keeping
+    /// that one would evict every other entry to make room for something
+    /// nobody asked for, so a peer could empty the buffer at will, and no
+    /// honest gossip is that large — that is the peer being unusable, and it
+    /// is torn down like a burst past its bound.
+    private func buffer(_ message: PeerMessage, bytes: Int) {
+        guard bytes <= backlogByteLimit else {
+            teardown(error: Self.unsolicitedTooLarge(command: message.command, bytes: bytes,
+                                                     limit: backlogByteLimit))
+            return
+        }
+        backlog.append(BacklogEntry(message: message, bytes: bytes))
+        backlogBytes += bytes
+        while backlog.count > Self.backlogLimit || backlogBytes > backlogByteLimit {
+            backlogBytes -= backlog.removeFirst().bytes
+        }
         for subscriber in subscribers.values {
             subscriber.yield(.message(message))
         }
     }
 
+    /// The refusal one oversized unsolicited message produces. A protocol
+    /// violation for the same reason a burst past its bound is one: what the
+    /// peer sent is not something an honest one has to say.
+    private static func unsolicitedTooLarge(command: String, bytes: Int, limit: Int) -> PeerError {
+        .protocolViolation("unsolicited \(command) of \(bytes) bytes exceeds the \(limit)-byte buffer")
+    }
+
+    /// Removes one backlog entry and keeps the byte total in step.
+    private func takeFromBacklog(at index: Int) -> BacklogEntry {
+        let entry = backlog.remove(at: index)
+        backlogBytes -= entry.bytes
+        return entry
+    }
+
+    /// Drops every backlog entry the predicate matches, keeping the byte
+    /// total in step. Nothing removes an entry except this and
+    /// `takeFromBacklog`: a total that drifts above the truth shrinks the
+    /// buffer for no reason, and one that drifts below it bounds nothing.
+    private func purgeBacklog(where predicate: (PeerMessage) -> Bool) {
+        backlog.removeAll { entry in
+            guard predicate(entry.message) else { return false }
+            backlogBytes -= entry.bytes
+            return true
+        }
+    }
+
+    /// What the gossip buffer holds right now: messages, and the payload
+    /// bytes they arrived with. For tests and diagnostics, like
+    /// `MessageFramer.bufferedCount`.
+    var backlogSize: (messages: Int, bytes: Int) { (backlog.count, backlogBytes) }
+
     private func waitFor(matching commands: Set<String>, timeout: Duration) async throws -> PeerMessage {
-        if let index = backlog.firstIndex(where: { commands.contains($0.command) }) {
-            return backlog.remove(at: index)
+        if let index = backlog.firstIndex(where: { commands.contains($0.message.command) }) {
+            return takeFromBacklog(at: index).message
         }
         let id = UUID()
         return try await withCheckedThrowingContinuation { continuation in
