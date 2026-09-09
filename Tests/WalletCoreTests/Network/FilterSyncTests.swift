@@ -482,6 +482,12 @@ struct FilterSyncTests {
         #expect(whole.progress.crossCheck?.answerDigest
             == chunked.progress.crossCheck?.answerDigest,
             "the same chain, so the same adopted checkpoint answer")
+        // The halves of the receipt that do not carry a port: the same classes
+        // agreed, and as many of them.
+        #expect(whole.progress.crossCheck?.sourceClasses
+            == chunked.progress.crossCheck?.sourceClasses)
+        #expect(whole.progress.crossCheck?.agreed.count
+            == chunked.progress.crossCheck?.agreed.count)
 
         // One request for the whole batch, against one per chunk: 1 ... 2,
         // 3 ... 4, 5 ... 6. The stop hashes say the ranges are real.
@@ -701,6 +707,8 @@ struct FilterSyncTests {
         #expect(saved.nextScanHeight == expected.progress.nextScanHeight)
         #expect(saved.filterHeaders == expected.progress.filterHeaders)
         #expect(saved.crossCheck?.answerDigest == expected.progress.crossCheck?.answerDigest)
+        #expect(saved.crossCheck?.sourceClasses == expected.progress.crossCheck?.sourceClasses)
+        #expect(saved.crossCheck?.agreed.count == expected.progress.crossCheck?.agreed.count)
 
         // And the flag is cleared on the way out, so the next scan runs.
         try await sync.sync(watchScripts: [synthetic.watchScript]) { _ in }
