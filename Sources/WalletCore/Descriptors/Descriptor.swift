@@ -22,15 +22,7 @@ public enum DescriptorError: Error, Equatable {
     case treeTooDeep
 }
 
-extension HDKey.Network: Equatable {
-    /// BIP173 human-readable part for this network.
-    public var hrp: String {
-        switch self {
-        case .mainnet: "bc"
-        case .testnet: "tb"
-        }
-    }
-}
+extension HDKey.Network: Equatable {}
 
 /// Output descriptor parse/serialize/derive engine (BIP380 general operation and
 /// checksum, BIP386 `tr()`, BIP387 `multi_a`/`sortedmulti_a` leaves, BIP389
@@ -178,12 +170,14 @@ public struct Descriptor: Sendable, Equatable {
 
     /// Derives the output(s) at `index` (ignored when the descriptor has no
     /// wildcard). Returns one output per BIP389 multipath choice — receive and
-    /// change for the common `<0;1>/*` — in multipath order.
-    public func derived(index: UInt32, network: HDKey.Network = .mainnet) throws -> [DerivedOutput] {
+    /// change for the common `<0;1>/*` — in multipath order. The address
+    /// prefix is the Bitcoin network's, not the key network's: regtest keys
+    /// are testnet keys, but a regtest address is `bcrt1…`, never `tb1…`.
+    public func derived(index: UInt32, network: BitcoinNetwork = .mainnet) throws -> [DerivedOutput] {
         try (0 ..< multipathCount()).map { choice in
             let scriptPubKey = try resolve(expression, index: index, choice: choice, topLevel: true)
             let program = scriptPubKey.suffix(32)
-            let address = try SegwitAddress.encode(hrp: network.hrp, version: 1, program: program)
+            let address = try SegwitAddress.encode(hrp: AddressDecoder.hrp(for: network), version: 1, program: program)
             return DerivedOutput(scriptPubKey: scriptPubKey, address: address)
         }
     }

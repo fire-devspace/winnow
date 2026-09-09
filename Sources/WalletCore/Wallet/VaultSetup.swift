@@ -145,7 +145,9 @@ public struct VaultCosignerKey: Sendable, Equatable {
         }
 
         do {
-            _ = try descriptor.derived(index: 0, network: keyNetwork)
+            // Derivability is the check; the address, and so the network, is
+            // not read.
+            _ = try descriptor.derived(index: 0)
         } catch {
             throw VaultCosignerKeyError.malformed
         }
