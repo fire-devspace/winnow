@@ -660,6 +660,53 @@ struct CoinSelectionTests {
                 "nor are the feerates this wallet has itself paid")
     }
 
+    /// The cap clamps an honest floor exactly as readily as a lie, and
+    /// `resolve` returns a number that cannot say which happened. A mempool
+    /// really settled at 200 sat/vB prices at 120, `broadcast` returns a
+    /// txid, no peer relays it, and `Wallet.commit` has already marked the
+    /// inputs spent: the coins are held behind a payment going nowhere. So
+    /// resolution reports the floor it priced the send under, and only that
+    /// case: a floor the cap trimmed on the way through that the wallet's own
+    /// numbers already pay is a send that relays, and reporting it would be
+    /// an alarm about nothing.
+    @Test("resolution names the peer floor the cap priced a send under")
+    func resolutionReportsAClampedFloor() {
+        let cap = FeePolicy.maximumPeerFloorSatPerVByte
+        // An honest floor above the cap: priced at the cap, and the number
+        // the pool said it takes to relay comes back beside it.
+        let clamped = FeePolicy.resolution(priority: .medium, floorSatPerVByte: 200)
+        #expect(clamped.rate == cap)
+        #expect(clamped.clampedFloor == 200)
+
+        // Under the cap nothing is clamped: the floor applies in full.
+        let applied = FeePolicy.resolution(priority: .medium, floorSatPerVByte: 50)
+        #expect(applied.rate == 50)
+        #expect(applied.clampedFloor == nil)
+        #expect(FeePolicy.resolution(priority: .medium, floorSatPerVByte: cap).clampedFloor == nil)
+
+        // No floor to speak of, and a floor outside the band, which `usable`
+        // discards rather than caps, so it clamps nothing to report.
+        #expect(FeePolicy.resolution(priority: .medium).clampedFloor == nil)
+        #expect(FeePolicy.resolution(priority: .medium, floorSatPerVByte: nil).clampedFloor == nil)
+        #expect(FeePolicy.resolution(priority: .medium, floorSatPerVByte: 20_000).rate == 5)
+        #expect(FeePolicy.resolution(priority: .medium, floorSatPerVByte: 20_000).clampedFloor == nil)
+
+        // The wallet's own number already pays the floor, so that send
+        // relays and there is nothing to warn about.
+        let covered = FeePolicy.resolution(override: 500, floorSatPerVByte: 200)
+        #expect(covered.rate == 500)
+        #expect(covered.clampedFloor == nil)
+        // One under it, and there is.
+        #expect(FeePolicy.resolution(override: 100, floorSatPerVByte: 200).clampedFloor == 200)
+
+        // Same rate as `resolve` at every one of them: this reports, it does
+        // not re-price.
+        for floor in [nil, 3.5, 50, 200, 10_000, 20_000] as [Double?] {
+            #expect(FeePolicy.resolution(priority: .medium, floorSatPerVByte: floor).rate
+                == FeePolicy.resolve(priority: .medium, floorSatPerVByte: floor))
+        }
+    }
+
     /// One peer does not set the pool's floor. The `feefilter` each peer sends
     /// is a claim about its own mempool that nothing validates, so the floor
     /// is the median of what the pool says rather than the strictest voice in

@@ -44,10 +44,26 @@ over seats with silence as 0, the floor moves only when a strict majority of the
 seats name a number at or above it, it is always a number some peer actually
 sent, and the cap bounds what even a unanimous pool can ask for. Neither touches
 the wallet's own numbers — an override or an observed median above the cap is
-paid in full; only the lift from a stranger's advertised minimum is bounded. The
-honest cost is a peer stricter than its neighbours: a send priced at the
-majority's floor may not relay through that one peer, and `TxBroadcaster`
-already reports that per peer as `feeFloorExceeded`.
+paid in full; only the lift from a stranger's advertised minimum is bounded.
+
+What the cap cannot do is tell an honest floor above it from a lie, and both
+costs are real. A mempool that has genuinely settled above 120 sat/vB and a
+majority of seats agreeing to say so arrive as the same unvalidated number, and
+both are priced at the cap, which is a send that does not relay: `broadcast`
+returns a txid, no peer takes the bytes, and `Wallet.commit` has already marked
+the inputs spent. The cap stays, because refusing the send instead would let one
+lying majority stop this wallet spending at all, and `FeePolicy.resolution`
+returns the clamped floor beside the rate so the caller, which is the side that
+knows whether the money can wait, can refuse to build, or show both numbers and
+let the person spending pay the floor with an override, which is not capped.
+
+The other honest cost is a peer stricter than its neighbours: a send priced at
+the majority's floor may not relay through that one peer. Nothing names it.
+`TxBroadcaster` skips a peer whose filter refuses the rate rather than
+announcing into it, so what shows the loss is the peer count in `.announced`
+coming back short of the seats; `.feeFloorExceeded` is the pool-wide signal,
+raised when the lowest filter among the connected peers is above the rate and no
+peer is left to relay at all.
 
 [AppModel](../../WinnowApp/AppModel.swift) coordinates these rules with
 WalletCore networking, [key storage](../Keys/README.md), and

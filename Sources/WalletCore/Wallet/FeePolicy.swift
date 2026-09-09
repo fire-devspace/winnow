@@ -15,7 +15,9 @@ import Foundation
 ///
 /// …with the result always clamped from below by the peers' BIP133 `feefilter`
 /// floor (the minimum a transaction must pay to relay at all), and that floor's
-/// influence capped at `maximumPeerFloorSatPerVByte`.
+/// influence capped at `maximumPeerFloorSatPerVByte`. `resolve` returns the
+/// rate on its own; `resolution` returns the same rate together with the floor
+/// that cap held it under, when it held it under one.
 ///
 /// Every supplied number is used only when it is finite and inside
 /// `(0, maximumSatPerVByte]`; anything else is discarded and resolution falls
@@ -54,9 +56,9 @@ public enum FeePolicy {
 
     /// The most a peer-supplied `feefilter` floor may lift the resolved rate
     /// (sat/vB). Ten times the high preset — the most expensive number this
-    /// wallet will choose on its own — so an honest floor in any market this
-    /// client can price for still applies in full, and a floor beyond it
-    /// stops being a number strangers get to choose.
+    /// wallet will choose on its own — so the everyday market clears it with
+    /// room to spare, and a floor beyond it stops being a number strangers
+    /// get to choose.
     ///
     /// A cap rather than a rejection: a floor exists so a transaction relays
     /// at all, and discarding an implausible one outright would price a send
@@ -64,14 +66,69 @@ public enum FeePolicy {
     /// is this number; uncapped, it was `maximumSatPerVByte`, three orders of
     /// magnitude higher and paid to miners.
     ///
+    /// What the cap cannot do is tell an honest floor above it from a lie. A
+    /// `feefilter` is unvalidated, so a mempool that has really settled at 200
+    /// sat/vB and a majority of seats agreeing to say 200 arrive here as the
+    /// same number, and both are priced at 120. Underpaying a real floor is
+    /// not a cheaper send, it is a send that does not happen: `broadcast`
+    /// returns a txid, no peer takes the bytes, and `Wallet.commit` has
+    /// already marked the inputs spent, so the coins sit behind a payment
+    /// going nowhere until the mempool's floor decays or the transaction is
+    /// replaced. Nothing above the cap is ever paid on a stranger's say-so,
+    /// but a caller has to be told, and `resolution` is what tells it: the
+    /// clamped floor comes back beside the rate. An override is not capped,
+    /// so a caller shown both numbers can still pay the floor in full.
+    ///
     /// This is a fork-local policy. Upstream clamps by the peers' strictest
     /// filter with no ceiling; see `Wallet/README.md`.
     public static let maximumPeerFloorSatPerVByte: Double = 10 * Priority.high.satPerVByte
 
+    /// A resolved feerate, and the peer floor it came out under when
+    /// `maximumPeerFloorSatPerVByte` is what held it there.
+    ///
+    /// `clampedFloor` is the floor the pool reported, in sat/vB, and it is
+    /// set only when `rate` is below it: the pool named a number past the
+    /// cap, and nothing else in the resolution reaches that far. A floor the
+    /// cap trimmed but the wallet's own numbers already cover reads as nil,
+    /// because that send pays what the pool asked and relays.
+    public struct Resolution: Equatable, Sendable {
+        /// The feerate to price the send at (sat/vB).
+        public let rate: Double
+        /// The peer floor `rate` sits below (sat/vB), or nil when it does not.
+        public let clampedFloor: Double?
+    }
+
     /// Resolves the feerate to use (sat/vB). See the type doc for the order.
+    /// `resolution` answers the same question and also reports a floor the
+    /// cap priced the send under, which a bare `Double` cannot carry.
     public static func resolve(priority: Priority = .medium, override: Double? = nil,
                                estimated: Double? = nil, observed: [Double] = [],
                                floorSatPerVByte: Double? = nil) -> Double {
+        resolution(priority: priority, override: override, estimated: estimated,
+                   observed: observed, floorSatPerVByte: floorSatPerVByte).rate
+    }
+
+    /// Resolves the feerate (sat/vB) and says when the cap on the peer floor
+    /// is what set it. See the type doc for the order.
+    ///
+    /// A caller handed a `clampedFloor` is being told the pool has said it
+    /// will not relay at `rate`. It should refuse to build rather than commit
+    /// coins to a transaction the network has already refused, because
+    /// `Wallet` marks the inputs spent when it commits and forward-only
+    /// scanning cannot take that back for a transaction that never left the
+    /// device. Or it should put the two numbers in front of the person
+    /// spending, since an override is not capped and someone who believes
+    /// the floor can pay it.
+    ///
+    /// The library clamps and reports rather than refusing here. A
+    /// `feefilter` is a claim a stranger makes about its own mempool, and a
+    /// refusal at this layer would give a majority of seats willing to lie a
+    /// veto over every send this wallet makes. Which of the two costs is
+    /// worse depends on whether the money can wait, and the caller is the
+    /// one that knows.
+    public static func resolution(priority: Priority = .medium, override: Double? = nil,
+                                  estimated: Double? = nil, observed: [Double] = [],
+                                  floorSatPerVByte: Double? = nil) -> Resolution {
         let samples = observed.compactMap { usable($0) }
         let base: Double
         if let override = usable(override) {
@@ -84,12 +141,18 @@ public enum FeePolicy {
         } else {
             base = median(samples) ?? priority.satPerVByte
         }
-        guard let floorSatPerVByte = usable(floorSatPerVByte) else { return base }
+        // A floor outside the band is discarded rather than capped (`usable`),
+        // so it clamps nothing and there is nothing to report about it.
+        guard let floorSatPerVByte = usable(floorSatPerVByte) else {
+            return Resolution(rate: base, clampedFloor: nil)
+        }
         // The cap bounds what the floor can *add*, not what the caller may
         // pay: a user override or an observed median above it is untouched,
         // because those are this wallet's own numbers. Only the lift from a
         // stranger's advertised minimum is bounded.
-        return max(base, min(floorSatPerVByte, maximumPeerFloorSatPerVByte))
+        let rate = max(base, min(floorSatPerVByte, maximumPeerFloorSatPerVByte))
+        return Resolution(rate: rate,
+                          clampedFloor: rate < floorSatPerVByte ? floorSatPerVByte : nil)
     }
 
     /// A feerate counts only inside `(0, maximumSatPerVByte]`. A missing, NaN,
@@ -162,10 +225,16 @@ extension PeerPool {
     /// The cost is the honest case where one peer is stricter than the others:
     /// a transaction at the majority's floor may not relay through that peer.
     /// It still relays through the rest of the pool, which is what
-    /// broadcasting needs, and `TxBroadcaster` already reports
-    /// `feeFloorExceeded` per peer. A pool that has not yet heard from most
-    /// of its seats prices a send as if no floor were known, which is what it
-    /// did before any filter arrived. In a relay-only session the seats are
+    /// broadcasting needs. Nothing names that peer: `TxBroadcaster` skips a
+    /// peer whose filter refuses the rate rather than announcing into it, and
+    /// says nothing about the one it skipped, so what shows the loss is the
+    /// count in `.announced(txid:peerCount:)` coming back short of the seats.
+    /// `.feeFloorExceeded` is the pool-wide signal and not the per-peer one:
+    /// it fires when the *lowest* filter among the connected peers is above
+    /// the rate, which is the case where no peer is left to relay at all. A
+    /// pool that has not yet heard from most of its seats prices a send as if
+    /// no floor were known, which is what it did before any filter arrived.
+    /// In a relay-only session the seats are
     /// still `peerCount`, not the one seat the session kept, so the rule
     /// yields no floor there by design: a lone peer never sets the floor,
     /// whatever it announces.
