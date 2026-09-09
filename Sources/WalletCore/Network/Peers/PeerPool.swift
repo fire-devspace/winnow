@@ -572,7 +572,8 @@ public actor PeerPool {
         var transportRetries = 0
         var lastError: (any Error)?
 
-        while attempts < maxAttempts, transportRetries < maxTransportRetries {
+        while Self.budgetRemains(attempts: attempts, of: maxAttempts,
+                                 transportRetries: transportRetries, of: maxTransportRetries) {
             guard let peer = peers.first else {
                 try throwIfPoolOnlyCooling(attempts: attempts,
                                            transportRetries: transportRetries,
@@ -584,40 +585,18 @@ public actor PeerPool {
             // exhaustion while healthy endpoints sit in the pool cooling off,
             // and the report the user gets moves up a layer without the cause
             // changing (#82).
-            var burnedAPeer = true
-            do {
-                return try await settledSync(chain, primary: peer, timeoutPerPeer: timeoutPerPeer)
-            } catch let error as HeaderChainError {
-                switch error {
-                case .storageCorrupt, .storageUnavailable:
-                    throw error
-                default:
-                    break
-                }
-                // The peer sent headers that do not link, or claim work they
-                // do not have. That is a data fault, and permanent.
+            switch try await attemptSync(chain, primary: peer, timeoutPerPeer: timeoutPerPeer) {
+            case let .synced(outcome):
+                return outcome
+            case let .burned(error):
                 lastError = error
                 await misbehaving(peer, reason: error.localizedDescription)
-            } catch is CancellationError {
-                // App lifecycle cancellation is local control flow, not peer
-                // misconduct. Keep the connection eligible for the next
-                // foreground sync instead of poisoning the session pool.
-                throw CancellationError()
-            } catch let error as PeerError where error.isTransport {
-                // Slow or dropped, not dishonest. Cool the endpoint off and
-                // try the next peer; this attempt does not count as one of the
-                // peers the budget allows us to burn.
+                attempts += 1
+            case let .transient(error):
                 lastError = error
-                burnedAPeer = false
                 transportRetries += 1
                 await transportFailure(peer, reason: error.localizedDescription)
-            } catch {
-                // Anything else — framing violations, unexpected messages —
-                // is the peer's fault and stays permanent.
-                lastError = error
-                await misbehaving(peer, reason: error.localizedDescription)
             }
-            if burnedAPeer { attempts += 1 }
         }
 
         throw loopExitError(attempts: attempts, transportRetries: transportRetries,
@@ -844,6 +823,67 @@ public actor PeerPool {
     /// never cancelled (PeerConnection's checked continuations do not respond
     /// to cancellation); they resolve on their own timeout and a late success
     /// with no slot left is disconnected again.
+    /// Resolves the DNS seeds once, and only when the local candidates have
+    /// run out: a working manual peer must not wait on DoH.
+    private func appendSeedsIfExhausted(_ queue: inout [PeerCandidate], next: Int,
+                                        resolved: inout Bool,
+                                        excluding excluded: Set<PeerEndpoint>) async {
+        guard next >= queue.count, !resolved else { return }
+        resolved = true
+        var seen = excluded
+        seen.formUnion(queue.map(\.endpoint))
+        queue.append(contentsOf: await seedCandidates(excluding: seen))
+    }
+
+    /// Whether a header sync may try another peer: `maxAttempts` is a budget
+    /// of peers burned for a data fault, `maxTransportRetries` a separate one
+    /// for peers that were merely slow, and the run stops when either is spent.
+    private static func budgetRemains(attempts: Int, of maxAttempts: Int,
+                                      transportRetries: Int, of maxTransportRetries: Int) -> Bool {
+        attempts < maxAttempts && transportRetries < maxTransportRetries
+    }
+
+    /// What one header sync attempt against one peer came to.
+    private enum SyncAttempt {
+        case synced(HeaderChain.SyncOutcome)
+        /// The peer's fault, and permanent: headers that do not link, claimed
+        /// work it does not have, a framing violation, an unexpected message.
+        case burned(any Error)
+        /// Slow or dropped, not dishonest: the endpoint is cooled off and the
+        /// attempt does not count against the peers the budget may burn.
+        case transient(any Error)
+    }
+
+    /// One attempt, classified. Storage faults are this device's and are
+    /// rethrown as they are; a cancellation is local control flow, kept out
+    /// of the classification so the connection stays eligible for the next
+    /// foreground sync instead of poisoning the session pool.
+    private func attemptSync(_ chain: HeaderChain, primary peer: PeerConnection,
+                             timeoutPerPeer: Duration) async throws -> SyncAttempt {
+        do {
+            return .synced(try await settledSync(chain, primary: peer, timeoutPerPeer: timeoutPerPeer))
+        } catch let error as HeaderChainError {
+            try Self.rethrowIfOurs(error)
+            return .burned(error)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as PeerError where error.isTransport {
+            return .transient(error)
+        } catch {
+            return .burned(error)
+        }
+    }
+
+    /// A header-chain error that is this device's, not the peer's: corrupt or
+    /// unavailable storage is rethrown as is, because burning a peer for it
+    /// would blame the wrong side and keep going over the same broken store.
+    private static func rethrowIfOurs(_ error: HeaderChainError) throws {
+        switch error {
+        case .storageCorrupt, .storageUnavailable: throw error
+        default: break
+        }
+    }
+
     private func replenish() async {
         // `mode` is checked here rather than at each caller: every path back
         // into dialling — the monitor, a peer dropped for misconduct or a
@@ -868,12 +908,8 @@ public actor PeerPool {
         await withTaskGroup(of: (PeerEndpoint, PeerConnection?).self) { group in
             var running = 0
             while needed > 0, started {
-                if next >= queue.count && !resolvedSeeds {
-                    resolvedSeeds = true
-                    var seen = excluded
-                    seen.formUnion(queue.map(\.endpoint))
-                    queue.append(contentsOf: await seedCandidates(excluding: seen))
-                }
+                await appendSeedsIfExhausted(&queue, next: next, resolved: &resolvedSeeds,
+                                             excluding: excluded)
                 launchEligibleDials(from: queue, next: &next, running: &running,
                                     into: &group)
                 guard running > 0, let (endpoint, dialed) = await group.next() else { break }

@@ -926,18 +926,28 @@ public actor TxBroadcaster {
             if !hasPendingRelay { closeRelayOnlySession() }
             return
         }
+        // `weak` on purpose, and re-bound every iteration: a broadcaster that
+        // was dropped without `shutdown()` must let its loop end rather than
+        // be kept alive by it.
         rebroadcastTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self else { return }
-                guard let next = await self.pending.values.map(\.nextAttemptAt).min() else { return }
-                let wait = next.timeIntervalSince(self.now())
-                if wait > 0 {
-                    try? await Task.sleep(for: .seconds(wait))
-                    guard !Task.isCancelled else { return }
-                }
-                guard await self.fireDueAttempts() else { return }
+                guard let self, await self.rebroadcastStep() else { return }
             }
         }
+    }
+
+    /// One turn of the backoff loop: wait for the earliest due attempt, then
+    /// fire whatever is due. False ends the loop, which is nothing left
+    /// pending, a cancellation that landed during the wait, or an attempt
+    /// that halted the loop itself.
+    private func rebroadcastStep() async -> Bool {
+        guard let next = pending.values.map(\.nextAttemptAt).min() else { return false }
+        let wait = next.timeIntervalSince(now())
+        if wait > 0 {
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return false }
+        }
+        return await fireDueAttempts()
     }
 
     /// Announces every tx whose backoff attempt is due, then advances its

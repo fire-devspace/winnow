@@ -584,23 +584,31 @@ public actor PeerConnection {
         }
     }
 
+    /// One read off the wire: bytes, nil at a clean close, or the transport's
+    /// error. Its own function so the receive loop stays about framing and
+    /// dispatch rather than about the callback's four outcomes.
+    private static func receiveChunk(from connection: NWConnection) async throws -> Data? {
+        try await withCheckedThrowingContinuation { continuation in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 22) { data, _, isComplete, error in
+                if let error {
+                    continuation.resume(throwing: PeerError.disconnected(error.localizedDescription))
+                } else if let data, !data.isEmpty {
+                    continuation.resume(returning: data)
+                } else if isComplete {
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(throwing: PeerError.disconnected("empty read"))
+                }
+            }
+        }
+    }
+
     private func receiveLoop(_ connection: NWConnection) async {
         while !Task.isCancelled {
             do {
-                let chunk: Data? = try await withCheckedThrowingContinuation { continuation in
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 22) { data, _, isComplete, error in
-                        if let error {
-                            continuation.resume(throwing: PeerError.disconnected(error.localizedDescription))
-                        } else if let data, !data.isEmpty {
-                            continuation.resume(returning: data)
-                        } else if isComplete {
-                            continuation.resume(returning: nil)
-                        } else {
-                            continuation.resume(throwing: PeerError.disconnected("empty read"))
-                        }
-                    }
+                guard let chunk = try await Self.receiveChunk(from: connection) else {
+                    throw PeerError.disconnected("connection closed")
                 }
-                guard let chunk else { throw PeerError.disconnected("connection closed") }
                 framer.append(chunk)
                 while let (command, payload) = try framer.nextMessage() {
                     await handleInbound(command: command, payload: payload)

@@ -475,16 +475,7 @@ public actor FilterSync {
         // seats if the pool narrows underneath it. See the note on
         // `PeerPool.enterRelayOnly(seats:)` — the caller cancels and awaits a
         // running scan before narrowing.
-        guard await pool.mode == .full else { throw FilterSyncError.relayOnly }
-        var peers = await pool.connectedPeers()
-        guard !peers.isEmpty else {
-            // Same distinction as `PeerPool.syncHeaders`: since transport
-            // failures cool peers off rather than banning them, an empty pool
-            // is routinely a transient state rather than a peerless one, and
-            // saying "no peers are available" would be untrue (#82).
-            let cooling = await pool.coolingEndpoints.count
-            throw cooling > 0 ? FilterSyncError.peersCoolingDown(cooling) : FilterSyncError.noPeers
-        }
+        var peers = try await peersForReading()
 
         // 1. Headers to tip. A stale or broken peer is evicted and the pool
         // retries another peer without discarding already-persisted progress.
@@ -494,14 +485,7 @@ public actor FilterSync {
         // wrong. Roll back to the lowest fork the sync saw before reading a
         // single filter: the frontier below is the thing that would otherwise
         // carry the orphaned branch forward.
-        if let forkHeight = headerOutcome.minForkHeight {
-            // The caller goes first because it owns the crash marker: nothing
-            // may change in any store until the target height is recorded, or
-            // a crash leaves stores disagreeing with no way to know a rollback
-            // was ever in progress.
-            try await onReorg?(forkHeight)
-            try rollBack(to: forkHeight)
-        }
+        try await rollBackIfForked(headerOutcome, onReorg: onReorg)
         peers = await pool.connectedPeers()
         guard !peers.isEmpty else { throw FilterSyncError.noPeers }
         let tip = await chain.height
@@ -517,48 +501,8 @@ public actor FilterSync {
         // 2. cfcheckpt cross-peer comparison: collect answers about our tip,
         // adopt the majority, and only peers whose answer matched may go on
         // to serve filters.
-        let checkpoints = try await collectedCheckpoints(from: peers, tipHash: tipHash)
-        let reference = try await majorityReference(of: checkpoints)
-        // The reference must speak for every boundary our tip has. Core's
-        // ProcessGetCFCheckPt returns exactly `stopHeight / 1000` headers, so
-        // a shorter list is not a terse peer — it is a list that says nothing
-        // about the boundaries it omits, and every comparison below reads the
-        // reference by index and compares only the heights it mentions. An
-        // empty list therefore retired all three of them at once (the
-        // pre-loop check below, the per-batch check inside the loop, and the
-        // final guard, which short-circuits on a nil `last`) and the sync
-        // reported success on a filter-commitment chain no checkpoint ever
-        // covered. Filters crafted not to match make real payments invisible
-        // while the frontier advances past them for good, so the failure is
-        // silent and durable.
-        //
-        // A sub-1000-block chain announcing nothing is honest, and this
-        // permits it: the expectation is the count our own tip implies, which
-        // is zero there. Bounding the length is also what makes the per-batch
-        // comparison complete rather than merely early — it fails closed here,
-        // before any batch has committed anything.
-        let expectedCheckpoints = Int(tip / Self.checkpointInterval)
-        guard reference.filterHeaders.count == expectedCheckpoints else {
-            throw FilterSyncError.checkpointMismatch(
-                "cfcheckpt announced \(reference.filterHeaders.count) checkpoints for tip \(tip), expected \(expectedCheckpoints)")
-        }
-        // Who agreed, and through which acquisition channels. Built before
-        // the policy is consulted so a refusal can say what it saw, and the
-        // same set is what the approved list is derived from: the peers the
-        // receipt names and the peers allowed to serve filters are the same
-        // peers by construction rather than by two filters that could drift.
-        let agreeing = checkpoints.filter { $0.message == reference }
-        let receipt = Self.receipt(tipHeight: tip, answer: reference, agreed: agreeing)
-        // Ahead of every effect this run could have, including the first
-        // batch's `onMatch`. A policy consulted after the scan has started has
-        // already advanced the state it exists to hold back, and a caller that
-        // shows "cannot cross-check yet" has to be able to mean it.
-        try requireAdmissible(receipt)
-        // The list was captured before any eviction, and `misbehaving`
-        // triggers `replenish`, so a plain re-read could hand back brand-new
-        // peers that never went through this comparison. Intersect, never
-        // refresh — see `approved(peers:)`.
-        let approvedEndpoints = await Self.endpoints(of: agreeing.map(\.peer))
+        let (reference, approvedEndpoints, receipt) = try await anchoredReference(
+            peers: peers, tip: tip, tipHash: tipHash)
         peers = try await approved(peers: approvedEndpoints)
         try checkPinnedBoundaries(against: reference, tip: tip)
 
@@ -632,6 +576,76 @@ public actor FilterSync {
             throw FilterSyncError.checkpointMismatch("checkpoint filter header at \(lastCheckpoint) disagrees with cfcheckpt")
         }
         return receipt
+    }
+
+    /// The peers a run may read the chain over, refused in the read side's own
+    /// terms. A relay-only pool is holding seats so a signed payment can finish
+    /// going out, not so the chain can be read over them; the header sync
+    /// would refuse anyway, and refusing first spends no cfcheckpt round trip.
+    /// Entry only: a run already past this keeps reading over the seats if the
+    /// pool narrows underneath it (see `PeerPool.enterRelayOnly(seats:)`; the
+    /// caller cancels and awaits a running scan before narrowing). An empty
+    /// pool is routinely a transient state rather than a peerless one, since
+    /// transport failures cool peers off rather than banning them, so "no
+    /// peers" is said only when nothing is cooling (#82).
+    func peersForReading() async throws -> [PeerConnection] {
+        guard await pool.mode == .full else { throw FilterSyncError.relayOnly }
+        let peers = await pool.connectedPeers()
+        guard !peers.isEmpty else {
+            let cooling = await pool.coolingEndpoints.count
+            throw cooling > 0 ? FilterSyncError.peersCoolingDown(cooling) : FilterSyncError.noPeers
+        }
+        return peers
+    }
+
+    /// A branch was replaced, so everything derived from the old one is wrong:
+    /// roll back to the lowest fork the header sync saw before reading a
+    /// single filter. The caller goes first because it owns the crash marker;
+    /// nothing may change in any store until the target height is recorded,
+    /// or a crash leaves stores disagreeing with no way to know a rollback was
+    /// ever in progress.
+    private func rollBackIfForked(_ outcome: HeaderChain.SyncOutcome,
+                                  onReorg: (@Sendable (UInt32) async throws -> Void)?) async throws {
+        guard let forkHeight = outcome.minForkHeight else { return }
+        try await onReorg?(forkHeight)
+        try rollBack(to: forkHeight)
+    }
+
+    /// The cfcheckpt anchoring every run is judged against, shared by the
+    /// forward sync and the range scan so the two cannot drift: collect the
+    /// peers' answers about the tip, adopt the majority, require it to speak
+    /// for every boundary the tip has, build the receipt naming who agreed,
+    /// admit it under the cross-check policy, and hand back the endpoints
+    /// allowed to serve filters.
+    ///
+    /// Core's ProcessGetCFCheckPt returns exactly `stopHeight / 1000` headers,
+    /// so a shorter list is not a terse peer: it is a list that says nothing
+    /// about the boundaries it omits, and every comparison below reads the
+    /// reference by index and compares only the heights it mentions. An empty
+    /// list once retired every boundary comparison at once and let a sync
+    /// report success on a filter-commitment chain no checkpoint ever covered.
+    /// A sub-1000-block chain announcing nothing is honest and permitted: the
+    /// expectation is the count our own tip implies, which is zero there.
+    ///
+    /// The receipt is built before the policy is consulted so a refusal can
+    /// say what it saw, and the approved set is derived from the same agreeing
+    /// peers by construction rather than by two filters that could drift. The
+    /// policy runs ahead of every effect a run could have, including its first
+    /// `onMatch`.
+    func anchoredReference(peers: [PeerConnection], tip: UInt32, tipHash: Data) async throws
+        -> (reference: CFCheckptMessage, approved: Set<String>, receipt: CrossCheckReceipt) {
+        let checkpoints = try await collectedCheckpoints(from: peers, tipHash: tipHash)
+        let reference = try await majorityReference(of: checkpoints)
+        let expected = Int(tip / Self.checkpointInterval)
+        guard reference.filterHeaders.count == expected else {
+            throw FilterSyncError.checkpointMismatch(
+                "cfcheckpt announced \(reference.filterHeaders.count) checkpoints for tip \(tip), expected \(expected)")
+        }
+        let agreeing = checkpoints.filter { $0.message == reference }
+        let receipt = Self.receipt(tipHeight: tip, answer: reference, agreed: agreeing)
+        try requireAdmissible(receipt)
+        let approved = await Self.endpoints(of: agreeing.map(\.peer))
+        return (reference, approved, receipt)
     }
 
     /// Refuses the run when the agreement does not meet the policy, naming

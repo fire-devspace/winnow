@@ -285,6 +285,12 @@ public struct ImportBundle: Codable, Equatable, Sendable {
         // is held to what one standard transaction can hold, and all of them
         // together to the bundle's entry limit: the two answer different
         // questions, and either alone leaves the other open.
+        try checkOutputBounds(of: bundle)
+        return bundle
+    }
+
+    /// The two output bounds, applied after the whole bundle has decoded.
+    private static func checkOutputBounds(of bundle: ImportBundle) throws {
         var outputEntries = 0
         for transaction in bundle.transactions {
             guard let outputs = transaction.outputs else { continue }
@@ -299,7 +305,6 @@ public struct ImportBundle: Codable, Equatable, Sendable {
             throw WalletError.invalidBundle(
                 "bundle declares \(outputEntries) transaction outputs, above the \(maximumEntries) limit")
         }
-        return bundle
     }
 
     /// Pretty-printed, sorted-key JSON ready for a share sheet. Nil optionals

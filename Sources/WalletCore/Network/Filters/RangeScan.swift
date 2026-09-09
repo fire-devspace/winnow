@@ -610,6 +610,8 @@ extension FilterSync {
         try Self.checkShape(from: from, to: to, watchScripts: watchScripts, limits: limits)
         // Same refusal as `sync`, for the same reason: a pool holding seats so
         // a signed payment can go out is not a pool to read a restore over.
+        // Asked here as well as inside `rangeReference` so the refusal lands
+        // before the record is read off disk.
         guard await pool.mode == .full else { throw FilterSyncError.relayOnly }
         let tip = await chain.height
         try Self.checkChain(from: from, to: to, start: await chain.startHeight, tip: tip)
@@ -707,31 +709,17 @@ extension FilterSync {
     /// the same collection, the same majority rule and the same
     /// announced-count guard the forward scan runs, against the chain as it
     /// stands rather than one just synced.
+    /// The cfcheckpt reference for a range scan, the peers that gave it, and
+    /// the receipt naming them: `anchoredReference`, exactly as the forward
+    /// scan runs it, against the chain as it stands rather than one just
+    /// synced. The coins a restore finds are spend-relevant state, so the
+    /// cross-check policy is applied here by the same code, before any
+    /// filter is fetched.
     private func rangeReference(tip: UInt32) async throws
         -> (reference: CFCheckptMessage, approved: Set<String>, receipt: FilterSync.CrossCheckReceipt)
     {
-        let peers = await pool.connectedPeers()
-        guard !peers.isEmpty else {
-            let cooling = await pool.coolingEndpoints.count
-            throw cooling > 0 ? FilterSyncError.peersCoolingDown(cooling) : FilterSyncError.noPeers
-        }
-        let checkpoints = try await collectedCheckpoints(from: peers, tipHash: await chain.tipHash)
-        let reference = try await majorityReference(of: checkpoints)
-        let expected = Int(tip / Self.checkpointInterval)
-        guard reference.filterHeaders.count == expected else {
-            throw FilterSyncError.checkpointMismatch(
-                "cfcheckpt announced \(reference.filterHeaders.count) checkpoints for tip \(tip), expected \(expected)")
-        }
-        // Who agreed and through which channels, judged by the same policy
-        // the forward path applies, and for the same reason: the coins a
-        // restore finds are spend-relevant state, and a caller that refuses to
-        // advance on one acquisition channel is refusing here too. Before any
-        // filter is fetched, so a refusal has changed nothing.
-        let agreeing = checkpoints.filter { $0.message == reference }
-        let receipt = Self.receipt(tipHeight: tip, answer: reference, agreed: agreeing)
-        try requireAdmissible(receipt)
-        let endpoints = await Self.endpoints(of: agreeing.map(\.peer))
-        return (reference, endpoints, receipt)
+        let peers = try await peersForReading()
+        return try await anchoredReference(peers: peers, tip: tip, tipHash: await chain.tipHash)
     }
 
     /// Everything about the request that can be judged before a peer is
