@@ -23,6 +23,31 @@ struct WalletTests {
         #expect(try Descriptor(text) == descriptor)
     }
 
+    @Test("advanceCursors raises both cursors, never lowers them, and the watch set follows")
+    func advanceCursors() async throws {
+        let keyStore = InMemoryKeyStore()
+        let wallet = try makeTestWallet(keyStore: keyStore)
+        #expect(await wallet.nextReceiveIndex == 0)
+        #expect(await wallet.nextChangeIndex == 0)
+        let before = Set(try await wallet.watchScripts())
+
+        try await wallet.advanceCursors(nextReceiveIndex: 5, nextChangeIndex: 3)
+        #expect(await wallet.nextReceiveIndex == 5)
+        #expect(await wallet.nextChangeIndex == 3)
+        let after = Set(try await wallet.watchScripts())
+        #expect(after.isSuperset(of: before))
+        #expect(after.count == before.count + 5 + 3, "five more receive scripts and three more change scripts are watched")
+
+        // Lower or equal values change nothing.
+        try await wallet.advanceCursors(nextReceiveIndex: 2, nextChangeIndex: 3)
+        #expect(await wallet.nextReceiveIndex == 5)
+        #expect(await wallet.nextChangeIndex == 3)
+        // The next address handed out is the first past the cursor.
+        let issued = try await wallet.freshReceiveAddress()
+        #expect(issued == (try await wallet.address(chain: .receive, index: 5)))
+        #expect(await wallet.nextReceiveIndex == 6)
+    }
+
     @Test("failed wallet persistence rolls back the protected key")
     func createPersistenceRollback() throws {
         let keyStore = InMemoryKeyStore()

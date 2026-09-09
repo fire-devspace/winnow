@@ -982,6 +982,26 @@ public actor Wallet {
         try persist()
     }
 
+    /// [fire-only] Raises the derivation cursors to at least the given
+    /// indices, so every index below them is watched and never handed out
+    /// again. Never lowers either: a cursor only moves forward. An embedder
+    /// restoring from its own record of how far another device had gone
+    /// calls this before its first scan, so the watch set covers those
+    /// indices from the first pass rather than twenty at a time.
+    public func advanceCursors(nextReceiveIndex receive: UInt32? = nil,
+                               nextChangeIndex change: UInt32? = nil) throws {
+        var moved = false
+        if let receive, receive > state.nextReceiveIndex {
+            state.nextReceiveIndex = receive
+            moved = true
+        }
+        if let change, change > state.nextChangeIndex {
+            state.nextChangeIndex = change
+            moved = true
+        }
+        if moved { try persist() }
+    }
+
     /// How far back spent rows are kept.
     ///
     /// A tombstone exists so a reorg can restore the coin, so it only needs to
