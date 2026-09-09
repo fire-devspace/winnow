@@ -99,8 +99,20 @@ struct PeerPoolTests {
                             dialTimeout: .milliseconds(500))
         await pool.start()
         #expect(await pool.connectedPeers().count == 2)
+        let onlyKeptConnectionsRemain = await pollUntil(.seconds(5)) {
+            var count = 0
+            for node in nodes { count += await node.activeConnectionCount }
+            return count == 2
+        }
+        #expect(onlyKeptConnectionsRemain, "the nodes must observe unused connections closing")
         await pool.stop()
         #expect(await pool.connectedPeers().isEmpty)
+        let allConnectionsClosed = await pollUntil(.seconds(5)) {
+            var count = 0
+            for node in nodes { count += await node.activeConnectionCount }
+            return count == 0
+        }
+        #expect(allConnectionsClosed, "stopping the pool must close every connection it opened")
     }
 
     @Test("silent candidates connect together before any handshake is released")
@@ -185,8 +197,7 @@ struct PeerPoolTests {
         let best = makeSyntheticChain(length: 8, watchHeight: 3)
         let stale = weakerFork(of: best)
         let staleNode = LoopbackNode(params: best.params, chain: stale)
-        let goodNode = LoopbackNode(params: best.params, chain: best.blocks,
-                                    versionDelay: .milliseconds(200))
+        let goodNode = LoopbackNode(params: best.params, chain: best.blocks)
         try await staleNode.start()
         try await goodNode.start()
         defer {
@@ -198,7 +209,7 @@ struct PeerPoolTests {
         try await chain.connect(Array(best.blocks.dropFirst().map(\.header)))
         let pool = PeerPool(params: best.params, peerCount: 1,
                             manualPeers: [await staleNode.endpoint, await goodNode.endpoint],
-                            dialTimeout: .seconds(1))
+                            dialTimeout: .seconds(1), maxParallelDials: 1)
         await pool.start()
         try await pool.syncHeaders(chain, timeoutPerPeer: .seconds(1), maxAttempts: 2)
 

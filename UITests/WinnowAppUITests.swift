@@ -1519,7 +1519,7 @@ final class WinnowAppUITests: XCTestCase {
     }
 
     func test15ReviewAndReplacePendingPayment() async throws {
-        let app = launchApp(advanced: true)
+        var app = launchApp(advanced: true)
         app.tabBars.buttons["Send"].tap()
         app.typeInto("amountField", "20000")
         app.typeInto("destinationField", try Self.fixtureAddress(0xD5))
@@ -1527,13 +1527,33 @@ final class WinnowAppUITests: XCTestCase {
         app.buttons["reviewButton"].tap()
         XCTAssertTrue(scrollUntilExists(app, app.buttons["sendButton"], maxSwipes: 5))
         let before = Set(try BitcoinCLI.mempoolTxids())
+        // Cut only the disposable node's P2P connections; RPC stays available
+        // to prove the payment has not reached it and to restore service.
+        _ = try BitcoinCLI.run(["setnetworkactive", "false"])
+        defer { _ = try? BitcoinCLI.run(["setnetworkactive", "true"]) }
         app.buttons["sendButton"].tap()
-        XCTAssertTrue(poll(timeout: 60, interval: 1, "original payment in Core mempool") {
-            ((try? Set(BitcoinCLI.mempoolTxids()).subtracting(before).isEmpty) ?? true) == false
-        })
-        let original = try XCTUnwrap(Set(try BitcoinCLI.mempoolTxids()).subtracting(before).first)
+        XCTAssertTrue(app.staticTexts["broadcastPending"].waitForExistence(timeout: 60))
+        XCTAssertFalse(app.buttons["sendButton"].exists, "a saved payment must not offer Send again")
+        app.buttons["transactionDetailsButton"].tap()
+        let identifier = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "[0-9a-f]{64}")).firstMatch
+        XCTAssertTrue(identifier.waitForExistence(timeout: 10))
+        let original = identifier.label
+        XCTAssertEqual(try BitcoinCLI.mempoolTxids().sorted(), before.sorted(), "the offline node received a payment")
 
-        app.tabBars.buttons["Wallet"].tap()
+        app.terminate()
+        app = launchApp(advanced: true)
+        openPayment(original, in: app)
+        XCTAssertTrue(app.staticTexts["awaiting confirmation"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["transactionConfirmation-\(original)"].exists)
+        Screenshots.capture(app, "39-payment-after-disconnect", testCase: self)
+        _ = try BitcoinCLI.run(["setnetworkactive", "true"])
+        XCTAssertTrue(poll(timeout: 180, interval: 1, "saved payment resumes relay after reopening") {
+            (try? Set(BitcoinCLI.mempoolTxids()).subtracting(before)) == [original]
+        })
+        // The original payment survived the interruption. Its existing fee
+        // replacement journey continues from the same history entry.
+        app.navigationBars.buttons["Winnow"].tap()
+        XCTAssertEqual(app.buttons.matching(identifier: "historyPayment-\(original)").count, 1)
         openPayment(original, in: app)
         let bump = app.buttons["bumpFeeButton"].firstMatch
         XCTAssertTrue(scrollUntilExists(app, bump, maxSwipes: 8))

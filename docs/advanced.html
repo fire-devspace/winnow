@@ -58,7 +58,7 @@ dialog a{overflow-wrap:anywhere}
 <li>Restore the earlier backup with the recovery words and check that it finds the payment and the remaining balance.</li>
 <li>In a separate flow, approve on the phone and share the raw request with a MuSig2 group acting as one signer. Import the group’s reply through Approve a request, then send.</li>
 </ol><p>Test code:
-<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1576">test16MuSig2RequiresSecondDevice</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1061">test13GroupCosignerVault</a>
+<a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1596">test16MuSig2RequiresSecondDevice</a>, <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1061">test13GroupCosignerVault</a>
 . <a href="https://github.com/winnowwallet/winnow/actions/workflows/node-tests.yml">View test results</a>.</p>
 <p>The tests use the app on a private Bitcoin test network. Screenshots show test funds. Open a test run to see which version was checked, what passed, and what failed.</p>
 <p><a href="/testing#artifacts">Read the logs and screenshots</a> · <a href="/testing#limits">What still needs testing</a></p></dialog></section>
@@ -81,7 +81,7 @@ dialog a{overflow-wrap:anywhere}
 <button class="test-link" type="button" data-dialog="fees-tests" aria-controls="fees-tests" aria-haspopup="dialog">How this is tested</button>
 <dialog id="fees-tests" aria-labelledby="fees-tests-title">
 <div class="dialog-heading"><h2 id="fees-tests-title">How we test: Replace a pending payment with a higher fee</h2><form method="dialog"><button class="dialog-close" autofocus>Close</button></form></div><ol>
-<li>Send a payment and leave it in the node’s mempool.</li>
+<li>Disconnect the test node before sending. Reopen the app, find the pending payment, then reconnect and check that the same payment reaches the node.</li>
 <li>Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history.</li>
 </ol><p>Test code:
 <a href="https://github.com/winnowwallet/winnow/blob/main/UITests/WinnowAppUITests.swift#L1521">test15ReviewAndReplacePendingPayment</a>

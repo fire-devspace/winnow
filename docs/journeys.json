@@ -151,7 +151,7 @@
     "title": "Replace a pending payment with a higher fee",
     "description": "Review a replacement’s fee and change before authorizing it. The original remains visible as replaced.",
     "journey": [
-      "Send a payment and leave it in the node’s mempool.",
+      "Disconnect the test node before sending. Reopen the app, find the pending payment, then reconnect and check that the same payment reaches the node.",
       "Use Bump fee, review and sign the replacement, then confirm it and inspect the app’s history."
     ],
     "tests": [

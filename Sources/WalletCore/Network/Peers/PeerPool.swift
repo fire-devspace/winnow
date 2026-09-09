@@ -525,14 +525,14 @@ public actor PeerPool {
     /// Admits (or disconnects) a completed dial. Re-checked on arrival as
     /// well as before the dial: dials race, so two candidates from one
     /// netblock or one source class can be in flight together and the second
-    /// must still be refused. Returns whether a seat was filled.
+    /// must still be refused.
     private func seatArrival(_ peer: PeerConnection, endpoint: PeerEndpoint,
-                             source: PeerSource, stillNeeded: Bool) async -> Bool {
+                             source: PeerSource) async {
         let candidate = PeerCandidate(endpoint: endpoint, source: source)
-        guard started, stillNeeded, !peers.contains(where: { $0.endpoint == endpoint }),
+        guard started, peers.count < peerCount, !peers.contains(where: { $0.endpoint == endpoint }),
               policy.admits(candidate, given: seatedCandidates()) else {
             await peer.disconnect() // slot filled, or diversity refused it
-            return false
+            return
         }
         peers.append(peer)
         staleTipJudged.remove(endpoint)
@@ -541,7 +541,6 @@ public actor PeerPool {
             knownSource[endpoint] = source
             persistKnownGood()
         }
-        return true
     }
 
     private func pruneAndReplenish() async {
@@ -580,11 +579,10 @@ public actor PeerPool {
         let excluded = Set(peers.map(\.endpoint)).union(rejectedForSession).union(coolingEndpoints)
         var queue = localCandidates(excluding: excluded)
         var resolvedSeeds = false
-        var needed = peerCount - peers.count
         var next = 0
         await withTaskGroup(of: (PeerEndpoint, PeerConnection?).self) { group in
             var running = 0
-            while needed > 0, started {
+            while peers.count < peerCount, started {
                 if next >= queue.count && !resolvedSeeds {
                     resolvedSeeds = true
                     var seen = excluded
@@ -597,11 +595,11 @@ public actor PeerPool {
                 running -= 1
                 guard let peer = dialed else { continue }
                 let source = queue.first { $0.endpoint == endpoint }?.source ?? .persisted
-                if await seatArrival(peer, endpoint: endpoint, source: source,
-                                     stillNeeded: needed > 0) {
-                    needed -= 1
-                }
+                await seatArrival(peer, endpoint: endpoint, source: source)
             }
+            // The pool filled or stopped while other dials were in flight.
+            // Their receive tasks keep them alive until explicitly closed.
+            for await (_, peer) in group { await peer?.disconnect() }
         }
         // Judged after the round against the last validated tip, so a stale
         // peer that raced in ahead of honest ones does not keep its seat.
