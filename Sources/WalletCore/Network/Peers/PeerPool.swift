@@ -110,6 +110,13 @@ public actor PeerPool {
     /// Seats a relay-only session was asked to keep. Meaningless — and zero —
     /// in `.full`, where `peerCount` is the target.
     private var relaySeats = 0
+    /// Test-visible (@testable): awaited by `enterRelayOnly(seats:)` once the
+    /// narrowing is committed and before it reports the seats kept. A test
+    /// that parks it holds every caller at its `await pool.enterRelayOnly`,
+    /// which is how what `TxBroadcaster` does on the far side of that
+    /// suspension is checked as an ordering rather than raced for. Nil
+    /// outside the tests, and read nowhere else.
+    private var narrowingHold: (@Sendable () async -> Void)?
 
     /// What a pool is doing for its owner right now.
     public enum Mode: String, Sendable, Equatable {
@@ -282,6 +289,7 @@ public actor PeerPool {
         let dropped = Array(peers.dropFirst(relaySeats))
         peers = Array(peers.prefix(relaySeats))
         for peer in dropped { await peer.disconnect() }
+        if let narrowingHold { await narrowingHold() }
         persistKnownGood()
         // Counted after the loop, for the same reason the split is committed
         // before it. The seat the split kept can be removed during these
@@ -293,6 +301,9 @@ public actor PeerPool {
         // never announced again. What is returned is what is seated now.
         return peers.count
     }
+
+    /// Test-visible (@testable). See `narrowingHold`.
+    func holdNarrowing(_ hold: (@Sendable () async -> Void)?) { narrowingHold = hold }
 
     /// Stops the pool, but only while it is still the relay-only session that
     /// asked to — one actor job, so nothing can land between the question and

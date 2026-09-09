@@ -805,6 +805,145 @@ struct TxBroadcasterTests {
         }
         await pool.stop()
     }
+
+    /// `enterRelayOnly` checks that something is pending, narrows the pool,
+    /// and records the session. The narrowing is a suspension, and the
+    /// broadcaster runs other work inside it. A confirmation landing there is
+    /// the drain: it empties the pending set and calls the close, which finds
+    /// no session to close and does nothing. The session recorded on the far
+    /// side is then a session over nothing, and nothing is left to end it: the
+    /// pool is held open for a payment that already confirmed, with the
+    /// caller told "relaying in the background".
+    ///
+    /// The pool is parked inside its narrowing so the confirmation lands
+    /// while the broadcaster is genuinely suspended on that call, not
+    /// sometime near it.
+    @Test("a drain that lands while the pool is being narrowed opens no session")
+    func relayOnlyDrainDuringNarrowingOpensNoSession() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+
+        let gate = NarrowingGate()
+        await pool.holdNarrowing { await gate.reach(); await gate.waitForRelease() }
+        let opening = Task { () -> Result<Bool, any Error> in
+            let outcome: Result<Bool, any Error>
+            do {
+                outcome = .success(try await broadcaster.enterRelayOnly(seats: 1))
+            } catch {
+                outcome = .failure(error)
+            }
+            // A call that returned without ever narrowing the pool opens the
+            // gate too, so a broken path fails this test on an assertion
+            // instead of parking it on a wait that will never be resumed.
+            await gate.reach()
+            return outcome
+        }
+        await gate.waitForReach()
+        #expect(await pool.mode == .relayOnly, "the pool is mid-narrowing")
+        #expect(await broadcaster.isRelayOnly == false, "and no session is recorded yet")
+
+        // The confirmation is the drain, landing inside the suspension.
+        try await broadcaster.markConfirmed(txid, atHeight: 1)
+        #expect(await broadcaster.pendingTxids.isEmpty)
+        await gate.release()
+
+        let opened = try await opening.value.get()
+        #expect(opened == false, "nothing is pending, so there is nothing to hold a session for")
+        #expect(await broadcaster.isRelayOnly == false,
+                "a session recorded over a drained set has no drain left to end it")
+        #expect(await poolIsStopped(pool),
+                "the pool must go quiet, which is what the caller asked for")
+        await pool.stop()
+    }
+
+    /// The other thing that can land inside the narrowing is `shutdown()`.
+    /// It ends every session and, by its own contract, leaves the pool to the
+    /// caller. A session recorded after it would have a finished broadcaster
+    /// reporting "relaying in the background" over a pool it had narrowed and
+    /// can never drain.
+    @Test("a shutdown that lands while the pool is being narrowed opens no session")
+    func relayOnlyShutdownDuringNarrowingOpensNoSession() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        _ = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+
+        let gate = NarrowingGate()
+        await pool.holdNarrowing { await gate.reach(); await gate.waitForRelease() }
+        let opening = Task { () -> Result<Bool, any Error> in
+            let outcome: Result<Bool, any Error>
+            do {
+                outcome = .success(try await broadcaster.enterRelayOnly(seats: 1))
+            } catch {
+                outcome = .failure(error)
+            }
+            await gate.reach()
+            return outcome
+        }
+        await gate.waitForReach()
+        #expect(await pool.mode == .relayOnly, "the pool is mid-narrowing")
+
+        await broadcaster.shutdown()
+        await gate.release()
+
+        let opened = try await opening.value.get()
+        #expect(opened == false, "a finished broadcaster owns no session")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await poolIsStopped(pool),
+                "a pool narrowed for a broadcaster that is gone would be held open forever")
+        #expect(await pool.mode == .full, "no session was left open on it")
+        await pool.stop()
+    }
+}
+
+/// Parks the pool inside `enterRelayOnly` until the test lets it go, so the
+/// broadcaster can be driven while it is genuinely suspended on that call.
+/// Polling for that window would make the test a race; this makes it an
+/// ordering. The shape is `FilterSyncTests`' `SyncGate`.
+private actor NarrowingGate {
+    private var reached = false
+    private var reachWaiter: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    /// Called from the hold: the pool has reached the parking spot.
+    func reach() {
+        reached = true
+        reachWaiter?.resume()
+        reachWaiter = nil
+    }
+
+    func waitForReach() async {
+        guard !reached else { return }
+        await withCheckedContinuation { reachWaiter = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
 }
 
 /// Whether the pool has finished stopping: not running *and* with no peer

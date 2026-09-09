@@ -283,13 +283,20 @@ public actor TxBroadcaster {
     /// - Parameter seats: peers to keep, defaulting to `PeerPool.defaultRelaySeats`.
     /// - Returns: whether a session was opened, which is whether anything is
     ///   actually being relayed. False means the pool was stopped instead,
-    ///   for one of two reasons: nothing was pending, or the pool kept no
-    ///   seat. A zero-seat session — a pool already stopped, or one whose
-    ///   peers had all gone — announces to nobody and can never drain itself,
-    ///   because a confirmation needs the filter sync the mode refuses. It
-    ///   would be a pool held open forever with the caller told "relaying in
-    ///   the background", so it is reported as what it is and the pool goes
-    ///   quiet, which is what the caller asked for.
+    ///   for one of three reasons: nothing was pending, the pool kept no
+    ///   seat, or there was no session left to record by the time the pool
+    ///   had been narrowed. A zero-seat session — a pool already stopped, or
+    ///   one whose peers had all gone — announces to nobody and can never
+    ///   drain itself, because a confirmation needs the filter sync the mode
+    ///   refuses. It would be a pool held open forever with the caller told
+    ///   "relaying in the background", so it is reported as what it is and
+    ///   the pool goes quiet, which is what the caller asked for. The third
+    ///   reason is the same pool held open for the same nothing, reached the
+    ///   other way round: the narrowing is a suspension, and the last pending
+    ///   payment can confirm inside it, or `shutdown()` can run. For that one
+    ///   the pool is stopped only if it is still the relay-only session this
+    ///   call narrowed it to; a caller that resumed full service in the same
+    ///   gap has taken it back, and it is left as they put it.
     @discardableResult
     public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async throws -> Bool {
         guard !stopped else { throw TxBroadcasterError.stopped }
@@ -301,6 +308,26 @@ public actor TxBroadcaster {
         guard await pool.enterRelayOnly(seats: seats) > 0 else {
             relayOnlySession = false
             await pool.stop()
+            return false
+        }
+        // Both checks again, because the narrowing above is a suspension and
+        // this actor ran other work inside it. A confirmation landing there
+        // is the drain: it empties the pending set and calls the close, which
+        // has no session to close yet and does nothing. A session recorded
+        // now would be one over nothing, with no drain left to end it, so the
+        // pool is held open for a payment that already confirmed. A
+        // `shutdown()` landing there has ended every session, and a session
+        // recorded now would have a finished broadcaster claiming to relay.
+        //
+        // The stop is the drain's stop arriving late, so it re-reads the mode
+        // for the drain's reason: a caller that resumed full service in the
+        // gap has taken the pool back, and this must not take it away. Awaited
+        // rather than detached, as `closeRelayOnlySession` has to, because
+        // this is already async and the caller is told false only once the
+        // pool has actually gone quiet.
+        guard !stopped, hasPendingRelay else {
+            relayOnlySession = false
+            await pool.stopIfRelayOnly()
             return false
         }
         relayOnlySession = true
