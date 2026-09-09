@@ -36,20 +36,23 @@ struct AccountKeyCustodyTests {
     /// fingerprint. The account key is derived here the way an embedder's own
     /// key service would, and the seed never reaches the second wallet.
     static func bothCustodies(entropy: Data, network: BitcoinNetwork = .signet,
-                              creationHeight: UInt32 = 100)
+                              creationHeight: UInt32 = 100, account: UInt32 = 0)
         throws -> (root: Wallet, account: Wallet, rootStore: CountingKeyStore,
                    accountStore: CountingKeyStore) {
         let rootStore = CountingKeyStore()
         let root = try Wallet.create(network: network, keyStore: rootStore,
-                                     entropy: entropy, creationHeight: creationHeight)
+                                     entropy: entropy, creationHeight: creationHeight,
+                                     account: account)
         let master = try HDKey(seed: BIP39.seed(mnemonic: BIP39.mnemonic(entropy: entropy)))
         let accountKey = try BIP86.accountKey(from: master,
-                                              coinType: Wallet.coinType(for: network), account: 0)
+                                              coinType: Wallet.coinType(for: network),
+                                              account: account)
         let accountStore = CountingKeyStore()
-        let account = try Wallet.create(accountKey: accountKey, masterFingerprint: master.fingerprint,
-                                        network: network, keyStore: accountStore,
-                                        creationHeight: creationHeight)
-        return (root, account, rootStore, accountStore)
+        let accountWallet = try Wallet.create(accountKey: accountKey,
+                                              masterFingerprint: master.fingerprint,
+                                              network: network, keyStore: accountStore,
+                                              creationHeight: creationHeight, account: account)
+        return (root, accountWallet, rootStore, accountStore)
     }
 
     /// A signature over one fixed sighash: fixed spent output, fixed spending
@@ -83,7 +86,30 @@ struct AccountKeyCustodyTests {
     @Test("account custody derives the same wallet, addresses, keys and signatures as the root",
           arguments: accountCustodyEntropies, [BitcoinNetwork.signet, .mainnet])
     func differentialWitness(entropy: Data, network: BitcoinNetwork) async throws {
-        let (root, account, _, _) = try Self.bothCustodies(entropy: entropy, network: network)
+        try await Self.compareCustodies(entropy: entropy, network: network, account: 0)
+    }
+
+    /// The same witness across account indices, because `account` is the one
+    /// number both constructors put into the origin path and neither reads back
+    /// from the other. Account 0 alone would let the account constructor ignore
+    /// its argument entirely and still agree with the root on every byte.
+    ///
+    /// 0x7FFF_FFFF is the last account there is: one more sets the hardened bit
+    /// the path adds, which is not a deeper account but an argument neither
+    /// constructor can honour.
+    @Test("account custody agrees with the root at every account index",
+          arguments: [UInt32(0), 1, 5, 0x7FFF_FFFF], [BitcoinNetwork.signet, .mainnet])
+    func differentialWitnessAcrossAccounts(account: UInt32, network: BitcoinNetwork) async throws {
+        try await Self.compareCustodies(entropy: testEntropy, network: network, account: account)
+    }
+
+    /// The comparison both witnesses run: every fact a spend rests on, read
+    /// off a root-custody wallet and an account-custody one built from the same
+    /// seed, network and account index.
+    static func compareCustodies(entropy: Data, network: BitcoinNetwork,
+                                 account accountIndex: UInt32) async throws {
+        let (root, account, _, _) = try Self.bothCustodies(entropy: entropy, network: network,
+                                                           account: accountIndex)
 
         // Identity: the wallet ID is the master fingerprint either way, and the
         // descriptor it is read from is the same string.
@@ -361,19 +387,21 @@ struct AccountKeyCustodyTests {
     /// rebuilt value, a wallet that reopens differently would not merely drift,
     /// it would refuse to sign at all.
     @Test("an account-custody wallet reopens and derives the same signing keys",
-          arguments: [BitcoinNetwork.signet, .mainnet])
-    func reopenedAccountWalletSignsTheSame(network: BitcoinNetwork) async throws {
+          arguments: [BitcoinNetwork.signet, .mainnet], [UInt32(0), 5])
+    func reopenedAccountWalletSignsTheSame(network: BitcoinNetwork, account: UInt32) async throws {
         let store = InMemoryKeyStore()
         let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
         let accountKey = try BIP86.accountKey(from: master,
-                                              coinType: Wallet.coinType(for: network), account: 0)
+                                              coinType: Wallet.coinType(for: network),
+                                              account: account)
         let storageURL = tempFileURL("account-custody-reopen.json")
         defer { try? FileManager.default.removeItem(at: storageURL.deletingLastPathComponent()) }
 
         let created = try Wallet.create(accountKey: accountKey,
                                         masterFingerprint: master.fingerprint,
                                         network: network, keyStore: store,
-                                        storageURL: storageURL, creationHeight: 100)
+                                        storageURL: storageURL, creationHeight: 100,
+                                        account: account)
         let reopened = try Wallet.open(storageURL: storageURL, keyStore: store)
 
         #expect(await created.id == reopened.id)
@@ -385,6 +413,181 @@ struct AccountKeyCustodyTests {
                 "key at \(chain)/\(index) after reopening")
             #expect(try await reopened.address(chain: chain, index: index)
                 == (try await created.address(chain: chain, index: index)))
+        }
+    }
+
+    /// A wallet at an account other than zero, spending. The differential
+    /// witness compares keys; this is the whole send under account custody at
+    /// account 5, so nothing that only shows up when a transaction is built —
+    /// the PSBT origin path, and the binding check every input signature goes
+    /// through — is left to account 0 alone.
+    @Test("an account-5 wallet under account custody builds and signs a send")
+    func sendAtAccountFive() async throws {
+        let (_, account, _, _) = try Self.bothCustodies(entropy: testEntropy, account: 5)
+        try await fund(account, amount: 500_000, height: 100)
+        try await matureCoinbase(account, height: 100)
+        let prepared = try await account.buildSend(
+            payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+            feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+
+        // The origin a hardware signer would read names account 5, hardened,
+        // and the signature verifies against the coin it spends.
+        let origin = try #require(prepared.built.psbt.inputs[0].tapBIP32Derivation.values.first)
+        #expect(origin.path == [86, 1, 5].map { $0 + HDKey.hardenedOffset } + [0, 0])
+        #expect(origin.masterFingerprint == UInt32(await account.id, radix: 16))
+        let signed = prepared.built.transaction
+        let spentOutputs = try prepared.built.psbt.spentOutputs()
+        for index in signed.inputs.indices {
+            let sighash = try SighashBIP341.sighash(tx: signed, inputIndex: index,
+                                                    spentOutputs: spentOutputs, hashType: .default)
+            var message = [UInt8](sighash)
+            let outputKey = P256K.Schnorr.XonlyKey(
+                dataRepresentation: spentOutputs[index].scriptPubKey.suffix(32))
+            let signature = try P256K.Schnorr.SchnorrSignature(
+                dataRepresentation: signed.inputs[index].witness[0])
+            #expect(outputKey.isValid(signature, for: &message), "input \(index) must verify")
+        }
+    }
+
+    /// The neighbouring-account refusals, at an account that is not zero. Both
+    /// directions matter and they are caught in different places: a key for
+    /// account 6 stored in an account-5 wallet is a signing-time refusal, and
+    /// an account-0 key handed to a constructor told to build account 5 never
+    /// gets as far as a wallet.
+    @Test("an account-5 wallet refuses a neighbouring account's key at either end")
+    func accountFiveRefusesItsNeighbours() async throws {
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let store = InMemoryKeyStore()
+        let five = try BIP86.accountKey(from: master, coinType: 1, account: 5)
+        let wallet = try Wallet.create(accountKey: five, masterFingerprint: master.fingerprint,
+                                       network: .signet, keyStore: store, creationHeight: 100,
+                                       account: 5)
+        let id = await wallet.id
+
+        // Account 6 under the same master: right fingerprint, right depth,
+        // wrong child index, and every signature it makes would be valid.
+        let six = try BIP86.accountKey(from: master, coinType: 1, account: 6)
+        try store.delete(walletID: id)
+        try store.store(.accountKey(xprv: six.serialized(network: .testnet),
+                                    masterFingerprint: master.fingerprint), for: id)
+        await #expect(throws: WalletError.accountKeyMismatch) {
+            _ = try await wallet.keyPathSecret(chain: .receive, index: 0)
+        }
+
+        // And the mirror image at creation: an account-0 key with `account: 5`
+        // asked for. The origin path the constructor builds ends in 5', the key
+        // says 0', and the childIndex guard is what notices.
+        let zero = try BIP86.accountKey(from: master, coinType: 1, account: 0)
+        #expect(throws: WalletError.accountKeyMismatch) {
+            _ = try Wallet.create(accountKey: zero, masterFingerprint: master.fingerprint,
+                                  network: .signet, keyStore: InMemoryKeyStore(), account: 5)
+        }
+    }
+
+    /// An account index with the hardened bit already set. The path both
+    /// constructors build adds that bit, so the addition has nowhere to go: the
+    /// root constructor reaches it through a path string and reports
+    /// `invalidPath`, and this one used to compute the same sum directly and
+    /// take the process down with an overflow trap before any guard read the
+    /// argument. A caller that gets an account index wrong deserves an error,
+    /// and a library that aborts the host process cannot be caught by anything.
+    @Test("an account index past the hardened boundary is refused by both constructors")
+    func hardenedAccountIndexRefused() throws {
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let accountKey = try BIP86.accountKey(from: master, coinType: 1, account: 0)
+        for account in [UInt32(0x8000_0000), 0x8000_0005, .max] {
+            #expect(throws: BIP32Error.invalidPath) {
+                _ = try Wallet.create(network: .signet, keyStore: InMemoryKeyStore(),
+                                      account: account)
+            }
+            #expect(throws: BIP32Error.invalidPath) {
+                _ = try Wallet.create(accountKey: accountKey,
+                                      masterFingerprint: master.fingerprint,
+                                      network: .signet, keyStore: InMemoryKeyStore(),
+                                      account: account)
+            }
+        }
+        // One below the boundary is a real account, so the mismatched key
+        // reaches the binding guard rather than the refusal above: the two
+        // failures are told apart by which error comes back.
+        #expect(throws: WalletError.accountKeyMismatch) {
+            _ = try Wallet.create(accountKey: accountKey, masterFingerprint: master.fingerprint,
+                                  network: .signet, keyStore: InMemoryKeyStore(),
+                                  account: 0x7FFF_FFFF)
+        }
+    }
+
+    /// The same substitution as `foreignSeedAccountKeyRefused`, against the two
+    /// custody shapes that hold a root secret. A KeyStore entry is filed under
+    /// the wallet ID and the ID is a fingerprint, so a seed or master xprv that
+    /// is not this wallet's can sit where this wallet's belongs. It is walked
+    /// down the origin path like any other root secret and produces a real
+    /// 32-byte signing secret for a chain this wallet does not own.
+    ///
+    /// The binding check used to be on the account-key branch alone. On these
+    /// two the send got as far as `psbt.finalize()`, which reported
+    /// `input 0 invalid tap key signature` — the wrong error, two layers down,
+    /// and only because finalize self-verifies at all.
+    @Test("a root secret that is not this wallet's is refused, not signed with",
+          arguments: [BitcoinNetwork.signet, .mainnet])
+    func foreignRootSecretRefused(network: BitcoinNetwork) async throws {
+        let store = InMemoryKeyStore()
+        let wallet = try Wallet.create(network: network, keyStore: store,
+                                       entropy: testEntropy, creationHeight: 100)
+        let id = await wallet.id
+        let foreignMnemonic = try BIP39.mnemonic(entropy: Data(repeating: 0x5A, count: 16))
+        let foreignMaster = try HDKey(seed: BIP39.seed(mnemonic: foreignMnemonic))
+        try await fund(wallet, amount: 500_000, height: 100)
+        try await matureCoinbase(wallet, height: 100)
+
+        for foreign in [WalletSecret.mnemonic(foreignMnemonic),
+                        .masterKey(foreignMaster.serialized(
+                            network: Wallet.hdNetwork(for: network)))] {
+            try store.delete(walletID: id)
+            try store.store(foreign, for: id)
+            await #expect(throws: WalletError.accountKeyMismatch) {
+                _ = try await wallet.keyPathSecret(chain: .receive, index: 0)
+            }
+            await #expect(throws: WalletError.accountKeyMismatch) {
+                _ = try await wallet.buildSend(
+                    payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+                    feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+            }
+        }
+    }
+
+    /// The control the refusals above need: an honest wallet still binds. Both
+    /// networks, both root shapes, and both ways into `accountPrivateKey` — the
+    /// constructor's account key and the one `Wallet.open` rebuilds from the
+    /// descriptor's xpub — because a binding check that refuses the wallet it
+    /// was written to protect is worse than no check at all.
+    @Test("an honest root secret still signs, at creation and after reopening",
+          arguments: [BitcoinNetwork.signet, .mainnet])
+    func honestRootSecretStillBinds(network: BitcoinNetwork) async throws {
+        let store = InMemoryKeyStore()
+        let storageURL = tempFileURL("root-custody-reopen.json")
+        defer { try? FileManager.default.removeItem(at: storageURL.deletingLastPathComponent()) }
+        let created = try Wallet.create(network: network, keyStore: store, storageURL: storageURL,
+                                        entropy: testEntropy, creationHeight: 100)
+        let id = await created.id
+
+        // The mnemonic the constructor stored, then the same seed's master
+        // xprv in its place: the other root shape, walked the same way.
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let secrets: [WalletSecret] = [
+            .mnemonic(testMnemonic),
+            .masterKey(master.serialized(network: Wallet.hdNetwork(for: network))),
+        ]
+        for secret in secrets {
+            try store.delete(walletID: id)
+            try store.store(secret, for: id)
+            let reopened = try Wallet.open(storageURL: storageURL, keyStore: store)
+            for (chain, index) in Self.coordinates {
+                let fromCreated = try await created.keyPathSecret(chain: chain, index: index)
+                #expect(fromCreated.count == 32)
+                #expect(try await reopened.keyPathSecret(chain: chain, index: index) == fromCreated,
+                        "key at \(chain)/\(index) after reopening")
+            }
         }
     }
 

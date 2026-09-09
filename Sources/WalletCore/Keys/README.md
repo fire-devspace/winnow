@@ -25,10 +25,23 @@ are the master fingerprint under either custody. Signing walks a root secret
 down the origin path exactly as it did before and uses an account secret where
 it already stands: that path is hardened, so walking it a second time would
 derive a different key rather than fail. The fingerprint and the key's depth are
-checked before anything is signed, and the differential test in
+checked before anything is signed, and whichever shape was held, the key that
+will sign is compared against the account key the descriptor carries. That last
+check is what a secret cannot answer about itself: a KeyStore entry is filed
+under the wallet ID and the ID is a fingerprint, so a key belonging to someone
+else can sit where this wallet's belongs and derive a signature that is valid
+for coins this wallet does not own. The differential test in
 [WalletCore tests](../../../Tests/WalletCoreTests/README.md) compares the two
 custody shapes byte for byte — addresses, signing keys, signatures and PSBT
-origins.
+origins — across account indices and both networks.
+
+Only the account case carries a version in its header (`account/1`). Upstream's
+two headers are bare words because builds that write and read them have shipped;
+this one has shipped nowhere, so it can say from its first byte which shape the
+lines beneath are in, and a build that meets a version it has no rules for
+refuses it by name instead of reading them as the shape it knows. The
+fingerprint line is written lowercase and only read lowercase, so one key has
+exactly one encoding.
 
 The [wallet](../Wallet/README.md), [signer](../Transactions/README.md), and
 [app](../../WinnowApp/README.md) use this code. The in-memory keystore stays in

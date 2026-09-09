@@ -29,11 +29,13 @@ public enum WalletError: Error, Equatable, LocalizedError {
     /// Legacy signing metadata must not be silently discarded by JSONDecoder:
     /// the resulting coin would look ordinary but could not be spent here.
     case unsupportedWalletData
-    /// The account key held for this wallet does not belong to it: it declares
-    /// a different master fingerprint than the descriptor's origin, it does not
-    /// sit at the end of that origin path, or it carries no private material.
-    /// Refusing is the point of storing the fingerprint beside the key — the
-    /// wrong account key signs perfectly well, for someone else's coins.
+    /// The key held for this wallet does not belong to it. A stored account
+    /// key declares a different master fingerprint than the descriptor's
+    /// origin, does not sit at the end of that origin path, or carries no
+    /// private material; or a secret of any shape, root or account, does not
+    /// derive the account key the descriptor carries. Refusing is the point of
+    /// checking against the descriptor — the wrong key signs perfectly well,
+    /// for someone else's coins.
     case accountKeyMismatch
 
     public var errorDescription: String? {
@@ -776,13 +778,24 @@ public actor Wallet {
                               network: BitcoinNetwork, keyStore: any KeyStore,
                               storageURL: URL? = nil, creationHeight: UInt32 = 0,
                               account: UInt32 = 0) throws -> Wallet {
+        // An account index already carrying the hardened bit is not a wallet
+        // this can build: the path below adds that bit, and the addition
+        // overflows rather than deriving anything. The constructor that starts
+        // from a seed meets the same argument as text, in a path string
+        // `HDKey.derived` refuses, and reports `invalidPath`; report it here
+        // too. A caller passing a nonsense account index has made a mistake in
+        // its own arguments, which is not a reason to take the process down.
+        guard account < HDKey.hardenedOffset else { throw BIP32Error.invalidPath }
         let coinType = Self.coinType(for: network)
         let origin = Descriptor.KeyOrigin(fingerprint: masterFingerprint,
                                           path: [86, coinType, account].map { $0 + HDKey.hardenedOffset })
         // Refused here as well as at signing time: a caller that hands over the
         // root key, or an account key from a different depth, would otherwise
         // get a wallet whose addresses are real and whose signatures are not.
-        guard accountKey.isPrivate, accountKey.depth == UInt8(origin.path.count),
+        // Depth is compared as an `Int` rather than by narrowing the count: an
+        // origin longer than a `UInt8` can count is a descriptor to refuse, not
+        // a conversion to trap on.
+        guard accountKey.isPrivate, Int(accountKey.depth) == origin.path.count,
               accountKey.childIndex == origin.path.last
         else { throw WalletError.accountKeyMismatch }
         let descriptor = Self.makeDescriptor(accountKey: accountKey, origin: origin, network: network)
@@ -1752,7 +1765,7 @@ public actor Wallet {
     /// and walking it a second time from a depth-3 key would derive a different
     /// key rather than fail, which is a wrong signature and not an error.
     ///
-    /// Hence the check on the way past. A stored account key claims a master
+    /// Hence the checks on the way past. A stored account key claims a master
     /// fingerprint, and that claim is the only thing tying it to this wallet:
     /// an extended key records its parent's fingerprint (here m/86'/coin'), not
     /// the master's, so the descriptor cannot confirm it and nothing else will.
@@ -1762,35 +1775,55 @@ public actor Wallet {
     /// master and the right depth and is still the wrong wallet. Each of them
     /// signs successfully for coins this wallet does not own.
     ///
-    /// And then the check none of those three is: the neutered key must be the
-    /// account key the descriptor already carries. Fingerprint, depth and child
-    /// index are all claims the stored key makes about itself, so a key from a
-    /// different seed altogether satisfies every one of them by recording the
-    /// right numbers — and `accountKey` is the public key this wallet's
-    /// addresses are derived from, set by both constructors and rebuilt by
-    /// `open` from the descriptor's own xpub, so comparing against it asks the
-    /// only question that cannot be answered by assertion. Without it the
-    /// mismatch surfaced two layers later as `psbt.finalize()` reporting an
-    /// invalid tap key signature, and only because finalize happens to
-    /// self-verify: `signKeyPath` does not.
+    /// Whatever shape was held, the key that comes back is then checked
+    /// against the descriptor by `boundToThisWallet`, which is the question
+    /// none of the checks above asks.
     private func accountPrivateKey() throws -> HDKey {
         // The same origin the removed root walk read: `Wallet.init` validated
         // the descriptor's shape before the wallet existed.
         let origin = Self.originUnchecked(of: descriptor)
         switch try keyStore.load(walletID: id) {
         case let .mnemonic(words):
-            return try Self.walk(HDKey(seed: BIP39.seed(mnemonic: words)), down: origin.path)
+            return try boundToThisWallet(Self.walk(HDKey(seed: BIP39.seed(mnemonic: words)),
+                                                   down: origin.path))
         case let .masterKey(xprv):
-            return try Self.walk(HDKey.deserialize(xprv), down: origin.path)
+            return try boundToThisWallet(Self.walk(HDKey.deserialize(xprv), down: origin.path))
         case let .accountKey(xprv, masterFingerprint):
             let account = try HDKey.deserialize(xprv)
             guard masterFingerprint == origin.fingerprint, account.isPrivate,
-                  account.depth == UInt8(origin.path.count),
-                  account.childIndex == origin.path.last,
-                  account.neutered == accountKey
+                  Int(account.depth) == origin.path.count,
+                  account.childIndex == origin.path.last
             else { throw WalletError.accountKeyMismatch }
-            return account
+            return try boundToThisWallet(account)
         }
+    }
+
+    /// The last question about a loaded secret, and the one the secret cannot
+    /// answer about itself: neutered, it must be the account key the descriptor
+    /// already carries. `accountKey` is the public key every address of this
+    /// wallet is derived from, set by both constructors and rebuilt by `open`
+    /// from the descriptor's own xpub, so it is the wallet's own account of
+    /// which chain it spends on rather than the stored key's.
+    ///
+    /// A stored account key's fingerprint, depth and child index are claims it
+    /// makes about itself, and a key from a different seed satisfies all three
+    /// by recording the right numbers. A root secret makes no claims at all: it
+    /// is walked down the origin path and whatever comes out is used, so a seed
+    /// filed under this wallet's ID — the ID is a fingerprint, and a KeyStore
+    /// entry can be replaced — derives a real 32-byte signing secret for a
+    /// chain this wallet does not own.
+    ///
+    /// The walk itself is unchanged, and stays the derivation the addresses
+    /// come from. What the comparison adds is a name for the fault at the layer
+    /// that owns it. Without it the mismatch surfaced two layers later as
+    /// `psbt.finalize()` reporting an invalid tap key signature, and only
+    /// because finalize happens to self-verify: `signKeyPath` does not, so a
+    /// caller that stopped at a signature got a valid signature for someone
+    /// else's coins. Finalize still refuses behind this; it is no longer the
+    /// first thing to notice.
+    private func boundToThisWallet(_ key: HDKey) throws -> HDKey {
+        guard key.neutered == accountKey else { throw WalletError.accountKeyMismatch }
+        return key
     }
 
     /// Walks a key down a derivation path, one hardened or unhardened step at
