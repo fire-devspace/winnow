@@ -55,9 +55,12 @@ the forward frontier — a separate record, in a separate file, with its own
 resumable state.
 
 Everything a batch is judged by is the forward path's, unchanged: the cfcheckpt
-majority, the announced-count guard, the per-batch cfheaders cross-check, the
-checkpoint-boundary comparison before a batch has any effect, the per-filter
-header reproduction, and the chunked fetch with its byte bound. It does not
+majority, the announced-count guard, the cross-check policy over who agreed (a
+restore's coins are spend-relevant state, so `requireDistinctSources` refuses a
+range scan on one channel before a filter is fetched, and the receipt is written
+with every batch and returned on the outcome), the per-batch cfheaders
+cross-check, the checkpoint-boundary comparison before a batch has any effect,
+the per-filter header reproduction, and the chunked fetch with its byte bound. It does not
 sync headers, so a caller that wants the back-scan pinned to a frozen recovery
 checkpoint hands over a chain it does not advance; a range reaching below
 `chain.startHeight` is refused by name, because filters are fetched by block

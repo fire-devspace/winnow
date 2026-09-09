@@ -637,7 +637,7 @@ public actor FilterSync {
     /// Refuses the run when the agreement does not meet the policy, naming
     /// what was seen rather than what was wanted: "cannot cross-check yet" is
     /// only worth showing someone if it can say how far short the pool fell.
-    private func requireAdmissible(_ receipt: CrossCheckReceipt) throws {
+    func requireAdmissible(_ receipt: CrossCheckReceipt) throws {
         guard crossCheckPolicy.admits(receipt) else {
             let peers = receipt.agreed.count
             let classes = receipt.sourceClasses.count
@@ -653,7 +653,7 @@ public actor FilterSync {
     /// nil — a peer the pool has no class for — is carried through as nil
     /// rather than guessed at, because `spansDistinctSources` has to be able
     /// to refuse it.
-    private static func receipt(
+    static func receipt(
         tipHeight: UInt32, answer: CFCheckptMessage,
         agreed: [(peer: PeerConnection, source: PeerSource?, message: CFCheckptMessage)])
         -> CrossCheckReceipt {
@@ -1353,7 +1353,7 @@ public actor FilterSync {
     /// file. Nothing here decides whether the claim is true — it cannot; the
     /// peers are gone — only that the file cannot grow without limit and that
     /// a caller reading the digest gets 32 bytes or an error.
-    private static func validate(receipt: CrossCheckReceipt?) throws {
+    static func validate(receipt: CrossCheckReceipt?) throws {
         guard let receipt else { return }
         guard receipt.agreed.count <= maximumReceiptEntries else {
             throw FilterSyncStorageError.damaged("the cross-check receipt names too many peers")

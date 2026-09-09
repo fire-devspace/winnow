@@ -216,7 +216,9 @@ struct RangeScanTests {
     }
 
     private static func fixture(chainLength: Int = 2_100, watchHeight: UInt32 = 1_500,
-                                cfcheckptLieAtHeight: Int? = nil) async throws -> Fixture {
+                                cfcheckptLieAtHeight: Int? = nil,
+                                crossCheckPolicy: FilterSync.CrossCheckPolicy = .acceptSingleSource)
+        async throws -> Fixture {
         let synthetic = makeSyntheticChain(length: chainLength, watchHeight: watchHeight)
         let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks,
                                 cfcheckptLieAtHeight: cfcheckptLieAtHeight)
@@ -229,7 +231,8 @@ struct RangeScanTests {
         let forwardFile = tempFileURL("forward-progress.json")
         let rangeFile = tempFileURL("range-progress.json")
         let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
-                                  storageURL: forwardFile, requiredCheckpointPeers: 1)
+                                  storageURL: forwardFile, requiredCheckpointPeers: 1,
+                                  crossCheckPolicy: crossCheckPolicy)
         return Fixture(synthetic: synthetic, node: node, pool: pool, chain: chain,
                        sync: sync, forwardFile: forwardFile, rangeFile: rangeFile)
     }
@@ -733,6 +736,64 @@ struct RangeScanTests {
             storageURL: fixture.rangeFile) { _ in }
         #expect(complete.isComplete)
         #expect(complete.blockBytesRead == measured.blockBytesRead)
+    }
+
+    /// The forward path's cross-check policy, on the range path: a restore's
+    /// coins are spend-relevant state, so a caller that refuses to advance on
+    /// answers from one acquisition channel is refusing here too. The pool
+    /// holds one manual peer, which is one class, and the refusal comes before
+    /// a filter is fetched: nothing delivered, nothing written, the forward
+    /// frontier never involved.
+    @Test("a range scan under the strict cross-check policy is refused before a filter is fetched")
+    func strictPolicyRefusesAOneClassRangeScan() async throws {
+        let fixture = try await Self.fixture(chainLength: 6, watchHeight: 3,
+                                             crossCheckPolicy: .requireDistinctSources)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            _ = try await fixture.sync.scanRange(
+                from: 1, to: 6, watchScripts: [fixture.synthetic.watchScript],
+                storageURL: fixture.rangeFile) { collector.add($0) }
+        } catch {
+            thrown = error
+        }
+        guard case let .crossCheckUnavailable(reason)? = thrown as? FilterSyncError else {
+            Issue.record("expected crossCheckUnavailable, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("1 known source class"))
+        #expect(collector.matches.isEmpty, "a refused run delivers nothing")
+        #expect(!FileManager.default.fileExists(atPath: fixture.rangeFile.path),
+                "and writes no record")
+        #expect(await fixture.sync.nextScanHeight == 1, "the forward frontier was never involved")
+    }
+
+    /// Under the default the same run advances, and says who it advanced on:
+    /// the receipt names the one manual peer and its class, sits on the
+    /// outcome, is persisted with the record, and is dropped by a restart,
+    /// since the next pass earns its own.
+    @Test("a range scan records which peers corroborated it, and a restart clears the receipt")
+    func rangeScanRecordsItsCorroboration() async throws {
+        let fixture = try await Self.fixture(chainLength: 6, watchHeight: 3)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        let watch = [fixture.synthetic.watchScript]
+
+        let outcome = try await fixture.sync.scanRange(
+            from: 1, to: 6, watchScripts: watch, storageURL: fixture.rangeFile) { _ in }
+        let receipt = try #require(outcome.crossCheck)
+        #expect(receipt.tipHeight == 6)
+        #expect(receipt.sourceClasses == [.manual])
+        #expect(receipt.agreed.count == 1)
+        #expect(receipt.agreed.first?.endpoint == (await fixture.node.endpoint).description)
+
+        let stored = try #require(try RangeScanProgress.load(storageURL: fixture.rangeFile))
+        #expect(stored.crossCheck == receipt, "the record stands on the receipt it was committed with")
+        let next = stored.restarted(fingerprint: RangeScanProgress.fingerprint(of: [Self.otherScript]))
+        #expect(next.crossCheck == nil, "and the next pass starts without one")
     }
 
     /// Both runs read the chain over one pool, and a peer's reply goes to

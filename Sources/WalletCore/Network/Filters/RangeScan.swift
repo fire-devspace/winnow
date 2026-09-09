@@ -217,16 +217,25 @@ public struct RangeScanProgress: Codable, Sendable, Equatable {
     /// Pinned filter headers: decimal height to hex (internal byte order),
     /// pruned exactly as the forward scan prunes its own.
     public var filterHeaders: [String: String]
+    /// Which peers corroborated the checkpoint answer the pass is anchored
+    /// to, beside the class the pool reached each of them through. Written
+    /// on every batch commit like the forward frontier's, so what the record
+    /// stands on is never a receipt from an older run; cleared by a restart,
+    /// since the next pass earns its own. Optional so a record written before
+    /// it existed still loads.
+    public var crossCheck: FilterSync.CrossCheckReceipt?
 
     public init(from: UInt32, to: UInt32, nextScanHeight: UInt32,
                 watchFingerprint: String, iteration: Int,
-                filterHeaders: [String: String] = [:]) {
+                filterHeaders: [String: String] = [:],
+                crossCheck: FilterSync.CrossCheckReceipt? = nil) {
         self.from = from
         self.to = to
         self.nextScanHeight = nextScanHeight
         self.watchFingerprint = watchFingerprint
         self.iteration = iteration
         self.filterHeaders = filterHeaders
+        self.crossCheck = crossCheck
     }
 
     /// Whether every block in [from, to] has been scanned by this pass.
@@ -333,6 +342,11 @@ public struct RangeScanProgress: Codable, Sendable, Equatable {
             throw RangeScanError.recordDamaged("the watch-script fingerprint is not 32 bytes")
         }
         try Self.validate(filterHeaders: filterHeaders, below: nextScanHeight)
+        do {
+            try FilterSync.validate(receipt: crossCheck)
+        } catch let FilterSyncStorageError.damaged(reason) {
+            throw RangeScanError.recordDamaged(reason)
+        }
     }
 
     /// The same rules the forward progress file is held to: canonical decimal
@@ -474,6 +488,10 @@ public struct RangeScanOutcome: Sendable, Equatable {
     /// things about a restore: filters scale with the range, blocks scale
     /// with what the watch set hit. The byte cap is spent against their sum.
     public let blockBytesRead: Int
+    /// Which peers corroborated the checkpoint answer the record stands on,
+    /// from its last committed batch. Nil only for a record that has
+    /// committed nothing yet, which a completed outcome never is.
+    public let crossCheck: FilterSync.CrossCheckReceipt?
 }
 
 extension FilterSync {
@@ -511,10 +529,16 @@ extension FilterSync {
     ///
     /// Everything a batch is judged by is the forward path's, unchanged: the
     /// cfcheckpt majority across peers, the announced-count guard tied to the
-    /// tip, the cfheaders cross-check per batch, the checkpoint-boundary
+    /// tip, the cross-check policy over who agreed (a run refused by
+    /// `CrossCheckPolicy.requireDistinctSources` throws `crossCheckUnavailable`
+    /// before any filter is fetched, exactly as `sync` does, because the coins
+    /// a restore finds are the spend-relevant state that policy exists to
+    /// hold back), the cfheaders cross-check per batch, the checkpoint-boundary
     /// comparison before a batch has any effect, the per-filter header
     /// reproduction, and the chunked fetch with its byte bound. A batch that
     /// fails any of them commits nothing and the record stays where it was.
+    /// The receipt naming who corroborated the run is persisted with every
+    /// batch and returned on the outcome.
     ///
     /// **The range has to reach a checkpoint boundary, or resume from a
     /// verified anchor.** That list is only worth what the boundary
@@ -611,7 +635,8 @@ extension FilterSync {
                                 isComplete: record.isComplete,
                                 iteration: record.iteration,
                                 filterBytesRead: rangeRun?.filterBytesRead ?? 0,
-                                blockBytesRead: rangeRun?.blockBytesRead ?? 0)
+                                blockBytesRead: rangeRun?.blockBytesRead ?? 0,
+                                crossCheck: record.crossCheck)
     }
 
     /// The batch loop, which is the forward scan's with the range's own record
@@ -622,7 +647,7 @@ extension FilterSync {
                           onMatch: @Sendable (BlockMatch) async throws -> Void) async throws
         -> RangeScanProgress
     {
-        let (reference, approvedEndpoints) = try await rangeReference(tip: tip)
+        let (reference, approvedEndpoints, receipt) = try await rangeReference(tip: tip)
         try Self.checkPinnedBoundaries(of: initial.filterHeaders, against: reference, tip: tip)
         var peers = try await approved(peers: approvedEndpoints)
         var record = initial
@@ -671,6 +696,7 @@ extension FilterSync {
             candidate.nextScanHeight = batchStop + 1
             candidate.filterHeaders = Self.prunedRangeHeaders(
                 proposed, frontier: candidate.nextScanHeight, rangeStart: initial.from)
+            candidate.crossCheck = receipt
             try candidate.persist(to: storageURL)
             record = candidate
         }
@@ -682,7 +708,7 @@ extension FilterSync {
     /// announced-count guard the forward scan runs, against the chain as it
     /// stands rather than one just synced.
     private func rangeReference(tip: UInt32) async throws
-        -> (reference: CFCheckptMessage, approved: Set<String>)
+        -> (reference: CFCheckptMessage, approved: Set<String>, receipt: FilterSync.CrossCheckReceipt)
     {
         let peers = await pool.connectedPeers()
         guard !peers.isEmpty else {
@@ -696,9 +722,16 @@ extension FilterSync {
             throw FilterSyncError.checkpointMismatch(
                 "cfcheckpt announced \(reference.filterHeaders.count) checkpoints for tip \(tip), expected \(expected)")
         }
-        let endpoints = await Self.endpoints(
-            of: checkpoints.filter { $0.message == reference }.map(\.peer))
-        return (reference, endpoints)
+        // Who agreed and through which channels, judged by the same policy
+        // the forward path applies, and for the same reason: the coins a
+        // restore finds are spend-relevant state, and a caller that refuses to
+        // advance on one acquisition channel is refusing here too. Before any
+        // filter is fetched, so a refusal has changed nothing.
+        let agreeing = checkpoints.filter { $0.message == reference }
+        let receipt = Self.receipt(tipHeight: tip, answer: reference, agreed: agreeing)
+        try requireAdmissible(receipt)
+        let endpoints = await Self.endpoints(of: agreeing.map(\.peer))
+        return (reference, endpoints, receipt)
     }
 
     /// Everything about the request that can be judged before a peer is
