@@ -106,6 +106,11 @@ public actor TxBroadcaster {
         var attempt: Int
         var nextAttemptAt: Date
         var feeFloorExceededEmitted = false
+        /// Some peer was handed the bytes at least once. Sticky for the
+        /// entry's life and persisted: a peer that took the transaction
+        /// keeps it, so its later disconnection is not a relay failure, and
+        /// a relaunch must not forget that the network has it.
+        var served = false
         /// Confirmation tombstone (#157), mirroring `WalletUTXO.SpentMarker`:
         /// a confirmed entry is kept, silent, rather than deleted. Deleting it
         /// destroyed the raw transaction — the only thing that makes
@@ -128,6 +133,9 @@ public actor TxBroadcaster {
             /// The confirmation tombstone; absent in stores written before
             /// #157, which load with every entry unconfirmed as they were.
             var confirmedAtHeight: UInt32?
+            /// Whether some peer was ever served the bytes; absent in stores
+            /// written before it, which load as not.
+            var served: Bool?
         }
         var transactions: [String: StoredTx]
     }
@@ -335,6 +343,13 @@ public actor TxBroadcaster {
         scheduleRebroadcast()
     }
 
+    /// Whether some peer was ever handed this transaction's bytes, across
+    /// disconnections and relaunches. What "seen by the network" may
+    /// honestly rest on.
+    public func wasServed(_ txid: Data) -> Bool {
+        pending[txid]?.served ?? false
+    }
+
     /// Per-peer relay state for a pending tx, keyed by endpoint description.
     public func relayStatus(_ txid: Data) -> [String: PeerAnnouncementState] {
         pending[txid]?.peers.mapValues(\.state) ?? [:]
@@ -521,6 +536,7 @@ public actor TxBroadcaster {
                                    nextAttemptAt: record.confirmedAtHeight == nil
                                        ? Date(timeIntervalSince1970: record.nextAttemptAt)
                                        : .distantFuture,
+                                   served: record.served ?? false,
                                    confirmedAtHeight: record.confirmedAtHeight)
         }
         return result
@@ -654,8 +670,11 @@ public actor TxBroadcaster {
     private func markPeerFailed(_ peer: PeerConnection, reason: String) {
         let key = peer.endpoint.description
         for (txid, entry) in pending {
+            // A peer that was handed the bytes keeps them; its going away
+            // afterwards is not a failure to relay.
             guard entry.confirmedAtHeight == nil, let relay = entry.peers[key],
-                  relay.state != .failed, relay.state != .deprioritized else { continue }
+                  relay.state != .failed, relay.state != .deprioritized,
+                  relay.state != .served else { continue }
             pending[txid]?.peers[key]?.state = .failed
             emit(.failed(txid: txid, peer: peer.endpoint, reason: reason))
         }
@@ -798,6 +817,12 @@ public actor TxBroadcaster {
             do {
                 try await peer.send(.tx(transaction))
                 relay.state = .served
+                if pending[vector.hash]?.served != true {
+                    pending[vector.hash]?.served = true
+                    // Best effort: a write that fails forgets only that the
+                    // network has it, which the next announcement re-learns.
+                    try? persist(pending)
+                }
                 pending[vector.hash]?.peers[key] = relay
                 emit(.served(txid: vector.hash, peer: peer.endpoint))
             } catch {
@@ -822,7 +847,8 @@ public actor TxBroadcaster {
                                                   nextAttemptAt: entry.confirmedAtHeight == nil
                                                       ? entry.nextAttemptAt.timeIntervalSince1970
                                                       : 0,
-                                                  confirmedAtHeight: entry.confirmedAtHeight))
+                                                  confirmedAtHeight: entry.confirmedAtHeight,
+                                                  served: entry.served))
             }))
         do {
             let data = try JSONEncoder().encode(stored)
