@@ -35,11 +35,17 @@ struct InspectionTests {
         let outputs = try #require(parsed["outputs"] as? [[String: Any]])
         #expect(outputs.count == 2)
         #expect(outputs.first?["address"] as? String == "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr")
+        // The prefix follows the network named on the command line, not the
+        // key's version bytes: the same script under regtest is a bcrt1 address.
+        let regtest = try object(["descriptor", "tr(" + account + "/<0;1>/*)", "regtest"])
+        let regtestOutputs = try #require(regtest["outputs"] as? [[String: Any]])
+        #expect(regtestOutputs.first?["scriptPubKey"] as? String == outputs.first?["scriptPubKey"] as? String)
+        #expect((regtestOutputs.first?["address"] as? String)?.hasPrefix("bcrt1p") == true)
     }
 
     @Test("invalid input and retired signing commands fail", arguments: [
         ["tx", "nope"], ["psbt", "nope"], ["descriptor", "nope"], ["tx", "00", "extra"],
-        ["descriptor", "rawtr(00)", "regtest"], ["musig-sign-psbt", "anything"], ["tx"]
+        ["descriptor", "rawtr(00)", "testnet"], ["musig-sign-psbt", "anything"], ["tx"]
     ])
     func invalid(_ arguments: [String]) {
         #expect(throws: (any Error).self) { try InspectionCommand.render(arguments) }

@@ -6,7 +6,7 @@ enum InspectionCommand {
     Offline inspection using the app's parsers:
       winnow-debug inspect tx <hex>
       winnow-debug inspect psbt <base64>
-      winnow-debug inspect descriptor <descriptor> [mainnet|signet]
+      winnow-debug inspect descriptor <descriptor> [mainnet|signet|regtest]
     Descriptor inspection shows index 0 for each multipath choice.
     """
 
@@ -32,8 +32,8 @@ enum InspectionCommand {
             ]
         case "descriptor" where arguments.count <= 3:
             let network = arguments.count == 3 ? arguments[2] : "signet"
-            guard ["mainnet", "signet"].contains(network) else { throw DebugError.usage(usage) }
-            let outputs = try Descriptor(arguments[1]).derived(index: 0, network: network == "mainnet" ? .mainnet : .testnet)
+            guard let chain = BitcoinNetwork(rawValue: network) else { throw DebugError.usage(usage) }
+            let outputs = try Descriptor(arguments[1]).derived(index: 0, network: chain)
             value = ["network": network, "index": 0, "outputs": outputs.enumerated().map { choice, output in
                 ["choice": choice, "scriptPubKey": output.scriptPubKey.hex, "address": output.address] as [String: Any]
             }]

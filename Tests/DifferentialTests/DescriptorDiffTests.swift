@@ -29,7 +29,7 @@ struct DescriptorDiffTests {
         #expect(core.count == Self.window.count)
         for (offset, expected) in core.enumerated() {
             let ours = try descriptor.derived(index: UInt32(Self.window.lowerBound + offset),
-                                              network: .testnet)
+                                              network: .signet)
             #expect(ours.count == 1, "\(file): expected a single (non-multipath) output")
             #expect(ours[0].address == expected,
                     "\(file) index \(Self.window.lowerBound + offset)")
@@ -79,7 +79,7 @@ struct DescriptorDiffTests {
         #expect(core.count == Self.window.count)
         for (offset, expected) in core.enumerated() {
             let ours = try descriptor.derived(index: UInt32(Self.window.lowerBound + offset),
-                                              network: .testnet)
+                                              network: .signet)
             #expect(ours[0].address == expected, "musig() index \(Self.window.lowerBound + offset)")
         }
     }

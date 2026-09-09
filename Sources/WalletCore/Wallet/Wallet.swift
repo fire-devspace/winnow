@@ -752,11 +752,11 @@ public actor Wallet {
 
     /// scriptPubKey at (chain, index), derived from the multipath descriptor.
     public func scriptPubKey(chain: AddressChain, index: UInt32) throws -> Data {
-        try descriptor.derived(index: index, network: Self.hdNetwork(for: network))[chain.rawValue].scriptPubKey
+        try descriptor.derived(index: index, network: network)[chain.rawValue].scriptPubKey
     }
 
     public func address(chain: AddressChain, index: UInt32) throws -> String {
-        try descriptor.derived(index: index, network: Self.hdNetwork(for: network))[chain.rawValue].address
+        try descriptor.derived(index: index, network: network)[chain.rawValue].address
     }
 
     /// The next unused receive address; marks it used (advances the index).
