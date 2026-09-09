@@ -81,6 +81,30 @@ public actor TxBroadcaster {
         /// A scheduled retry could not be durably recorded, so automatic
         /// relay stopped instead of looping with an in-memory-only state.
         case persistenceFailed(reason: String)
+        /// The relay-only session this broadcaster opened has ended: it is no
+        /// longer relaying while the app is idle. The pool it narrowed has
+        /// been stopped, unless the caller had already resumed full service on
+        /// it. Anything still pending stays saved and goes out on the next
+        /// start.
+        case relaySessionEnded(reason: RelaySessionEnd)
+    }
+
+    /// Why a relay-only session ended — which is why the wallet stopped
+    /// relaying a payment with nothing else running.
+    public enum RelaySessionEnd: String, Equatable, Sendable {
+        /// There is nothing left to relay: the payment confirmed, was
+        /// cancelled, or was replaced. The session did what it was for.
+        case drained
+        /// The seats it was holding are gone: a remote went away, or a data
+        /// fault unseated the last one. A relay-only pool dials no
+        /// replacement by design, so nothing could be announced again, and no
+        /// confirmation can arrive over a pool that refuses filter sync — the
+        /// session would have been peers held open for nothing.
+        case seatsGone
+        /// A retry could not be saved, so the backoff loop halted. Nothing
+        /// will be announced again, and with no announcement and no
+        /// confirmation the session had no way left to end.
+        case persistenceBlocked
     }
 
     /// Per-peer relay progress for one pending transaction.
@@ -283,13 +307,25 @@ public actor TxBroadcaster {
     /// Watching for the drain is not the caller's job. Every path that empties
     /// the pending set — a confirmation, a cancellation, a replacement —
     /// already reschedules the backoff loop, and the session ends there: the
-    /// pool stops itself and persists its good-peers list. After that the pool
-    /// is stopped, so a caller that wants to relay again starts it first.
+    /// pool stops itself and persists its good-peers list.
+    ///
+    /// Which of those paths can actually happen is worth saying plainly. A
+    /// confirmation is not one of them while the session runs: it is observed
+    /// through the filter sync a narrowed pool refuses, so it arrives only
+    /// once somebody resumes full service. What ends a session in practice is
+    /// the payment being cancelled or replaced, its seats going (the pool
+    /// prunes a seat whose connection closed, and the next backoff attempt
+    /// finds none left), or the caller resuming full service and the sync
+    /// that follows confirming the payment. Every one of them emits
+    /// `.relaySessionEnded(reason:)`, and anything still pending stays saved
+    /// for the caller's next `PeerPool.start()`. After the session ends the
+    /// pool is stopped, so a caller that wants to relay again starts it first.
     ///
     /// - Parameter seats: peers to keep, defaulting to `PeerPool.defaultRelaySeats`.
     /// - Returns: whether a session was opened, which is whether anything is
     ///   actually being relayed. False means the pool was stopped instead,
-    ///   for one of these reasons: nothing was pending; the pool kept no
+    ///   for one of these reasons: nothing was pending; a retry could not be
+    ///   saved, so the backoff loop is already halted; the pool kept no
     ///   seat, because it was already stopped, or its peers had all gone, or
     ///   the seat it kept was lost while it tore down the rest; or the
     ///   pending set drained, or the broadcaster was shut down, while the
@@ -310,6 +346,18 @@ public actor TxBroadcaster {
     public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async throws -> Bool {
         guard !stopped else { throw TxBroadcasterError.stopped }
         guard hasPendingRelay else {
+            relayOnlySession = false
+            await pool.stop()
+            return false
+        }
+        // A halted backoff loop is a session that cannot announce and cannot
+        // end: `fireDueAttempts` stopped after a failed write, so nothing is
+        // re-announced, and a confirmation cannot arrive over a pool that
+        // refuses filter sync. That is the zero-seat state reached before the
+        // pool is even narrowed, and it is refused for the same reason. Still
+        // before the first await, so the plain `stop()` the nothing-pending
+        // branch uses is the right one here too.
+        guard !persistenceBlocked else {
             relayOnlySession = false
             await pool.stop()
             return false
@@ -490,6 +538,41 @@ public actor TxBroadcaster {
         guard relayOnlySession else { return }
         relayOnlySession = false
         Task { [pool] in await pool.stopIfRelayOnly() }
+        emit(.relaySessionEnded(reason: .drained))
+    }
+
+    /// Ends the session, stops the pool it narrowed, and says why.
+    ///
+    /// The awaited twin of `closeRelayOnlySession`, for the reasons a session
+    /// ends that are not the drain. Every caller of this one is already
+    /// suspended, so the stop is awaited and the event follows it: a
+    /// subscriber that sees `.relaySessionEnded` here is looking at a pool
+    /// that has already gone quiet. The re-read is the same re-read for the
+    /// same reason — a caller that resumed full service has taken the pool
+    /// back, and the session expires over it rather than taking its peers.
+    private func endRelayOnlySession(reason: RelaySessionEnd) async {
+        guard relayOnlySession else { return }
+        relayOnlySession = false
+        await pool.stopIfRelayOnly()
+        emit(.relaySessionEnded(reason: reason))
+    }
+
+    /// Ends a session with no seat left to announce over.
+    ///
+    /// The mode is still not self-healing: a lost seat is not replaced, here
+    /// or anywhere, because replacing it means dialling. What must not happen
+    /// is the session outliving its seats. The remote goes away and the
+    /// pool's relay-only prune drops the seat, or a data fault unseats the
+    /// last one through `misbehaving`, and the pool is then empty in a mode
+    /// that dials nothing: `announce` reaches nobody, no confirmation can
+    /// arrive over a pool that refuses filter sync, and the session had
+    /// nothing left that could end it — peers held open, and the caller told
+    /// the payment is relaying in the background. It ends here instead, the
+    /// caller is told which way it went, and everything still pending stays
+    /// saved for the next `PeerPool.start()`.
+    private func endRelayOnlySessionIfSeatsGone() async {
+        guard relayOnlySession, await pool.connectedPeers().isEmpty else { return }
+        await endRelayOnlySession(reason: .seatsGone)
     }
 
     private func removeSubscriber(_ id: UUID) {
@@ -860,6 +943,13 @@ public actor TxBroadcaster {
     /// Announces every tx whose backoff attempt is due, then advances its
     /// schedule and persists.
     private func fireDueAttempts() async -> Bool {
+        // Where a session that has lost its seats is noticed: the pool prunes
+        // a seat whose connection closed, and the attempt that follows has
+        // nobody to announce to. The attempt itself then runs as it always
+        // has over an empty pool — the schedule advances, the announcement
+        // reaches nobody — so the payment is still pending, and still saved,
+        // when the caller starts the pool again.
+        await endRelayOnlySessionIfSeatsGone()
         await ensurePeerListeners()
         let firedAt = now()
         let dueTxids = pending.keys.sorted(by: { $0.hex < $1.hex }).filter {
@@ -884,6 +974,11 @@ public actor TxBroadcaster {
         } catch {
             persistenceBlocked = true
             emit(.persistenceFailed(reason: error.localizedDescription))
+            // The loop stops here, and a relay-only session would outlive it:
+            // nothing is announced again, and a confirmation cannot arrive
+            // over a narrowed pool. Peers held open for relay that has
+            // stopped is the one thing the session must not become.
+            await endRelayOnlySession(reason: .persistenceBlocked)
             return false
         }
 

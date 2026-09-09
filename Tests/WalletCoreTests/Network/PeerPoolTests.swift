@@ -331,6 +331,55 @@ struct PeerPoolTests {
         await pool.stop()
     }
 
+    /// A session that never heals still has to be honest about what it holds.
+    ///
+    /// `enterRelayOnly` cancels the replacement monitor, and that monitor is
+    /// the only thing in the pool that drops a seat nobody reported. So a
+    /// remote that simply goes away — the ordinary end of a mobile connection
+    /// — left its seat in `peers` for as long as the session lasted:
+    /// `connectedPeers()` went on reporting it, every announcement over it
+    /// failed silently, and the session had nothing left that could end it.
+    /// The prune pass runs in the cancelled monitor's place and does the one
+    /// half of its job a relay-only session can have. It drops what has gone,
+    /// and it dials nothing: the seat is not replaced, which is the mode, but
+    /// it is not claimed either.
+    @Test("a relay-only session drops a seat that is gone and dials no replacement")
+    func relayOnlyPrunesADeadSeat() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        var byEndpoint: [PeerEndpoint: LoopbackNode] = [:]
+        for _ in 0 ..< 2 {
+            let node = LoopbackNode(params: params)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+            byEndpoint[await node.endpoint] = node
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: params, peerCount: 2, manualPeers: endpoints,
+                            dialTimeout: .milliseconds(500))
+        // The pass runs on the replacement monitor's cadence, thirty seconds.
+        // This asks for the same pass sooner rather than sleeping through it.
+        await pool.pruneRelaySeatsEvery(.milliseconds(50))
+        await pool.start()
+        #expect(await pool.connectedPeers().count == 2)
+
+        await pool.enterRelayOnly(seats: 1)
+        let seat = try #require(await pool.connectedPeers().first)
+        let kept = try #require(byEndpoint[await seat.endpoint])
+
+        // The remote goes away without anyone telling the pool.
+        await kept.stop()
+        #expect(await pollUntil(.seconds(10)) { await pool.connectedPeers().isEmpty },
+                "a seat whose connection is gone must not go on being reported as held")
+        #expect(await pool.mode == .relayOnly)
+        #expect(await pool.isRunning, "pruning is not stopping: what the pool is for is the owner's call")
+        #expect(await pool.connectionStatus.attempts == 0,
+                "the seat is dropped, never replaced — replacing it means dialling")
+        await pool.stop()
+    }
+
     @Test("a dial already racing when the pool narrows is not seated")
     func relayOnlyRefusesInFlightDials() async throws {
         // One node answers at once and two answer late, so the pool is still

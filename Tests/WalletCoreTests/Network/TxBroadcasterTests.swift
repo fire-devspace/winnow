@@ -973,6 +973,221 @@ struct TxBroadcasterTests {
         #expect(await pool.mode == .full)
         await pool.stop()
     }
+
+    /// A session ends when its seats are gone, and says so.
+    ///
+    /// The mode dials no replacement, which is the point of it, and the pool
+    /// now drops a seat whose connection has closed rather than reporting one
+    /// that is not there. What was left was a session over an empty pool:
+    /// `announce` reached nobody on every attempt, and no confirmation could
+    /// arrive either, because a confirmation comes through the filter sync
+    /// the mode refuses. The peers were held open and the caller was told the
+    /// payment was relaying in the background, for as long as the app stayed
+    /// closed. The backoff attempt is where it is noticed, and the session
+    /// ends there: the pool stops, the caller is told which way it went, and
+    /// the payment stays saved for the next start.
+    @Test("a relay-only session whose seat is gone ends, and stops the pool")
+    func relayOnlyEndsWhenItsSeatIsGone() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        // The prune and the backoff attempt are what notice, in that order, so
+        // both run on the test's timescale instead of the wallet's.
+        await pool.pruneRelaySeatsEvery(.milliseconds(50))
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .milliseconds(200),
+                                            maxRebroadcastInterval: .milliseconds(200))
+        defer { Task { await broadcaster.shutdown() } }
+        let seen = EventCollector<TxBroadcaster.Event>()
+        let events = await broadcaster.events()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+        #expect(try await broadcaster.enterRelayOnly(seats: 1))
+        #expect(await pool.connectedPeers().count == 1)
+
+        // The remote goes away, which is how a mobile connection usually ends.
+        await node.stop()
+
+        #expect(await pollUntil(.seconds(15)) {
+            seen.events.contains(.relaySessionEnded(reason: .seatsGone))
+        }, "a session with nothing left to announce over must end, not wait forever")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await poolIsStopped(pool), "the peers it was holding go with it")
+        #expect(await broadcaster.pendingTxids == [txid],
+                "the payment is still pending and still saved: it goes out on the next start")
+    }
+
+    /// The other way the last seat goes: a data fault unseats it. `misbehaving`
+    /// removes the peer and calls `replenish`, which a relay-only session
+    /// refuses, so the pool is simply empty — and that is the state a scan
+    /// still unwinding leaves behind when an app narrows the pool on going
+    /// idle, which is exactly when this session is opened.
+    @Test("a fault that takes the last seat ends the session on the next attempt")
+    func relayOnlyEndsWhenAFaultTakesTheLastSeat() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .milliseconds(200),
+                                            maxRebroadcastInterval: .milliseconds(200))
+        defer { Task { await broadcaster.shutdown() } }
+        let seen = EventCollector<TxBroadcaster.Event>()
+        let events = await broadcaster.events()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+
+        _ = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        #expect(try await broadcaster.enterRelayOnly(seats: 1))
+        let seat = try #require(await pool.connectedPeers().first)
+
+        await pool.misbehaving(seat, reason: "test: a filter commitment from a scan still unwinding")
+        #expect(await pool.connectedPeers().isEmpty)
+        #expect(await pool.mode == .relayOnly, "nothing dials a replacement, which is the mode")
+
+        #expect(await pollUntil(.seconds(15)) {
+            seen.events.contains(.relaySessionEnded(reason: .seatsGone))
+        })
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await poolIsStopped(pool))
+    }
+
+    /// Ending a session must not take a pool the caller has resumed. The
+    /// session's seats can be gone and the pool be in full service at the same
+    /// instant — the app comes back while its last seat is being unseated —
+    /// and the end is then only the session's: `stopIfRelayOnly` re-reads the
+    /// mode as one job on the pool, finds full service, and declines.
+    @Test("seats gone on a pool the caller resumed ends the session and keeps the pool")
+    func relayOnlySeatsGoneLeavesAResumedPoolAlone() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        // The seeds resolve to nothing and the one manual peer is refused for
+        // the rest of the run by the fault below, so the resume finds nothing
+        // to dial and the attempt lands on a pool that is empty and in full
+        // service, which is the case being pinned.
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint],
+                            dialTimeout: .milliseconds(500),
+                            seedResolver: SeedResolver { _, _, _ in [] })
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .milliseconds(200),
+                                            maxRebroadcastInterval: .milliseconds(200))
+        defer { Task { await broadcaster.shutdown() } }
+        let seen = EventCollector<TxBroadcaster.Event>()
+        let events = await broadcaster.events()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+
+        _ = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        #expect(try await broadcaster.enterRelayOnly(seats: 1))
+        let seat = try #require(await pool.connectedPeers().first)
+        await pool.misbehaving(seat, reason: "test: a data fault takes the last seat")
+        await pool.start()
+        #expect(await pool.isRunning, "the app is back, and the pool is its caller's again")
+        #expect(await pool.connectedPeers().isEmpty, "with nothing left to dial")
+
+        #expect(await pollUntil(.seconds(15)) {
+            seen.events.contains(.relaySessionEnded(reason: .seatsGone))
+        })
+        #expect(await broadcaster.isRelayOnly == false)
+        // Give a stop that was queued anyway time to land before reading.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await pool.isRunning, "a resumed pool is not stopped by a session ending over it")
+        #expect(await pool.mode == .full)
+        await pool.stop()
+    }
+
+    /// A halted retry loop is the zero-seat state reached before the pool is
+    /// even narrowed. `fireDueAttempts` stops after a failed write, so nothing
+    /// is announced again; a confirmation cannot arrive over a narrowed pool;
+    /// and the session would have been peers held open with the caller told
+    /// the payment was relaying. It is refused instead, and the pool goes
+    /// quiet, which is what the caller asked for.
+    @Test("a session is refused while retries cannot be saved")
+    func relayOnlyRefusedWhileRetriesCannotBeSaved() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let store = tempFileURL("pending-relay-blocked.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .milliseconds(100))
+        defer { Task { await broadcaster.shutdown() } }
+        let seen = EventCollector<TxBroadcaster.Event>()
+        let events = await broadcaster.events()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
+        #expect(await pollUntil(.seconds(15)) {
+            seen.events.contains { if case .persistenceFailed = $0 { return true }; return false }
+        }, "the retry loop has to halt before there is anything to refuse")
+
+        let opened = try await broadcaster.enterRelayOnly(seats: 1)
+        #expect(opened == false, "a session that can never announce is not a session")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await poolIsStopped(pool))
+        #expect(await pool.mode == .full, "no session was left open on it")
+        #expect(await broadcaster.pendingTxids == [txid])
+    }
+
+    /// The same halt reached from inside a session. The write fails on a
+    /// backoff attempt this time, so the loop stops with the pool already
+    /// narrowed: nothing is announced again, and nothing could end the session
+    /// either. It ends here, and names the reason it did.
+    @Test("a session whose retries stop being saved ends instead of holding the pool")
+    func relayOnlyEndsWhenARetryCannotBeSaved() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let store = tempFileURL("pending-relay-halted.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool, storageURL: store,
+                                            rebroadcastBaseInterval: .milliseconds(200),
+                                            maxRebroadcastInterval: .milliseconds(200))
+        defer { Task { await broadcaster.shutdown() } }
+        let seen = EventCollector<TxBroadcaster.Event>()
+        let events = await broadcaster.events()
+        let consumer = Task { for await event in events { seen.add(event) } }
+        defer { consumer.cancel() }
+
+        let txid = try await broadcaster.broadcast(
+            makeFakeSegwitTx().serialized(includeWitness: true))
+        #expect(try await broadcaster.enterRelayOnly(seats: 1))
+
+        // The store goes out from under the retry loop, which is what a device
+        // that has run out of room does to it.
+        try FileManager.default.removeItem(at: store.deletingLastPathComponent())
+        #expect(await pollUntil(.seconds(15)) {
+            seen.events.contains(.relaySessionEnded(reason: .persistenceBlocked))
+        }, "a session that will never announce again must not hold the peers")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await poolIsStopped(pool))
+        #expect(await broadcaster.pendingTxids == [txid])
+    }
 }
 
 /// Parks the pool inside `enterRelayOnly` until the test lets it go, so the

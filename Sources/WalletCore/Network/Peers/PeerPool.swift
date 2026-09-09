@@ -70,6 +70,12 @@ public actor PeerPool {
     /// The source class of every currently connected peer, parallel to `peers`.
     private var seatedSources: [PeerEndpoint: PeerSource] = [:]
     private var monitorTask: Task<Void, Never>?
+    /// The prune-only pass a relay-only session runs where full service runs
+    /// its replacement monitor. Its own handle, because the two are not the
+    /// same job: this one drops seats that have gone and never dials, and
+    /// `start()` has to be able to cancel it and install the real monitor
+    /// without either standing in for the other.
+    private var relayPruneTask: Task<Void, Never>?
     private var started = false
     private var replenishing = false
     private var attemptsThisRound = 0
@@ -91,6 +97,10 @@ public actor PeerPool {
     /// failure up to the cap.
     static let transportCooldownBase: Duration = .seconds(30)
     static let transportCooldownCap: Duration = .seconds(600)
+    /// How often either monitor runs: the replacement monitor full service
+    /// installs, and the prune pass a relay-only session runs in its place.
+    /// One number, because "the same cadence" is the whole claim.
+    static let monitorInterval: Duration = .seconds(30)
     /// How far behind our own validated header tip a peer's reported height
     /// may be before it is unseated. A hundred blocks is about sixteen hours,
     /// the wallet's own reorg horizon, and far inside what a node still in
@@ -117,6 +127,10 @@ public actor PeerPool {
     /// suspension is checked as an ordering rather than raced for. Nil
     /// outside the tests, and read nowhere else.
     private var narrowingHold: (@Sendable () async -> Void)?
+    /// The cadence the relay-only prune actually runs at: `monitorInterval`,
+    /// and test-visible (@testable) so a case can watch a dead seat be
+    /// dropped instead of sleeping through half a minute.
+    private var relayPruneInterval: Duration = PeerPool.monitorInterval
 
     /// What a pool is doing for its owner right now.
     public enum Mode: String, Sendable, Equatable {
@@ -203,6 +217,12 @@ public actor PeerPool {
         guard !started || resuming else { return }
         mode = .full
         relaySeats = 0
+        // The relay-only prune runs where the replacement monitor would, so
+        // full service must not inherit it: it drops dead seats and dials
+        // nothing, and what full service needs is the monitor installed below,
+        // which replaces what it drops.
+        relayPruneTask?.cancel()
+        relayPruneTask = nil
         started = true
         await replenish()
         // `mode` as well as `monitorTask`, because `replenish` above is a long
@@ -213,7 +233,7 @@ public actor PeerPool {
         guard mode == .full, monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: Self.monitorInterval)
                 guard !Task.isCancelled, let self else { return }
                 await self.pruneAndReplenish()
             }
@@ -239,10 +259,20 @@ public actor PeerPool {
     /// Deliberately not a self-healing mode. A seat lost while relaying is not
     /// replaced, because replacing it means dialling, which is the cost and
     /// the exposure this session exists to avoid; the session holds what it
-    /// was given until the caller resumes full service with `start()`. Callers
-    /// that need the pool to stop itself once relay is finished should drive
-    /// this through `TxBroadcaster.enterRelayOnly(seats:)`, which owns the
-    /// pending set and stops the pool when it drains.
+    /// was given until the caller resumes full service with `start()`.
+    ///
+    /// It does not go on reporting a seat that has gone, though. In the
+    /// replacement monitor's place, and on its cadence, the session runs
+    /// `pruneRelaySeats`: seats whose connection is closed are dropped, and
+    /// nothing is dialled to take their place. Without it a remote that went
+    /// away left its seat in `peers` for the whole session — `connectedPeers()`
+    /// kept reporting it, every announcement over it failed silently, and the
+    /// session had no way to end. A session can therefore reach zero seats,
+    /// which is the honest end of it: `TxBroadcaster.enterRelayOnly(seats:)`
+    /// reads the pool on its next backoff attempt and closes the session
+    /// there. Callers that need the pool to stop itself once relay is
+    /// finished should drive this through that call, which owns the pending
+    /// set and stops the pool when it drains.
     ///
     /// A stopped pool is not narrowed: there is nothing to keep, and dialling
     /// here would be the very thing the mode refuses.
@@ -291,6 +321,12 @@ public actor PeerPool {
         for peer in dropped { await peer.disconnect() }
         if let narrowingHold { await narrowingHold() }
         persistKnownGood()
+        // The mode is asked again because a `start()` can land in the
+        // disconnects above and take the pool back. It cancelled the prune
+        // and installed the replacement monitor as it went, and a session
+        // that is no longer a session must not put its own pass back on a
+        // pool in full service.
+        if mode == .relayOnly { startRelayPruneMonitor() }
         // Counted after the loop, for the same reason the split is committed
         // before it. The seat the split kept can be removed during these
         // awaits by the same `transportFailure` or `misbehaving` that shifts
@@ -304,6 +340,10 @@ public actor PeerPool {
 
     /// Test-visible (@testable). See `narrowingHold`.
     func holdNarrowing(_ hold: (@Sendable () async -> Void)?) { narrowingHold = hold }
+
+    /// Test-visible (@testable). See `relayPruneInterval`. Read when a session
+    /// installs its prune pass, so it is set before `enterRelayOnly`.
+    func pruneRelaySeatsEvery(_ interval: Duration) { relayPruneInterval = interval }
 
     /// Stops the pool, but only while it is still the relay-only session that
     /// asked to — one actor job, so nothing can land between the question and
@@ -338,6 +378,8 @@ public actor PeerPool {
     public func stop() async {
         monitorTask?.cancel()
         monitorTask = nil
+        relayPruneTask?.cancel()
+        relayPruneTask = nil
         started = false
         mode = .full
         relaySeats = 0
@@ -745,6 +787,48 @@ public actor PeerPool {
         }
         peers = alive
         await replenish()
+    }
+
+    /// The relay-only session's own monitor: prune, on the replacement
+    /// monitor's cadence, and never dial.
+    ///
+    /// `enterRelayOnly` cancels the replacement monitor, and that monitor is
+    /// the only thing in the pool that drops a seat nobody reported. So a
+    /// remote that simply went away — the ordinary end of a mobile
+    /// connection — left its seat in `peers` for as long as the session
+    /// lasted: `connectedPeers()` kept reporting it, `TxBroadcaster.announce`
+    /// skipped it on a failed send without saying so, and the session had
+    /// nothing left that could end it. This is the half of that monitor a
+    /// relay-only session can have, with the dialling half left out.
+    private func startRelayPruneMonitor() {
+        relayPruneTask?.cancel()
+        let interval = relayPruneInterval
+        relayPruneTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                await self.pruneRelaySeats()
+            }
+        }
+    }
+
+    /// Drops the seats whose connection has gone. Dials nothing: the session
+    /// holds what it was given, and this only stops it claiming more.
+    ///
+    /// The removal is by endpoint rather than by writing back the survivors.
+    /// `pruneAndReplenish` reads `peers`, awaits every `isConnected` and then
+    /// assigns `alive`, which reinstates any seat a `transportFailure` or
+    /// `misbehaving` removed while those awaits ran; it gets away with it
+    /// because it replenishes straight afterwards, and this cannot dial, so a
+    /// seat put back here would be put back for good.
+    private func pruneRelaySeats() async {
+        guard mode == .relayOnly else { return }
+        var dead: Set<PeerEndpoint> = []
+        for peer in peers where await peer.isConnected == false {
+            dead.insert(peer.endpoint)
+        }
+        guard !dead.isEmpty else { return }
+        peers.removeAll { dead.contains($0.endpoint) }
     }
 
     /// Dials again immediately (UI retry after exhaustion). No-op while a
