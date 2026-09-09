@@ -1115,13 +1115,49 @@ public actor FilterSync {
             if let hash = await chain.blockHash(at: height) { heightByHash[hash] = height }
         }
 
+        // Every filter of the chunk is verified against its pinned header
+        // before any of them is matched, so a filter that does not reproduce
+        // its header fails the chunk before a match has been delivered.
         var seen: Set<UInt32> = []
+        var verified: [(height: UInt32, message: CFilterMessage)] = []
+        verified.reserveCapacity(responses.count)
         var chunkBytes = 0
         for response in responses {
             let (height, message) = try verifiedFilter(from: response, heightByHash: heightByHash,
                                                        seen: &seen, filterHeaders: filterHeaders)
             chunkBytes += message.filter.count
-            guard !watchScripts.isEmpty else { continue }
+            verified.append((height, message))
+        }
+        peakChunkFilterBytesForTest = max(peakChunkFilterBytesForTest, chunkBytes)
+        // The range scan's byte cap, charged for the whole chunk before any of
+        // it is matched: the bytes have been read either way, and charging
+        // them here means a refusal names everything the run has downloaded
+        // so far. A run overshoots its cap by at most one chunk. Nothing is
+        // charged, and nothing can refuse, on the forward path.
+        try chargeRangeFilterBytes(chunkBytes)
+        guard !watchScripts.isEmpty else { return seen }
+        try await matchFilters(verified, from: peer, watchScripts: watchScripts, onMatch: onMatch)
+        return seen
+    }
+
+    /// Matches a chunk's verified filters against the watch set and delivers
+    /// every hit, reading the run deadline before each filter. Its own
+    /// function so `scanChunk` stays inside the complexity budget: the two
+    /// halves are one chunk read and then judged, and the split follows the
+    /// seam where the range scan's byte cap is charged between them.
+    private func matchFilters(_ verified: [(height: UInt32, message: CFilterMessage)],
+                              from peer: PeerConnection, watchScripts: [Data],
+                              onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
+        for (height, message) in verified {
+            // The run deadline again, per filter rather than per chunk.
+            // Reading it once before the request bounds how long the run
+            // waits for filters and nothing else: every match below fetches a
+            // whole block on a 120-second timeout and then awaits the caller's
+            // `onMatch`, and at a full watch set BIP158 hands back a false
+            // positive every few dozen blocks, so a chunk of 100 can hold a
+            // run for far longer than the cap it was given. Nil, and free, on
+            // the forward path.
+            try checkRangeDeadline()
             let parsed = try message.parsedFilter()
             let filter = try GCSFilter(p: GCSFilter.defaultP, m: GCSFilter.defaultM,
                                        key: Data(message.blockHash.prefix(16)),
@@ -1129,13 +1165,7 @@ public actor FilterSync {
             guard filter.containsAny(watchScripts) else { continue }
             try await deliverMatchedBlock(from: peer, height: height,
                                           blockHash: message.blockHash, onMatch: onMatch)
-        }
-        peakChunkFilterBytesForTest = max(peakChunkFilterBytesForTest, chunkBytes)
-        // Same seam, for the range scan's byte cap: a chunk is charged once it
-        // has been read, so a run overshoots its cap by at most one chunk.
-        // Nothing is charged, and nothing can refuse, on the forward path.
-        try chargeRangeFilterBytes(chunkBytes)
-        return seen
+                }
     }
 
     /// A chunk's deadline, taken from the whole-batch ceiling it replaces:
@@ -1210,6 +1240,15 @@ public actor FilterSync {
                 throw FilterSyncError.badPeerResponse("merkle root mismatch at \(height)")
             }
             try await onMatch(BlockMatch(height: height, blockHash: blockHash, block: block))
+            // The third range-scan seam: a block is up to 4 MB and a restore
+            // pulls one for every false positive as well as every real
+            // payment, so these are the bytes a byte cap has to count. Charged
+            // after the caller has been given the block rather than before:
+            // the bytes are spent either way, and a refusal ahead of delivery
+            // would only make the next run download the same block again to
+            // deliver what this one already holds. The overshoot is one block.
+            // Nil, and free, on the forward path.
+            try chargeRangeBlockBytes(blockResponse.payload.count)
         case .notfound:
             throw FilterSyncError.badPeerResponse("peer lost block at \(height)")
         default:
@@ -1246,6 +1285,7 @@ public actor FilterSync {
         guard data.count <= maximumProgressBytes else {
             throw FilterSyncStorageError.tooLarge(maxBytes: maximumProgressBytes)
         }
+        try refuseForeignRecord(in: data)
         let stored: Progress
         do {
             stored = try JSONDecoder().decode(Progress.self, from: data)
@@ -1254,6 +1294,30 @@ public actor FilterSync {
         }
         try validate(progress: stored, startHeight: startHeight)
         return (.loaded, stored)
+    }
+
+    /// Refuses a file that says it belongs to something else.
+    ///
+    /// The one that can be here by mistake is a range-scan record: it carries
+    /// `nextScanHeight` and `filterHeaders` under these exact names, the
+    /// decoder ignores the keys it was not asked about, and the validation
+    /// below passes on what is left, so a `scanRange` pointed at this wallet's
+    /// progress file would come back and be read as the wallet's own frontier.
+    /// `RangeScanProgress` writes what it is; anything that names itself is
+    /// not forward progress. A file written before the marker existed names
+    /// nothing and still loads, which is what keeps every wallet already on
+    /// disk readable.
+    ///
+    /// Kept out of `load` so the loader's branch count stays where it was.
+    private static func refuseForeignRecord(in data: Data) throws {
+        struct RecordKind: Decodable {
+            let record: String?
+        }
+        guard let kind = (try? JSONDecoder().decode(RecordKind.self, from: data))?.record else {
+            return
+        }
+        throw FilterSyncStorageError.damaged(
+            "the file is a \"\(kind)\" record, not compact-filter progress")
     }
 
     private static func validate(progress: Progress, startHeight: UInt32) throws {

@@ -9,9 +9,9 @@ import Foundation
 /// every batch that committed before them, so the next call carries on from
 /// there with a fresh budget. The shape refusals (`invalidRange`,
 /// `rangeTooWide`, `tooManyScripts`, `tooManyIterations`, `rangeBelowChain`,
-/// `rangeAboveChain`) are decided before any peer is asked, and they mean the
-/// caller must change what it asked for; retrying the same call reproduces
-/// them exactly.
+/// `rangeAboveChain`, `rangeSpansNoCheckpoint`) are decided before any peer is
+/// asked, and they mean the caller must change what it asked for; retrying the
+/// same call reproduces them exactly.
 public enum RangeScanError: LocalizedError, Equatable, Sendable {
     /// `from` is above `to`, or `to` is `UInt32.max`: a completed record has
     /// to be able to name the height after the last one it scanned.
@@ -31,6 +31,16 @@ public enum RangeScanError: LocalizedError, Equatable, Sendable {
     /// header below the base to name one.
     case rangeBelowChain(from: UInt32, start: UInt32)
     case rangeAboveChain(to: UInt32, tip: UInt32)
+    /// The blocks still to scan hold no checkpoint boundary, and the record
+    /// holds no verified filter header below them to anchor on. Nothing would
+    /// judge the filter chain a peer announced for those blocks: the anchor
+    /// would be that peer's word, every header above it derives from the
+    /// anchor by hash chain, the boundary comparison would find no boundary to
+    /// compare, and a lone cfheaders answer is accepted by design. The range
+    /// is refused rather than scanned on one peer's say-so. Widen it up to the
+    /// next multiple of `FilterSync.checkpointInterval`, or run the pass that
+    /// pins the header below `from` first.
+    case rangeSpansNoCheckpoint(from: UInt32, to: UInt32)
     case recordUnreadable
     case recordTooLarge(maxBytes: Int)
     case recordDamaged(String)
@@ -56,6 +66,8 @@ public enum RangeScanError: LocalizedError, Equatable, Sendable {
             "The restore scan starts at block \(from), below block \(start), which is the first block Winnow holds a header for."
         case let .rangeAboveChain(to, tip):
             "The restore scan ends at block \(to), above the validated chain tip \(tip)."
+        case let .rangeSpansNoCheckpoint(from, to):
+            "Blocks \(from) to \(to) hold no filter checkpoint, and Winnow has no verified filter header below them, so nothing could check what a peer sent. Scan a wider range."
         case .recordUnreadable:
             "Winnow could not read the restore scan's progress file. The scan is stopped so a payment is not skipped."
         case let .recordTooLarge(maxBytes):
@@ -93,13 +105,28 @@ public enum RangeScanError: LocalizedError, Equatable, Sendable {
 /// - `scriptsCeiling`, 200 windows of the 100-index restore gap. Matching is
 ///   linear in the script set for every filter in the range, so this is the
 ///   cap that decides how much CPU a pass costs.
-/// - `filterBytesCeiling`, 1 GiB of compact filters in one run. Mainnet
-///   filters run 15-20 KB a block, so the default 64 MiB is roughly 3,500
-///   blocks: a run a phone can finish on a cellular connection, after which
-///   the caller decides whether to spend more.
-/// - `durationCeiling`, an hour. Checked between chunks and between batches,
-///   so a run can overshoot by at most one outstanding peer request; this
-///   bounds how long a restore may hold the pool, not how long a request takes.
+/// - `filterBytesCeiling`, 1 GiB in one run. What it counts is every byte the
+///   run reads off the wire and keeps: the compact filters of the blocks it
+///   scans, plus the full blocks their matches pull down. Both are charged to
+///   the one budget, because on a restore the blocks are the larger half. A
+///   mainnet filter runs 15-20 KB a block and a matched block is up to 4 MB,
+///   so the default 64 MiB is roughly 3,500 blocks when nothing matches and
+///   fewer as matches accumulate: BIP158 false positives alone are about 1 in
+///   40 blocks against a 20,000-script set. `RangeScanOutcome` reports the two
+///   halves separately so a caller can see which one it spent.
+///
+///   The cap is charged after the bytes have arrived, so a run ends slightly
+///   past it. The exact worst case is one chunk of filters plus one block:
+///   a chunk's filters are charged once the whole chunk has been read and
+///   verified, before any of it is matched, which
+///   `FilterSync.chunkByteBound(filters:)` bounds at `filtersPerChunk` times
+///   1.25 MB (125 MB at the default 100), and a matched block is charged once
+///   it has been verified and delivered, bounded by the 4 MB a block message
+///   may carry. A real chunk of 100 mainnet filters is under 2 MB.
+/// - `durationCeiling`, an hour. Read between batches, before every chunk
+///   request, and before every matched block is fetched, so a run overshoots
+///   by at most one outstanding peer request; this bounds how long a restore
+///   may hold the pool, not how long a request takes.
 /// - `iterationsCeiling`, 50 passes over the range. A pass is one fixed-point
 ///   step: the caller derives more scripts from what the last pass found and
 ///   scans the range again. Honest restores converge in two or three.
@@ -120,7 +147,10 @@ public struct RangeScanLimits: Sendable, Equatable {
     public let maxBlocks: UInt32
     /// Watch scripts one pass may look for.
     public let maxScripts: Int
-    /// Compact-filter bytes one run may read before it refuses.
+    /// Bytes one run may read before it refuses: compact filters and the
+    /// blocks their matches fetched, added together. The name is the cap's
+    /// oldest half and stayed for the callers already spelling it, but a
+    /// restore spends most of this budget on blocks.
     public let maxFilterBytes: Int
     /// Wall-clock time one run may take before it refuses.
     public let maxDuration: Duration
@@ -153,7 +183,26 @@ public struct RangeScanLimits: Sendable, Equatable {
 /// does not continue the one an earlier pass verified. A different range is a
 /// different scan and replaces the record, because a record can describe only
 /// one range and keeping the old one would resume the wrong blocks.
+///
+/// The file says which kind of record it is, and both loaders check. Without
+/// that, the two records are interchangeable by accident: this one carries
+/// `nextScanHeight` and `filterHeaders` under the same names the forward
+/// progress file uses, `JSONDecoder` ignores the keys it was not asked about,
+/// and the forward loader's validation passes on the rest. A caller that hands
+/// `scanRange` the wallet's own progress file would then have its restore
+/// quietly rewrite the forward frontier, which is the one thing this whole
+/// file exists not to do. `record` is that marker: the forward loader refuses
+/// a file that carries it, this loader refuses a file that does not, and a
+/// forward file written before the marker existed carries no key and still
+/// loads.
 public struct RangeScanProgress: Codable, Sendable, Equatable {
+    /// What this file is. Written on every save, required on every load.
+    public static let recordKind = "range"
+
+    /// The marker, checked by both loaders. Never anything but `recordKind`:
+    /// it is decoded so a file that names some other kind is refused by name
+    /// rather than by a missing key.
+    public private(set) var record = RangeScanProgress.recordKind
     /// First height of the range, inclusive.
     public var from: UInt32
     /// Last height of the range, inclusive.
@@ -230,6 +279,7 @@ public struct RangeScanProgress: Codable, Sendable, Equatable {
         guard data.count <= FilterSync.rangeRecordMaxBytes else {
             throw RangeScanError.recordTooLarge(maxBytes: FilterSync.rangeRecordMaxBytes)
         }
+        try requireRangeKind(in: data)
         let stored: RangeScanProgress
         do {
             stored = try JSONDecoder().decode(RangeScanProgress.self, from: data)
@@ -238,6 +288,26 @@ public struct RangeScanProgress: Codable, Sendable, Equatable {
         }
         try stored.validate()
         return stored
+    }
+
+    /// Refuses a file that is not a range record before any of it is believed.
+    /// A forward progress file decodes cleanly into this type (it supplies
+    /// `nextScanHeight` and `filterHeaders`, and the rest would come from the
+    /// defaults), so without this a wallet's own progress file would be read
+    /// as a half-finished restore and then overwritten by one.
+    ///
+    /// Kept out of `load` so the loader's branch count stays where it was.
+    private static func requireRangeKind(in data: Data) throws {
+        let kind = (try? JSONDecoder().decode(RecordKind.self, from: data))?.record
+        guard kind == recordKind else {
+            throw RangeScanError.recordDamaged(
+                "the file is not a range-scan record (it is marked \(kind.map { "\"\($0)\"" } ?? "nothing"))")
+        }
+    }
+
+    /// Just the marker, so a file can be classified before it is decoded.
+    private struct RecordKind: Decodable {
+        let record: String?
     }
 
     private static func checkSize(at storageURL: URL) throws {
@@ -333,7 +403,11 @@ struct RangeScanRun: Sendable {
     let maxDuration: Duration
     let maxFilterBytes: Int
     private(set) var filterBytesRead = 0
+    private(set) var blockBytesRead = 0
     private(set) var matchedHeights: [UInt32] = []
+
+    /// What the byte cap is spent against: the filters and the blocks together.
+    var bytesRead: Int { filterBytesRead + blockBytesRead }
 
     init(limits: RangeScanLimits, now: ContinuousClock.Instant = .now) {
         deadline = now.advanced(by: limits.maxDuration)
@@ -351,8 +425,23 @@ struct RangeScanRun: Sendable {
     /// already bounds on the wire.
     mutating func charge(filterBytes: Int) throws {
         filterBytesRead += filterBytes
-        guard filterBytesRead <= maxFilterBytes else {
-            throw RangeScanError.filterBytesExhausted(read: filterBytesRead,
+        try checkBudget()
+    }
+
+    /// Charges a matched block against the same budget. On a restore these
+    /// are the bytes that matter: a block is up to 4 MB where a filter is
+    /// tens of kilobytes, and at a full watch set BIP158 hands back a false
+    /// positive every few dozen blocks, so a cap that counted only filters
+    /// was not a cap on what the run downloaded. Charged once the block has
+    /// been verified and delivered, so the overshoot here is one block.
+    mutating func charge(blockBytes: Int) throws {
+        blockBytesRead += blockBytes
+        try checkBudget()
+    }
+
+    private func checkBudget() throws {
+        guard bytesRead <= maxFilterBytes else {
+            throw RangeScanError.filterBytesExhausted(read: bytesRead,
                                                       limit: maxFilterBytes)
         }
     }
@@ -378,8 +467,13 @@ public struct RangeScanOutcome: Sendable, Equatable {
     public let isComplete: Bool
     /// Which fixed-point pass this run belonged to.
     public let iteration: Int
-    /// Compact-filter bytes this run read, which is what the byte cap counts.
+    /// Compact-filter bytes this run read.
     public let filterBytesRead: Int
+    /// Bytes of matched blocks this run downloaded. Reported beside the
+    /// filters rather than added into them because the two say different
+    /// things about a restore: filters scale with the range, blocks scale
+    /// with what the watch set hit. The byte cap is spent against their sum.
+    public let blockBytesRead: Int
 }
 
 extension FilterSync {
@@ -422,9 +516,37 @@ extension FilterSync {
     /// reproduction, and the chunked fetch with its byte bound. A batch that
     /// fails any of them commits nothing and the record stays where it was.
     ///
-    /// Progress goes to `storageURL`, which must not be the forward progress
-    /// file — it is a different record with a different shape, and a range
-    /// scan neither reads nor writes the forward frontier. Nil keeps the whole
+    /// **The range has to reach a checkpoint boundary, or resume from a
+    /// verified anchor.** That list is only worth what the boundary
+    /// comparison is worth, and the comparison judges the heights a batch
+    /// pins that `cfcheckpt` also speaks for: every positive multiple of
+    /// `FilterSync.checkpointInterval`. A batch that pins none of them is
+    /// compared against nothing. The forward path cannot be in that position
+    /// (it starts from a frontier whose header it has verified, or from
+    /// genesis, whose previous filter header is zero by consensus), but a
+    /// caller here picks both ends of the range, and a range that fits between
+    /// two boundaries has no anchor at all: `anchorPreviousHeader` would take
+    /// the peer's announced previous header on trust, every header above it
+    /// derives from that by hash chain, and a lone cfheaders answer is
+    /// accepted by design. So a run whose first batch would be anchored on a
+    /// peer's word is refused with `rangeSpansNoCheckpoint` before anything is
+    /// asked of anyone, unless the blocks it still has to scan reach a
+    /// boundary. A resumed pass, or the next fixed-point pass, is not in that
+    /// position: its record holds the header below its frontier, pinned by a
+    /// pass that did reach a boundary, and it runs.
+    ///
+    /// The one case the guard cannot cover is a chain whose tip is below the
+    /// first boundary, where no range reaches one because none exists. There
+    /// the announced-count guard requires an empty `cfcheckpt` and there is
+    /// nothing for any comparison on either path to use, so the scan is
+    /// permitted and it is a peer's word. That is a chain shorter than 1,000
+    /// blocks: regtest and a brand-new signet, never a network a restore runs
+    /// against.
+    ///
+    /// Progress goes to `storageURL`, which is not the forward progress file:
+    /// the two records name themselves in the file (`RangeScanProgress.record`)
+    /// and each loader refuses the other's, so passing the wallet's own
+    /// progress file here fails rather than rewrites it. Nil keeps the whole
     /// scan in memory, which means an interrupted run starts over.
     ///
     /// A run interrupted by a cap or a peer fault leaves the record at the
@@ -473,6 +595,11 @@ extension FilterSync {
             from: from, to: to,
             fingerprint: RangeScanProgress.fingerprint(of: watchScripts),
             limits: limits)
+        // Still before a peer is asked anything: the record came off disk and
+        // the tip off our own header chain. It goes here rather than in
+        // `checkShape` because whether the blocks left to scan need a boundary
+        // depends on what the record already holds below them.
+        try Self.checkCheckpointAnchor(of: record, to: to, tip: tip)
         rangeRun = RangeScanRun(limits: limits)
         if !record.isComplete {
             record = try await runRange(record, tip: tip, watchScripts: watchScripts,
@@ -483,7 +610,8 @@ extension FilterSync {
                                 scannedThrough: record.scannedThrough,
                                 isComplete: record.isComplete,
                                 iteration: record.iteration,
-                                filterBytesRead: rangeRun?.filterBytesRead ?? 0)
+                                filterBytesRead: rangeRun?.filterBytesRead ?? 0,
+                                blockBytesRead: rangeRun?.blockBytesRead ?? 0)
     }
 
     /// The batch loop, which is the forward scan's with the range's own record
@@ -510,6 +638,11 @@ extension FilterSync {
             guard let stopHash = await chain.blockHash(at: batchStop) else {
                 throw FilterSyncError.badPeerResponse("missing header at \(batchStop)")
             }
+            // Whether this batch has an anchor of its own, read before the
+            // peer is asked: `pinFilterHeaders` writes the peer's announced
+            // previous header into `proposed` when the record holds none, so
+            // afterwards the two cases look identical.
+            let anchored = batchStart == 0 || record.filterHeaders[String(batchStart - 1)] != nil
             let proposed = try await pinFilterHeaders(
                 batchStart: batchStart, batchStop: batchStop, stopHash: stopHash,
                 peers: peers, startingFrom: record.filterHeaders)
@@ -517,6 +650,17 @@ extension FilterSync {
             // does it: a batch whose checkpoint boundaries disagree with the
             // announced cfcheckpt delivers no match and persists nothing.
             try Self.checkPinnedBoundaries(of: proposed, against: reference, tip: tip)
+            // And the same comparison must have had something to compare.
+            // `checkCheckpointAnchor` refuses this run's first batch before
+            // the run starts, and a full batch spans a boundary by
+            // arithmetic, so reaching this is a bug rather than a peer. It
+            // fails closed anyway: a batch anchored on a peer's word and
+            // pinning no boundary is exactly the shape a fabricated filter
+            // chain has, and the cost of the check is a dictionary lookup.
+            if !anchored {
+                try Self.requireComparedBoundary(in: proposed, batchStart: batchStart,
+                                                 batchStop: batchStop, tip: tip)
+            }
             // Re-derived because the cross-check may have just disconnected
             // the peer at the front of the list.
             peers = try await approved(peers: approvedEndpoints)
@@ -525,8 +669,8 @@ extension FilterSync {
                                   onMatch: collect)
             var candidate = record
             candidate.nextScanHeight = batchStop + 1
-            candidate.filterHeaders = Self.prunedFilterHeaders(proposed,
-                                                               frontier: candidate.nextScanHeight)
+            candidate.filterHeaders = Self.prunedRangeHeaders(
+                proposed, frontier: candidate.nextScanHeight, rangeStart: initial.from)
             try candidate.persist(to: storageURL)
             record = candidate
         }
@@ -583,6 +727,73 @@ extension FilterSync {
         guard to <= tip else { throw RangeScanError.rangeAboveChain(to: to, tip: tip) }
     }
 
+    /// The run must be able to check what a peer tells it. Either the record
+    /// already holds the filter header below the first block still to scan, or
+    /// what is left to scan reaches a checkpoint boundary the announced
+    /// `cfcheckpt` speaks for. With neither, every header the run pins comes
+    /// from one peer's announced anchor and nothing compares it to anything;
+    /// see `scanRange`, which names the two ways out.
+    ///
+    /// Permitted when the chain holds no boundary at all, which is a tip below
+    /// `FilterSync.checkpointInterval`. No range there could satisfy this, so
+    /// refusing would ban the scan outright rather than protect it, and the
+    /// forward path reads such a chain on the same terms.
+    static func checkCheckpointAnchor(of record: RangeScanProgress, to: UInt32,
+                                      tip: UInt32) throws {
+        let frontier = record.nextScanHeight
+        guard frontier <= to else { return }
+        if frontier == 0 || record.filterHeaders[String(frontier - 1)] != nil { return }
+        guard tip >= checkpointInterval else { return }
+        guard boundary(from: frontier, through: to, tip: tip) == nil else { return }
+        throw RangeScanError.rangeSpansNoCheckpoint(from: frontier, to: to)
+    }
+
+    /// Defence in depth for the same rule, one batch at a time: the headers a
+    /// batch proposes must include the boundary its span covers, since that is
+    /// the only height in them `checkPinnedBoundaries` will have compared.
+    static func requireComparedBoundary(in headers: [String: String], batchStart: UInt32,
+                                        batchStop: UInt32, tip: UInt32) throws {
+        guard tip >= checkpointInterval else { return }
+        guard let height = boundary(from: batchStart, through: batchStop, tip: tip),
+              headers[String(height)] != nil else {
+            throw FilterSyncError.checkpointMismatch(
+                "blocks \(batchStart) to \(batchStop) pin no checkpoint the cfcheckpt reference covers")
+        }
+    }
+
+    /// The lowest positive multiple of `checkpointInterval` inside
+    /// [low, high] that the tip reaches, or nil when the span holds none.
+    /// In 64 bits because the round-up overflows `UInt32` near the top of the
+    /// range and a caller may name any height the chain has.
+    static func boundary(from low: UInt32, through high: UInt32, tip: UInt32) -> UInt32? {
+        let interval = UInt64(checkpointInterval)
+        let ceiling = UInt64(min(high, tip))
+        let floor = max(UInt64(low), interval)
+        let first = ((floor + interval - 1) / interval) * interval
+        guard first <= ceiling else { return nil }
+        return UInt32(first)
+    }
+
+    /// The forward scan's pruning, plus the one header a range record needs
+    /// that a forward frontier does not: the filter header below the range's
+    /// own first block.
+    ///
+    /// Pruning keeps what the *next* batch can be asked for, so it drops
+    /// anything below the last checkpoint boundary but one, and the anchor at
+    /// `from - 1` falls out of that window as soon as the range is wider than
+    /// about two intervals. The next fixed-point pass restarts at `from` and
+    /// would then re-anchor on whatever a peer announced, which is the state
+    /// this file's own doc says the kept anchor prevents. Keeping it costs one
+    /// header, and `validate()` already permits it: it sits below
+    /// `nextScanHeight` like every other pinned height.
+    static func prunedRangeHeaders(_ headers: [String: String], frontier: UInt32,
+                                   rangeStart: UInt32) -> [String: String] {
+        var pruned = prunedFilterHeaders(headers, frontier: frontier)
+        guard rangeStart > 0, let anchor = headers[String(rangeStart - 1)] else { return pruned }
+        pruned[String(rangeStart - 1)] = anchor
+        return pruned
+    }
+
     // MARK: - The run's budget, consulted from the filter-chunk loop
 
     /// No-ops on the forward path, where `rangeRun` is nil and the caller's
@@ -593,6 +804,10 @@ extension FilterSync {
 
     func chargeRangeFilterBytes(_ bytes: Int) throws {
         try rangeRun?.charge(filterBytes: bytes)
+    }
+
+    func chargeRangeBlockBytes(_ bytes: Int) throws {
+        try rangeRun?.charge(blockBytes: bytes)
     }
 
     private func note(matchAt height: UInt32) {
