@@ -2,9 +2,13 @@
 
 # Regression tests for repository tooling
 
-These Python tests check the two scripts that turn repository data into public
-journey pages and code-size reports. They prevent missing test mappings or changes
-in counting policy from silently producing misleading output.
+These Python tests check CI selection, public journey generation and code-size
+reports. They prevent skipped checks being mistaken for evidence, missing test
+mappings, and changes in counting policy that produce misleading output.
+
+[test_ci_required.py](test_ci_required.py) checks changed-file selection and
+requires successful jobs on an identical source tree before reusing PR evidence.
+CI and Node integration run it on Linux before selecting their Mac jobs.
 
 [test_build_site.py](test_build_site.py) exercises journey
 validation and generation. [test_report_loc.py](test_report_loc.py)

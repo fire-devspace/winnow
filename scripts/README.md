@@ -11,7 +11,11 @@ consumers. [CI/release operations](../.github/internal/ci-release.md) and
 [debugging](../Tools/Debug/README.md) explain how to use them.
 signet-fixture starts test nodes; runner machines and registration are managed privately.
 
-[Python regressions](tests/README.md) cover site generation and LOC
+[ci-required](ci-required) selects checks from changed inputs and reuses successful
+PR evidence for an identical main tree. Its Linux selection job links the prior
+run; missing or uncertain evidence runs fresh checks.
+
+[Python regressions](tests/README.md) cover CI selection, site generation and LOC
 reporting. The existing CI jobs exercise build, dependency, warning, debugging,
 and release-exclusion checks. Signing/submission commands have external effects;
 their workflow runbooks identify when they are used.

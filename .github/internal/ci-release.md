@@ -18,11 +18,19 @@ swift-secp256k1 is remote. Xcode resolution must match that root lockfile.
 | App Store submission | Manual | Attach a processed build and optionally submit for review |
 | Website | docs changes or manual | Validate generated journey pages, links and LFS, then deploy the same static docs tree |
 
-Hosted runners carry every PR check; the persistent Intel and node runners
-additionally take pull requests from branches in this repository, never from
-forks. Node suites share the source in `Tests/Support/Node` and run serially on
-the single listener; they must never share a mining fixture with another
-concurrent run.
+CI and Node integration first select work on Linux with `scripts/ci-required`.
+README and website-only changes avoid Mac jobs; the HTML/CSS bundled in the app
+still requires an app build. PR jobs check out the PR head explicitly. A main
+push may reuse a successful run of the same workflow only when the entire Git
+tree matches and every required Mac job passed. The selection summary links the
+evidence. API errors, missing evidence and changed trees run fresh checks.
+Manual, nightly and release calls always run fresh checks.
+
+Hosted runners carry the app and package checks. Persistent Intel and node
+runners additionally take pull requests from this repository, never forks.
+Separate Mac VMs can run jobs concurrently. Within each VM one Winnow listener
+serializes jobs, so simulator cleanup and the fixed fixture ports cannot collide.
+Node suites share the source in `Tests/Support/Node`; each job gets its own fixture.
 
 Runner VM provisioning, registration, and machine inventory live in the separate
 private runner repository. Winnow requires a prepared macOS/Xcode seat with

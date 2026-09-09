@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Select expensive CI jobs; uncertainty always means run them."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+PATTERNS = {
+    "ci": r"^(Sources/|Tools/|Tests/|AppTests/|UITests/|Package\.(swift|resolved)$|project\.yml$|\.swiftlint\.yml$|scripts/|\.github/workflows/(ci|node-tests)\.yml$|docs/(site\.css|mobile\.html|read-side\.html|write-side\.html|vaults\.html|import\.html)$)",
+    "node-tests": r"^(Sources/|Tests/|AppTests/|UITests/|Package\.(swift|resolved)$|project\.yml$|scripts/(signet-fixture|ios-simulator|install-xcodegen|ci-required|tests/test_ci_required\.py)$|\.github/workflows/node-tests\.yml$)",
+}
+JOBS = {
+    "ci": {"complexity", "package", "app-build", "package-tests-intel"},
+    "node-tests": {"ui", "differential"},
+}
+
+
+def affects(workflow, paths):
+    return any(not path.endswith("README.md") and re.search(PATTERNS[workflow], path)
+               for path in paths)
+
+
+def git(*args):
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+
+def api(path):
+    return json.loads(subprocess.check_output(["gh", "api", path], text=True,
+                                            stderr=subprocess.PIPE))
+
+
+def successful_source(workflow, repository, tree, request=api):
+    # PR jobs explicitly check out their head SHA. The complete source tree
+    # includes the workflow and this selector, so older policies cannot match.
+    runs = request(f"repos/{repository}/actions/workflows/{workflow}.yml/runs"
+                   "?event=pull_request&status=success&per_page=20")["workflow_runs"]
+    for run in runs:
+        if (run["head_repository"]["full_name"] != repository
+                or run["head_commit"]["tree_id"] != tree
+                or run["event"] != "pull_request"
+                or run["conclusion"] != "success"):
+            continue
+        jobs = request(f"repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
+        passed = {job["name"] for job in jobs if job["conclusion"] == "success"}
+        if JOBS[workflow] <= passed:
+            return run["html_url"]
+    return None
+
+
+def required(workflow, event, payload):
+    main_push = event == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main"
+    if event != "pull_request" and not main_push:
+        return True, "Manual, scheduled, and release runs execute fresh checks."
+    base = payload["pull_request"]["base"]["sha"] if event == "pull_request" else payload["before"]
+    if not re.fullmatch(r"[0-9a-f]{40}", base) or base == "0" * 40:
+        return True, "No usable comparison commit."
+    paths = git("diff", "--name-only", base, "HEAD").splitlines()
+    if not affects(workflow, paths):
+        return False, "No files used by these checks changed."
+    if main_push:
+        evidence = successful_source(workflow, os.environ["GITHUB_REPOSITORY"],
+                                     git("rev-parse", "HEAD^{tree}"))
+        if evidence:
+            return False, f"Identical source already passed every required job: {evidence}"
+    return True, "Changed inputs need fresh checks."
+
+
+def main():
+    workflow = sys.argv[1]
+    if workflow not in PATTERNS:
+        raise SystemExit("usage: ci-required ci|node-tests")
+    try:
+        payload = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        run, reason = required(workflow, os.environ["GITHUB_EVENT_NAME"], payload)
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        run, reason = True, "Could not establish reusable evidence; running fresh checks."
+    print(reason)
+    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        output.write(f"required={str(run).lower()}\n")
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a") as output:
+            output.write(f"### {workflow}\n\n{reason}\n")
+
+
+if __name__ == "__main__":
+    main()

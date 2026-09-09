@@ -62,7 +62,7 @@ public actor LoopbackNode {
     /// The BIP37 relay flag from the client's version handshake.
     public private(set) var clientRelay: Bool?
 
-    /// All decoded post-handshake messages received from the client.
+    /// Decoded post-handshake messages whose automatic response has been sent.
     private var inbox: [PeerMessage] = []
 
     // BIP158 data derived from `chain` on start.
@@ -268,7 +268,6 @@ public actor LoopbackNode {
                         try await send(.verack)
                         continue
                     }
-                    inbox.append(message)
                     if case let .inv(payload) = message, let autoRequestDelay {
                         let vectors = payload.vectors.filter { $0.type.baseType == .tx }
                         if !vectors.isEmpty {
@@ -279,6 +278,7 @@ public actor LoopbackNode {
                         }
                     }
                     try await respond(to: message)
+                    inbox.append(message)
                 }
             }
         } catch {

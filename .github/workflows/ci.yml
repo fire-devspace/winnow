@@ -15,13 +15,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      required: ${{ steps.select.outputs.required }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Check CI selection rules
+        run: python3 -m unittest discover -s scripts/tests -p test_ci_required.py
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-required ci
+
   complexity:
+    needs: changes
+    if: needs.changes.outputs.required == 'true'
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Cyclomatic complexity budget
         run: |
           which swiftlint || brew install swiftlint
@@ -30,24 +54,29 @@ jobs:
         run: scripts/check-test-gates
 
   package-tests-intel:
+    needs: changes
     # The persistent Intel seat takes branches of this repository; forks stay hosted.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: needs.changes.outputs.required == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macos, x86_64]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Swift package tests on x86_64
         run: swift test
 
   package:
+    needs: changes
+    if: needs.changes.outputs.required == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Package and debugging tool tests
         run: |
@@ -120,12 +149,15 @@ jobs:
           retention-days: 7
 
   app-build:
+    needs: changes
+    if: needs.changes.outputs.required == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Install pinned XcodeGen
         run: scripts/install-xcodegen
       - name: Generate Xcode project

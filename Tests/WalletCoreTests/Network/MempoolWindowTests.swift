@@ -218,6 +218,16 @@ struct MempoolWindowTests {
         try await emptyNode.send(announcement)
         // The empty node is asked, answers notfound.
         #expect(await emptyNode.nextMessage(command: "getdata") != nil)
+        // The second peer can otherwise announce before the window processes
+        // notfound. An echo on the first peer's ordered stream is a barrier:
+        // observing it means the earlier notfound was handled by this window.
+        let barrier = Data(repeating: 0xFE, count: 32)
+        let emptyEndpoint = await emptyNode.endpoint
+        await window.watchEcho(of: barrier)
+        try await emptyNode.send(.inv(InventoryPayload([InventoryVector(type: .tx, hash: barrier)])))
+        try #require(await pollUntil {
+            seen.events.contains(.txidEchoed(txid: barrier, peer: emptyEndpoint))
+        })
         try await fullNode.send(announcement)
         // …so the full node's duplicate announcement is NOT deduped away.
         guard case let .getdata(payload) = await fullNode.nextMessage(command: "getdata") else {

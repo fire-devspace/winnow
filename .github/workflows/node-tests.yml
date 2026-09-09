@@ -1,10 +1,10 @@
 name: Node integration
 
-# One disposable custom signet per run on the self-hosted seat. The Core
-# differential leg gates pull requests from branches in this repository and
-# runs on every push to main; the same app journeys run on those revisions,
-# nightly, and on confirmed manual dispatch. Forks never reach the seat. Mining suites
-# stay serial: one listener per VM, one job at a time.
+# Each job owns a disposable custom signet inside its runner VM. Code changes
+# run Core comparisons and app journeys; identical, successful PR evidence can
+# cover the resulting main push. Nightly, release and confirmed manual runs
+# always execute fresh checks. Forks never reach the runner. Mining suites
+# stay serial within each VM: one listener and one job at a time.
 on:
   pull_request:
   push:
@@ -27,8 +27,8 @@ on:
 permissions:
   contents: read
 
-# Per ref, like CI: a pull request never queues behind another ref's nightly.
-# The single listener on the VM is what serializes jobs on the seat.
+# Superseded PR runs are cancelled. Separate VMs can run different jobs;
+# each VM has one listener so simulator and fixture cleanup cannot overlap.
 concurrency:
   group: node-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -45,36 +45,28 @@ jobs:
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      node: ${{ steps.filter.outputs.node }}
+      required: ${{ steps.select.outputs.required }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - id: filter
+      - name: Check CI selection rules
+        run: python3 -m unittest discover -s scripts/tests -p test_ci_required.py
+      - id: select
         env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          case "$EVENT" in
-            pull_request|push) ;;
-            *) echo "node=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
-          esac
-          if [[ -z "$BASE" ]] || ! git cat-file -e "$BASE" 2>/dev/null; then
-            echo "node=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git diff --name-only "$BASE" HEAD | grep -qE '^(Sources/|Tests/|UITests/|AppTests/|Package\.(swift|resolved)$|project\.yml$|scripts/(signet-fixture|ios-simulator|install-xcodegen)$|\.github/workflows/node-tests\.yml$)'; then
-            echo "node=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "node=false" >> "$GITHUB_OUTPUT"
-          fi
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-required node-tests
 
   differential:
     needs: changes
     if: >-
-      needs.changes.outputs.node == 'true'
+      needs.changes.outputs.required == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       && (contains('pull_request push schedule', github.event_name) || inputs.confirm_dedicated_fixture)
     runs-on: [self-hosted, macOS, btc-swift, node-e2e]
@@ -84,6 +76,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Sweep a fixture left by an interrupted run
         run: |
@@ -135,7 +128,7 @@ jobs:
   ui:
     needs: changes
     if: >-
-      needs.changes.outputs.node == 'true'
+      needs.changes.outputs.required == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       && (contains('pull_request push schedule', github.event_name) || inputs.confirm_dedicated_fixture)
     runs-on: [self-hosted, macOS, btc-swift, node-e2e]
@@ -144,6 +137,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Stop simulator miners and fixtures left by an interrupted run
         run: |
