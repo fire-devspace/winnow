@@ -147,8 +147,10 @@ upstream's own checks (`swift test`, `swiftlint`, `scripts/check-test-gates`,
 | [#80](https://github.com/winnowwallet/winnow/pull/80) | Key-origin depth bounded; a child past depth 255 refused | 5fa510f, 90a7149 |
 | [#81](https://github.com/winnowwallet/winnow/pull/81) | A served broadcast stays served when its peer goes away | c776201 |
 | [#82](https://github.com/winnowwallet/winnow/pull/82) | Regtest as a network; the address prefix from the network, not the key | 648ac32, ada4dfa |
+| [#83](https://github.com/winnowwallet/winnow/pull/83) | FilterSync: a batch staged behind its checkpoint comparison, pinned headers pruned, filters fetched in chunks (the three pruned-store tests run one block below the retarget boundary upstream now checks) | 8c63a4a, 8eb6095, 2e2d36c |
 
 Not offered: af1d580 (the bounded secret version tag) patches the account-key secret that
-exists only here, so it is `[fire-only]` in effect. Pending: the filter-sync batch group
-(8c63a4a, 8eb6095, 2e2d36c, e5d5a43, 5986f25, c06076f) is being ported against upstream's
-newer header validation, which now checks proof-of-work at the retarget boundary.
+exists only here, so it is `[fire-only]` in effect. Pending: the rest of the filter-sync
+group (e5d5a43, 5986f25, c06076f: the batch-2 review fixes, the chunk byte bound with the
+concurrent-sync refusal, and the coverage cases) follows #83 once it lands, since each
+builds on those three.
