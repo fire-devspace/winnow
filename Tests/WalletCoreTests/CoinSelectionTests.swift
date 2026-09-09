@@ -565,7 +565,12 @@ struct CoinSelectionTests {
         #expect(FeePolicy.resolve(override: ceiling) == ceiling)
         #expect(FeePolicy.resolve(estimated: ceiling) == ceiling)
         #expect(FeePolicy.resolve(observed: [ceiling]) == ceiling)
-        #expect(FeePolicy.resolve(floorSatPerVByte: ceiling) == ceiling)
+        // The peer floor is the one source with a second, lower ceiling of its
+        // own: the number is usable — it is not discarded, and the resolved
+        // rate does move — but only as far as a floor from strangers is
+        // allowed to move it. See `maximumPeerFloorSatPerVByte`.
+        #expect(FeePolicy.resolve(floorSatPerVByte: ceiling)
+            == FeePolicy.maximumPeerFloorSatPerVByte)
 
         // One ulp past it, every source is discarded and the preset stands.
         let past = ceiling.nextUp
@@ -587,5 +592,84 @@ struct CoinSelectionTests {
     func poolFloor() async {
         let pool = PeerPool(params: .signet)
         #expect(await pool.feeFilterFloorSatPerVByte() == nil)
+    }
+
+    /// The peer floor is the only input to resolution that a stranger writes,
+    /// and until this fork capped it, one seated peer could set it.
+    ///
+    /// A `feefilter` is unvalidated — a number a peer sends about its own
+    /// mempool — and `usable` accepts anything up to `maximumSatPerVByte`, so
+    /// a peer advertising the top of the band priced every send at 10,000
+    /// sat/vB: on a 200-vbyte payment that is 2,000,000 sats of fee, paid to
+    /// miners, because one connection said so. The cap is what bounds it, and
+    /// it is deliberately generous — ten times the most expensive rate this
+    /// wallet ever picks for itself — so no honest market is clipped.
+    @Test("an absurd peer floor cannot lift a send past the cap, and honest floors still apply")
+    func peerFloorIsCapped() {
+        let cap = FeePolicy.maximumPeerFloorSatPerVByte
+        #expect(cap == 10 * FeePolicy.Priority.high.satPerVByte)
+        #expect(cap < FeePolicy.maximumSatPerVByte / 10, "the cap must sit well below the band")
+
+        // The hostile case, at every source the floor clamps.
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: 10_000) == cap)
+        #expect(FeePolicy.resolve(priority: .medium, override: 3, floorSatPerVByte: 10_000) == cap)
+        #expect(FeePolicy.resolve(priority: .medium, estimated: 4, floorSatPerVByte: 9_999) == cap)
+        #expect(FeePolicy.resolve(priority: .medium, observed: [6, 7, 8],
+                                  floorSatPerVByte: 5_000) == cap)
+
+        // Honest floors are untouched: below the cap, the floor still clamps
+        // exactly as it did, at the cap it still applies in full, and the
+        // wallet's own numbers above the cap are paid in full.
+        #expect(FeePolicy.resolve(priority: .low, floorSatPerVByte: 3.5) == 3.5)
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: cap) == cap)
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: cap.nextDown) == cap.nextDown)
+        #expect(FeePolicy.resolve(override: 500, floorSatPerVByte: 10_000) == 500,
+                "the user's own number is not a stranger's")
+        #expect(FeePolicy.resolve(observed: [400, 500, 600], floorSatPerVByte: 10_000) == 500,
+                "nor are the feerates this wallet has itself paid")
+    }
+
+    /// One peer does not set the pool's floor. The `feefilter` each peer sends
+    /// is a claim about its own mempool that nothing validates, so the floor
+    /// is the median of what the pool says rather than the strictest voice in
+    /// it — a peer has to bring most of the pool with it to move the number,
+    /// and `FeePolicy` caps it even then.
+    @Test("the pool floor is the median of its peers, not the loudest of them")
+    func poolFloorIsAMedian() async throws {
+        var nodes: [LoopbackNode] = []
+        var endpoints: [PeerEndpoint] = []
+        for _ in 0 ..< 3 {
+            let node = LoopbackNode(params: .signet)
+            try await node.start()
+            nodes.append(node)
+            endpoints.append(await node.endpoint)
+        }
+        defer { for node in nodes { Task { await node.stop() } } }
+
+        let pool = PeerPool(params: .signet, peerCount: 3, manualPeers: endpoints)
+        await pool.start()
+        try #require(await pool.connectedPeers().count == 3)
+
+        // Two honest peers at 1 sat/vB, and one advertising the top of the
+        // band this wallet will price at all: 10,000 sat/vB.
+        var byEndpoint: [PeerEndpoint: LoopbackNode] = [:]
+        for node in nodes { byEndpoint[await node.endpoint] = node }
+        let filters: [Int64] = [1_000, 1_000, 10_000_000]
+        for (peer, filter) in zip(await pool.connectedPeers(), filters) {
+            try await #require(byEndpoint[await peer.endpoint]).send(.feefilter(filter))
+        }
+        #expect(await pollUntil(.seconds(10)) {
+            for peer in await pool.connectedPeers() where await peer.feeFilter == nil { return false }
+            return true
+        }, "every peer must have announced before the floor is read")
+
+        let floor = await pool.feeFilterFloorSatPerVByte()
+        #expect(floor == 1, "the median of 1, 1 and 10,000 sat/vB is 1")
+
+        // And the whole path, from the wire to the rate a send is priced at:
+        // the liar moves neither the floor nor the resolved feerate.
+        #expect(FeePolicy.resolve(priority: .medium, floorSatPerVByte: floor) == 5,
+                "a medium-priority send is still priced at its preset")
+        await pool.stop()
     }
 }
