@@ -100,6 +100,55 @@ struct UInt256: Equatable, Comparable, Sendable {
         return result
     }
 
+    func shiftedRight(_ bits: Int) -> UInt256 {
+        guard bits > 0 else { return self }
+        var result = UInt256()
+        let limbShift = bits / 64
+        let bitShift = bits % 64
+        for i in 0 ..< 4 {
+            let source = i + limbShift
+            guard source < 4 else { continue }
+            result.limbs[i] = limbs[source] >> bitShift
+            if bitShift > 0, source < 3 {
+                result.limbs[i] |= limbs[source + 1] << (64 - bitShift)
+            }
+        }
+        return result
+    }
+
+    /// Wrapping multiplication, like Core's arith_uint256. The mainnet and
+    /// signet powLimits leave enough room for four target timespans.
+    func multiplied(by factor: UInt32) -> UInt256 {
+        var result = UInt256()
+        var carry: UInt64 = 0
+        for i in 0 ..< 4 {
+            let product = limbs[i].multipliedFullWidth(by: UInt64(factor))
+            let (low, overflow) = product.low.addingReportingOverflow(carry)
+            result.limbs[i] = low
+            carry = product.high + (overflow ? 1 : 0)
+        }
+        return result
+    }
+
+    var bitWidth: Int {
+        for i in stride(from: 3, through: 0, by: -1) where limbs[i] != 0 {
+            return i * 64 + 64 - limbs[i].leadingZeroBitCount
+        }
+        return 0
+    }
+
+    /// Positive target encoding, including Core's sign-bit normalization.
+    var compact: UInt32 {
+        var size = (bitWidth + 7) / 8
+        var word = size <= 3 ? limbs[0] << (8 * (3 - size))
+            : shiftedRight(8 * (size - 3)).limbs[0]
+        if word & 0x0080_0000 != 0 {
+            word >>= 8
+            size += 1
+        }
+        return UInt32(word) | UInt32(size) << 24
+    }
+
     /// Bitwise long division.
     func quotientAndRemainder(dividingBy divisor: UInt256) -> (quotient: UInt256, remainder: UInt256) {
         precondition(!divisor.isZero, "division by zero")

@@ -5,8 +5,7 @@ public enum HeaderChainError: LocalizedError, Equatable {
     case invalidTarget(height: UInt32)
     case targetAbovePowLimit(height: UInt32)
     case insufficientProofOfWork(height: UInt32)
-    /// The header's `bits` differ from its parent's inside a retarget period,
-    /// where neither mainnet nor signet allows a change.
+    /// The header's target differs from the network's required difficulty.
     case unexpectedDifficulty(height: UInt32)
     case reorgWithoutMoreWork
     case storageCorrupt(String)
@@ -31,7 +30,7 @@ public enum HeaderChainError: LocalizedError, Equatable {
         case let .insufficientProofOfWork(height):
             "A peer sent a header without enough proof of work at block \(height)."
         case let .unexpectedDifficulty(height):
-            "A peer changed the proof-of-work difficulty at block \(height), where Bitcoin does not allow a change."
+            "A peer sent the wrong proof-of-work difficulty at block \(height)."
         case .reorgWithoutMoreWork:
             "A peer offered an older or weaker Bitcoin chain."
         case let .storageCorrupt(reason):
@@ -50,29 +49,20 @@ public enum HeaderChainError: LocalizedError, Equatable {
 /// - previous-hash linkage to the known chain,
 /// - compact bits decodes to a valid target ≤ consensus powLimit,
 /// - SHA256d(header) ≤ target (proof of work),
-/// - `bits` repeat the parent's except at a retarget boundary (every
-///   `difficultyAdjustmentInterval` blocks). Mainnet and signet both retarget
-///   on that schedule with no minimum-difficulty exception, so a change
-///   inside a period is a lie about difficulty — the way a peer would extend
-///   our tip with cheap headers until an honest branch replaced them. A
-///   checkpoint-rooted chain applies this from its first new header: the
-///   mainnet checkpoint at 900,000 is mid-period, so 900,001 is checked
-///   against the checkpoint itself.
+/// - the required difficulty, including the timespan-based adjustment every
+///   2,016 blocks on mainnet and signet. The same rule applies during sync,
+///   a reorg, and loading saved headers.
 ///
 /// What is NOT validated (documented deviation from full validation):
-/// - the *value* `bits` take at a retarget boundary (the timespan-based
-///   recomputation; deferred and tracked separately), so a boundary header
-///   is held only to its own claimed target,
+/// - the first adjustment after a mid-period checkpoint, when the preceding
+///   period's first header is unavailable. From the 900,000 checkpoint this
+///   skips 901,152; adjustments from 903,168 onward are verified,
 /// - timestamps (no median-time-past / future-drift rules),
 /// - anything below the header (merkle root, signet block signatures).
 /// Fork choice is cumulative-work; competing branches replace ours only with
 /// strictly more work.
 public actor HeaderChain {
     public static let maxHeadersPerRequest = 2_000
-    /// Blocks per difficulty period — Core's `DifficultyAdjustmentInterval()`,
-    /// the same on mainnet and signet. `bits` may change only at a multiple.
-    static let difficultyAdjustmentInterval: UInt32 = 2016
-
     public let params: NetworkParams
     private let storageURL: URL?
 
@@ -243,16 +233,33 @@ public actor HeaderChain {
         return work
     }
 
-    /// Refuses a `bits` change anywhere but the first block of a retarget
-    /// period. What a boundary header may claim is not recomputed here; inside
-    /// a period the rule needs no arithmetic, only the parent. `previous` is
-    /// nil when the parent lies below `baseHeight`, unknown to a
-    /// checkpoint-rooted chain — nothing to compare against, so it passes.
-    static func requireStableBits(_ header: BlockHeader, previous: BlockHeader?, height: UInt32) throws {
-        guard let previous, height % difficultyAdjustmentInterval != 0,
-              header.bits != previous.bits
-        else { return }
-        throw HeaderChainError.unexpectedDifficulty(height: height)
+    /// Core's CalculateNextWorkRequired for the two supported networks.
+    /// nil means a checkpoint omitted the history needed for this adjustment.
+    static func expectedBits(height: UInt32, previous: BlockHeader,
+                             periodFirst: BlockHeader?, params: NetworkParams) throws -> UInt32? {
+        guard height % params.difficultyAdjustmentInterval == 0 else { return previous.bits }
+        guard let periodFirst else { return nil }
+        guard let target = UInt256.target(compact: previous.bits) else {
+            throw HeaderChainError.invalidTarget(height: height - 1)
+        }
+        let timespan = Int64(params.powTargetTimespan)
+        let elapsed = min(max(Int64(previous.time) - Int64(periodFirst.time), timespan / 4), timespan * 4)
+        let adjusted = target.multiplied(by: UInt32(elapsed))
+            .quotientAndRemainder(dividingBy: UInt256(UInt64(timespan))).quotient
+        return min(adjusted, UInt256(littleEndian: params.powLimit)).compact
+    }
+
+    /// The caller supplies the preceding branch by index, so an uncommitted
+    /// batch and a replacement branch use their own period-start header.
+    private static func requireDifficulty(_ header: BlockHeader, height: UInt32, baseHeight: UInt32,
+                                          params: NetworkParams, preceding: (Int) -> BlockHeader) throws {
+        guard height > baseHeight else { return }
+        let interval = params.difficultyAdjustmentInterval
+        let firstIndex = Int(height) - Int(interval) - Int(baseHeight)
+        let first = height % interval == 0 && firstIndex >= 0 ? preceding(firstIndex) : nil
+        let expected = try expectedBits(height: height, previous: preceding(Int(height - baseHeight) - 1),
+                                        periodFirst: first, params: params)
+        if let expected, header.bits != expected { throw HeaderChainError.unexpectedDifficulty(height: height) }
     }
 
     /// Target decoding and block-work division depend only on `bits`. Header
@@ -327,7 +334,9 @@ public actor HeaderChain {
                 throw HeaderChainError.doesNotConnect
             }
             work = work + (try Self.checkedWork(for: header, params: params, height: height))
-            try Self.requireStableBits(header, previous: previous, height: height)
+            try Self.requireDifficulty(header, height: height, baseHeight: baseHeight, params: params) { index in
+                index < headers.count ? headers[index] : appended[index - headers.count]
+            }
             appended.append(header)
             appendedWork.append(work)
             previous = header
@@ -356,7 +365,9 @@ public actor HeaderChain {
                 throw HeaderChainError.doesNotConnect
             }
             let work = try Self.checkedWork(for: header, params: params, height: height)
-            try Self.requireStableBits(header, previous: previous, height: height)
+            try Self.requireDifficulty(header, height: height, baseHeight: baseHeight, params: params) {
+                stagedHeaders[$0]
+            }
             stagedHeaders.append(header)
             stagedWork.append(stagedWork[stagedWork.count - 1] + work)
         }
@@ -646,6 +657,9 @@ public actor HeaderChain {
             }
             try checkLineage(of: header, at: index, baseHeight: baseHeight,
                              genesis: genesis, loaded: loadedHeaders)
+            try requireDifficulty(header, height: baseHeight + index, baseHeight: baseHeight, params: params) {
+                loadedHeaders[$0]
+            }
             loadedHeaders.append(header)
             loadedWork.append(work)
         }

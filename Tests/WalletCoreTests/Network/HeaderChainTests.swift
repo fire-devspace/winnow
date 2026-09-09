@@ -116,29 +116,6 @@ struct HeaderChainTests {
         #expect(await headerChain.tipHash == tipBefore)
     }
 
-    @Test("bits may change at a period boundary; an unknown parent is not judged")
-    func stableBitsRuleEdges() throws {
-        let chain = makeSyntheticChain(length: 1, watchHeight: 6)
-        let genesis = chain.blocks[0].header
-        let harder = BlockHeader(version: 1, previousHash: genesis.hash,
-                                 merkleRoot: Data(repeating: 0xD3, count: 32),
-                                 time: genesis.time + 600, bits: 0x207F_FFFE, nonce: 0)
-        let interval = HeaderChain.difficultyAdjustmentInterval
-        #expect(throws: HeaderChainError.unexpectedDifficulty(height: 1)) {
-            try HeaderChain.requireStableBits(harder, previous: genesis, height: 1)
-        }
-        #expect(throws: HeaderChainError.unexpectedDifficulty(height: interval + 1)) {
-            try HeaderChain.requireStableBits(harder, previous: genesis, height: interval + 1)
-        }
-        // The first block of a period is where the schedule allows a change.
-        try HeaderChain.requireStableBits(harder, previous: genesis, height: interval)
-        try HeaderChain.requireStableBits(harder, previous: genesis, height: interval * 3)
-        // Unchanged bits pass anywhere inside the period.
-        try HeaderChain.requireStableBits(genesis, previous: genesis, height: 1)
-        // A parent below the chain's base is unknown: nothing to compare against.
-        try HeaderChain.requireStableBits(harder, previous: nil, height: 1)
-    }
-
     @Test("a longer branch replaces; a shorter one is refused")
     func forkChoice() async throws {
         let chain = makeSyntheticChain(length: 1, watchHeight: 6)

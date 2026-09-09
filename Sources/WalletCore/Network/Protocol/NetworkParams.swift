@@ -24,6 +24,9 @@ public struct NetworkParams: Sendable, Equatable {
     public let genesisHash: Data
     /// Consensus powLimit (maximum valid target), 32-byte internal byte order.
     public let powLimit: Data
+    public let powTargetTimespan: UInt32
+    public let powTargetSpacing: UInt32
+    public var difficultyAdjustmentInterval: UInt32 { powTargetTimespan / powTargetSpacing }
     public let dnsSeeds: [String]
     /// Hardcoded last-resort peers (IP literals, verified filter-serving —
     /// see the per-network value's comment). Dialed alongside the DNS-seed
@@ -59,7 +62,11 @@ public struct NetworkParams: Sendable, Equatable {
                 genesisTime: UInt32, genesisBits: UInt32, genesisNonce: UInt32,
                 genesisMerkleRoot: Data, genesisHash: Data, powLimit: Data,
                 dnsSeeds: [String], fallbackPeers: [PeerEndpoint] = [],
-                checkpoint: Checkpoint? = nil) {
+                checkpoint: Checkpoint? = nil,
+                powTargetTimespan: UInt32 = 14 * 24 * 60 * 60,
+                powTargetSpacing: UInt32 = 600) {
+        precondition(powTargetTimespan >= 4 && powTargetTimespan <= UInt32.max / 4)
+        precondition(powTargetSpacing > 0 && powTargetTimespan % powTargetSpacing == 0)
         self.network = network
         self.magic = magic
         self.defaultPort = defaultPort
@@ -69,6 +76,8 @@ public struct NetworkParams: Sendable, Equatable {
         self.genesisMerkleRoot = genesisMerkleRoot
         self.genesisHash = genesisHash
         self.powLimit = powLimit
+        self.powTargetTimespan = powTargetTimespan
+        self.powTargetSpacing = powTargetSpacing
         self.dnsSeeds = dnsSeeds
         self.checkpoint = checkpoint
         self.fallbackPeers = fallbackPeers
