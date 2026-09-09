@@ -30,9 +30,12 @@ for name in $names; do
   fi
 done
 
-# 2. The only conditional suite is the node lane's.
-if grep -rn 'enabled(if:' "${TEST_DIRS[@]}" | grep -v 'diffEnabled'; then
-  echo "::error::a suite is conditionally enabled on something other than diffEnabled"
+# 2. The only conditional suites are the node lane's and the one platform
+# gate: `fileProtectionRecorded` skips the file-protection suite where the
+# platform records no data protection class (Apple's CI virtual machines),
+# and it is measured, not read from the environment, so nothing has to set it.
+if grep -rn 'enabled(if:' "${TEST_DIRS[@]}" | grep -vE 'diffEnabled|fileProtectionRecorded'; then
+  echo "::error::a suite is conditionally enabled on something other than diffEnabled or fileProtectionRecorded"
   status=1
 fi
 

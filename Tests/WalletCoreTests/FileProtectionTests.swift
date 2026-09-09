@@ -3,6 +3,26 @@ import Testing
 import TestSupport
 @testable import WalletCore
 
+/// Whether this platform records a data protection class at all. Apple's
+/// CI virtual machines do not: marking a directory `complete` there fails
+/// with "couldn't be opened", so every case below would fail at its fixture
+/// for a reason that says nothing about the writes. The library's own
+/// protected writes succeed on such a platform (the class is ignored, not
+/// refused), which every other suite that writes a file proves on the same
+/// runner; only the assertion that a class was recorded has nothing to read.
+/// Measured once, on a throwaway directory, so the suite is skipped by name
+/// rather than failing once per case.
+let fileProtectionRecorded: Bool = {
+    let url = tempFileURL("probe")
+    let directory = url.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    guard (try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete],
+                                                  ofItemAtPath: directory.path)) != nil,
+          let recorded = try? FileManager.default.attributesOfItem(atPath: directory.path)[.protectionKey] as? String
+    else { return false }
+    return recorded == FileProtectionType.complete.rawValue
+}()
+
 /// The data protection class of every file WalletCore writes.
 ///
 /// Each write names `completeUntilFirstUserAuthentication` instead of taking
@@ -18,7 +38,7 @@ import TestSupport
 /// platform default: without it every file reads back that default and the
 /// assertions say nothing about the write. The class is read back the way
 /// `KeychainAttributeTests` reads its own attribute, as the recorded string.
-@Suite("Persisted file protection")
+@Suite("Persisted file protection", .enabled(if: fileProtectionRecorded))
 struct FileProtectionTests {
 
     // MARK: - Fixtures
