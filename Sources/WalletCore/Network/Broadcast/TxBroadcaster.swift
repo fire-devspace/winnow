@@ -254,6 +254,13 @@ public actor TxBroadcaster {
     /// Whether a relay-only session opened by this broadcaster is still open.
     /// It closes when the pending set drains — or quietly, without stopping
     /// anything, if the caller resumed full service on the pool first.
+    ///
+    /// This is "this broadcaster still owns a stop", not "the pool is
+    /// narrowed", and the two part company the moment a caller calls
+    /// `PeerPool.start()`: nothing tells the broadcaster, so this stays true
+    /// over a pool back in full service until the payment drains. `pool.mode`
+    /// is the truth about the pool. A UI or lifecycle branch that wants to
+    /// say "paused" should read that, not this.
     public var isRelayOnly: Bool { relayOnlySession }
 
     /// Goes on relaying with the peer pool narrowed to a relay-only session,
@@ -274,9 +281,15 @@ public actor TxBroadcaster {
     /// is stopped, so a caller that wants to relay again starts it first.
     ///
     /// - Parameter seats: peers to keep, defaulting to `PeerPool.defaultRelaySeats`.
-    /// - Returns: whether a session was opened. False means nothing was
-    ///   pending, so the pool was stopped instead — the caller asked to go
-    ///   quiet and there was no reason to wait.
+    /// - Returns: whether a session was opened, which is whether anything is
+    ///   actually being relayed. False means the pool was stopped instead,
+    ///   for one of two reasons: nothing was pending, or the pool kept no
+    ///   seat. A zero-seat session — a pool already stopped, or one whose
+    ///   peers had all gone — announces to nobody and can never drain itself,
+    ///   because a confirmation needs the filter sync the mode refuses. It
+    ///   would be a pool held open forever with the caller told "relaying in
+    ///   the background", so it is reported as what it is and the pool goes
+    ///   quiet, which is what the caller asked for.
     @discardableResult
     public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async throws -> Bool {
         guard !stopped else { throw TxBroadcasterError.stopped }
@@ -285,8 +298,12 @@ public actor TxBroadcaster {
             await pool.stop()
             return false
         }
+        guard await pool.enterRelayOnly(seats: seats) > 0 else {
+            relayOnlySession = false
+            await pool.stop()
+            return false
+        }
         relayOnlySession = true
-        await pool.enterRelayOnly(seats: seats)
         return true
     }
 
@@ -413,13 +430,17 @@ public actor TxBroadcaster {
     /// full service — the app coming back to the foreground — has taken the
     /// pool back, and a payment confirming a moment later must not tear down
     /// the peers it is now syncing over. The session simply expires.
+    ///
+    /// That re-read is `stopIfRelayOnly`, one job on the pool, and it has to
+    /// be: reading `mode` and then calling `stop()` are two jobs with an
+    /// arbitrary gap between them, and a `start()` landing in the gap runs
+    /// first and is then silently undone by the queued stop. On iOS that gap
+    /// is the unfreeze boundary — the suspended drain and the app's foreground
+    /// `start()` become runnable in the same instant.
     private func closeRelayOnlySession() {
         guard relayOnlySession else { return }
         relayOnlySession = false
-        Task { [pool] in
-            guard await pool.mode == .relayOnly else { return }
-            await pool.stop()
-        }
+        Task { [pool] in await pool.stopIfRelayOnly() }
     }
 
     private func removeSubscriber(_ id: UUID) {

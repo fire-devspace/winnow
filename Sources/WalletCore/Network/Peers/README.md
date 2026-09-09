@@ -19,6 +19,15 @@ loses: replacing one means dialling, which is the cost the session exists to
 avoid. [TxBroadcaster](../Broadcast/README.md) is what usually drives it, so the
 pool stops when there is nothing left to relay.
 
+That refusal is on entry, and only on entry. A sync already past its first line
+when the pool narrows goes on reading over the seats that remain — nothing in
+`FilterSync` polls the mode, and a cancelled read unwinds no faster than its own
+per-peer timeout — so it can still reach `misbehaving` and take the one seat the
+session was holding for a payment. **A caller that narrows a pool it may be
+reading cancels its scan and awaits it first.** `enterRelayOnly` reports how many
+seats it kept, and zero is not a session: a pool that was stopped, or whose peers
+had all gone, has nothing to announce over and cannot dial one.
+
 [FilterSync](../Filters/README.md) and
 [AppModel](../../../WinnowApp/AppModel.swift) consume the pool.
 Manual peers remain an Advanced setting; the app also uses DNS seeds and

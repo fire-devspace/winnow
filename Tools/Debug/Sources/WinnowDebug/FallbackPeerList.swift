@@ -51,16 +51,45 @@ enum FallbackPeerList {
         }
     }
 
+    /// What the `// Generation:` line says, told apart from its not being
+    /// there at all.
+    ///
+    /// The two are different faults with different repairs — a file with no
+    /// date was written by something that is not the generator, a file whose
+    /// date does not parse was hand-edited — and reporting both as "no
+    /// `// Generation:` line" names the wrong cause for the second. `nil` for
+    /// `text` is the missing line; a non-nil `text` with a nil `date` is the
+    /// line that would not parse.
+    static func generationLine(in source: String) -> (text: String, date: Date?)? {
+        let marker = "// Generation: "
+        guard let line = source.split(separator: "\n").first(where: { $0.hasPrefix(marker) }) else {
+            return nil
+        }
+        let text = String(line.dropFirst(marker.count).prefix { $0 != "," })
+        return (text, Self.instant(from: text))
+    }
+
     /// The instant on the `// Generation:` line — the same line
     /// `scripts/check-release-policy` reads, so the two gates cannot disagree
     /// about what date the file records. The generator writes it with
     /// `ISO8601DateFormatter`, so it is read back with one.
     static func generationDate(in source: String) -> Date? {
-        let marker = "// Generation: "
-        guard let line = source.split(separator: "\n").first(where: { $0.hasPrefix(marker) }) else {
-            return nil
-        }
-        return ISO8601DateFormatter().date(from: String(line.dropFirst(marker.count).prefix { $0 != "," }))
+        generationLine(in: source)?.date
+    }
+
+    /// Reads what the release gate reads. `dt.datetime.fromisoformat` over
+    /// there accepts fractional seconds, and `ISO8601DateFormatter` accepts
+    /// them only when it is asked to and then insists on them, so one
+    /// formatter cannot read both spellings and the two gates could disagree
+    /// about whether one file records a date at all. The generator writes the
+    /// first spelling; the second is what a hand edit or a future generator
+    /// might leave behind.
+    private static func instant(from text: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: text) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: text)
     }
 
     /// Every endpoint the file compiles in, read out of the source text.
@@ -80,8 +109,11 @@ enum FallbackPeerList {
     }
 
     static func verdict(source: String, asOf now: Date) -> Verdict {
-        guard let generated = generationDate(in: source) else {
+        guard let line = generationLine(in: source) else {
             return .unusable("no `// Generation:` line, so the list records no date")
+        }
+        guard let generated = line.date else {
+            return .unusable("generation timestamp `\(line.text)` is not an ISO 8601 instant")
         }
         let days = now.timeIntervalSince(generated) / 86_400
         guard days >= 0 else {

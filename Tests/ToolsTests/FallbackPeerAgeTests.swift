@@ -44,6 +44,72 @@ struct FallbackPeerAgeTests {
             == .unusable("generated 1.0 days in the future"))
     }
 
+    /// A line that is there and does not parse is a different fault from no
+    /// line at all — a hand edit rather than a file the generator never wrote
+    /// — and it used to be reported as the second, which names a cause the
+    /// operator can look for and not find.
+    ///
+    /// Fractional seconds are the case that made this reachable. The release
+    /// gate's `dt.datetime.fromisoformat` accepts them, so one file could be
+    /// seven days old to `release.yml` and dateless to this lane; both gates
+    /// now read the same set of spellings.
+    @Test("an unparseable generation line is named as one, and fractional seconds parse")
+    func unparseableGenerationLine() throws {
+        let mangled = list().replacingOccurrences(of: "2026-08-25T00:42:03Z", with: "last Tuesday")
+        #expect(FallbackPeerList.verdict(source: mangled, asOf: days(1))
+            == .unusable("generation timestamp `last Tuesday` is not an ISO 8601 instant"))
+
+        // The spelling the release gate accepts and this one used to refuse.
+        let fractional = list().replacingOccurrences(of: "2026-08-25T00:42:03Z",
+                                                     with: "2026-08-25T00:42:03.500Z")
+        let fractionalDate = try #require(FallbackPeerList.generationDate(in: fractional),
+                                          "both gates must read one file the same way")
+        // Half a second past the instant the plain spelling records, which is
+        // the whole difference between the two.
+        #expect(abs(fractionalDate.timeIntervalSince(Self.generated) - 0.5) < 0.001)
+        guard case let .fresh(days) = FallbackPeerList.verdict(source: fractional, asOf: days(7)) else {
+            Issue.record("a list with a fractional-second timestamp read as undated")
+            return
+        }
+        #expect(abs(days - 7) < 0.001)
+
+        // And the spelling the generator actually writes still parses.
+        #expect(FallbackPeerList.generationDate(in: list()) == Self.generated)
+    }
+
+    /// The release gate reads the ceiling out of `NetworkParams.swift` with a
+    /// regex, which couples an ubuntu job with no Swift toolchain to the exact
+    /// spelling of a Swift declaration. Adding a type annotation, or wrapping
+    /// the line, makes it miss — and it fails loudly, but only at a tag.
+    ///
+    /// So the coupling is checked here, where a PR can see it: the pattern is
+    /// lifted out of the script itself rather than copied, so a change to
+    /// either side turns this red instead of a release.
+    @Test("the release gate's ceiling regex still finds the library's constant")
+    func releaseGateReadsTheCeiling() throws {
+        let root = WinnowGenerate.packageRoot
+        let script = try String(contentsOf: root.appending(path: "scripts/check-release-policy"),
+                                encoding: .utf8)
+        let params = try String(
+            contentsOf: root.appending(path: "Sources/WalletCore/Network/Protocol/NetworkParams.swift"),
+            encoding: .utf8)
+
+        // `ceiling = re.search(r'<pattern>', params)` — the script's own regex,
+        // read out of the script.
+        let marker = "re.search(r'"
+        let afterMarker = try #require(script.range(of: "ceiling = " + marker))
+        let rest = script[afterMarker.upperBound...]
+        let pattern = String(rest.prefix { $0 != "'" })
+        #expect(pattern.contains("maxFallbackPeerAgeDays"), "found \(pattern)")
+
+        let regex = try NSRegularExpression(pattern: pattern)
+        let match = try #require(regex.firstMatch(in: params,
+                                                  range: NSRange(params.startIndex..., in: params)),
+                                 "check-release-policy would raise SystemExit at the next tag")
+        let captured = try #require(Range(match.range(at: 1), in: params))
+        #expect(Int(params[captured]) == NetworkParams.maxFallbackPeerAgeDays)
+    }
+
     /// A check reads the bytes on disk. This is what proves those bytes are
     /// the list the binary ships, so refreshing the file is enough and no
     /// second edit elsewhere is owed.

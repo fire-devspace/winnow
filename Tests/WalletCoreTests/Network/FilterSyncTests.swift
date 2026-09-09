@@ -359,6 +359,82 @@ struct FilterSyncTests {
         #expect(collector.matches.map(\.height) == [synthetic.watchHeight])
     }
 
+    /// A bounded run on a chain long enough to have checkpoint boundaries, so
+    /// the ceiling meets the two places the tip is read.
+    ///
+    /// Every other integration test of `maxBlocks` runs on a six-block chain,
+    /// where `tip / 1000` and `ceiling / 1000` are both zero and the final
+    /// guard's `lastCheckpoint` is zero as well: the ceiling and the tip are
+    /// indistinguishable there, and both count guards are vacuous. This runs
+    /// 999 ... 1998 against a node at 2,001 — one batch that crosses the 1,000
+    /// boundary and stops 3 blocks short of the tip and 2 short of the second
+    /// boundary — which separates them.
+    ///
+    /// What that separation catches, checked against the code as it stands:
+    ///
+    /// - `expectedCheckpoints` is `tip / 1000` = 2. Derived from the ceiling it
+    ///   would be 1, and the honest node's two-entry cfcheckpt list would be
+    ///   refused as a mismatch before any batch ran.
+    /// - `lastCheckpoint` is `(tip / 1000) * 1000` = 2,000, which this run
+    ///   stops below and so has not pinned — nothing to compare, and the run
+    ///   that reaches it does the comparing. Derived from the ceiling it would
+    ///   be 1,000, which *is* pinned, and it would be compared against the
+    ///   reference's last entry, the header at 2,000: a mismatch on an honest
+    ///   peer, and every bounded run below a boundary would fail.
+    ///
+    /// Both mutations therefore turn this red rather than leaving it green on
+    /// a chain too short to tell.
+    @Test("a bounded run across a checkpoint boundary is checked against the tip, not the ceiling")
+    func boundedRunAcrossACheckpointBoundary() async throws {
+        let synthetic = makeSyntheticChain(length: 2_100, watchHeight: 1_500)
+        let node = LoopbackNode(params: synthetic.params,
+                                chain: Array(synthetic.blocks.prefix(2_002)))
+        try await node.start()
+        defer { Task { await node.stop() } }
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        defer { Task { await pool.stop() } }
+        let chain = try HeaderChain(params: synthetic.params)
+        let progressFile = tempFileURL("bounded-boundary.json")
+        defer { try? FileManager.default.removeItem(at: progressFile.deletingLastPathComponent()) }
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 999,
+                                  storageURL: progressFile, requiredCheckpointPeers: 1)
+        let collector = MatchCollector()
+
+        // 999 through 1,998: one batch, because the ceiling shortens the batch
+        // rather than adding one, and it crosses the boundary at 1,000.
+        try await sync.sync(watchScripts: [synthetic.watchScript], maxBlocks: 1_000) {
+            collector.add($0)
+        }
+        #expect(await chain.height == 2_001, "the header sync still ran to the node's tip")
+        #expect(await sync.nextScanHeight == 1_999, "the frontier stops at the ceiling")
+        #expect(collector.matches.map(\.height) == [synthetic.watchHeight],
+                "the boundary-crossing batch committed, and delivered its match")
+        #expect(await sync.filterHeader(at: 1_000) != nil,
+                "the boundary the batch crossed is pinned for the next run to compare")
+        #expect(await sync.filterHeader(at: 1_998) != nil, "and the frontier's anchor")
+        #expect(await sync.filterHeader(at: 2_000) == nil, "the run stopped below the next boundary")
+
+        // The cfheaders request covered exactly the blocks scanned — the
+        // ceiling shortened the batch, it did not skip one.
+        let ranges = await node.receivedMessages.compactMap { message -> UInt32? in
+            guard case let .getcfheaders(request) = message else { return nil }
+            return request.startHeight
+        }
+        #expect(ranges == [999])
+
+        // Then unbounded from the bounded frontier, which is the run that
+        // reaches 2,000 and so the one the final guard actually compares.
+        try await sync.sync(watchScripts: [synthetic.watchScript]) { collector.add($0) }
+        #expect(await sync.nextScanHeight == 2_002)
+        #expect(await sync.filterHeader(at: 2_000) != nil, "the boundary the second run reached")
+        #expect(await sync.filterHeader(at: 2_001) != nil, "the anchor")
+        #expect(collector.matches.map(\.height) == [synthetic.watchHeight],
+                "and no match is delivered twice across the two runs")
+    }
+
     /// A chunk size of zero would make each chunk's stop one below its start,
     /// so the loop would never advance and a scan would hang rather than fail;
     /// one above the batch length would ask a peer for filters past the batch

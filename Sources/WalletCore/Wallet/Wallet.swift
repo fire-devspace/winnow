@@ -1761,6 +1761,18 @@ public actor Wallet {
     /// from m/chain/index, and a neighbouring account's key, which has this
     /// master and the right depth and is still the wrong wallet. Each of them
     /// signs successfully for coins this wallet does not own.
+    ///
+    /// And then the check none of those three is: the neutered key must be the
+    /// account key the descriptor already carries. Fingerprint, depth and child
+    /// index are all claims the stored key makes about itself, so a key from a
+    /// different seed altogether satisfies every one of them by recording the
+    /// right numbers — and `accountKey` is the public key this wallet's
+    /// addresses are derived from, set by both constructors and rebuilt by
+    /// `open` from the descriptor's own xpub, so comparing against it asks the
+    /// only question that cannot be answered by assertion. Without it the
+    /// mismatch surfaced two layers later as `psbt.finalize()` reporting an
+    /// invalid tap key signature, and only because finalize happens to
+    /// self-verify: `signKeyPath` does not.
     private func accountPrivateKey() throws -> HDKey {
         // The same origin the removed root walk read: `Wallet.init` validated
         // the descriptor's shape before the wallet existed.
@@ -1774,7 +1786,8 @@ public actor Wallet {
             let account = try HDKey.deserialize(xprv)
             guard masterFingerprint == origin.fingerprint, account.isPrivate,
                   account.depth == UInt8(origin.path.count),
-                  account.childIndex == origin.path.last
+                  account.childIndex == origin.path.last,
+                  account.neutered == accountKey
             else { throw WalletError.accountKeyMismatch }
             return account
         }

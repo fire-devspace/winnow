@@ -76,10 +76,14 @@ struct AccountKeyCustodyTests {
         outputs: [Transaction.Output(value: 90_000, scriptPubKey: TestScripts.p2trDestination)],
         locktime: 0)
 
+    /// Both public networks, because the two things `create(accountKey:)`
+    /// computes from the network are the origin path's coin type (0 against 1)
+    /// and the xprv/xpub version bytes, and each of them branches on mainnet
+    /// against everything else. Signet alone exercised one side of both.
     @Test("account custody derives the same wallet, addresses, keys and signatures as the root",
-          arguments: accountCustodyEntropies)
-    func differentialWitness(entropy: Data) async throws {
-        let (root, account, _, _) = try Self.bothCustodies(entropy: entropy)
+          arguments: accountCustodyEntropies, [BitcoinNetwork.signet, .mainnet])
+    func differentialWitness(entropy: Data, network: BitcoinNetwork) async throws {
+        let (root, account, _, _) = try Self.bothCustodies(entropy: entropy, network: network)
 
         // Identity: the wallet ID is the master fingerprint either way, and the
         // descriptor it is read from is the same string.
@@ -300,6 +304,115 @@ struct AccountKeyCustodyTests {
         }
         #expect(throws: KeyStoreError.notFound(walletID: "73c5da0a")) {
             _ = try store.load(walletID: "73c5da0a")
+        }
+    }
+
+    /// An account key from another seed entirely, filed under this wallet's
+    /// master fingerprint. Depth, child index and private-ness are all things
+    /// the stored key says about itself, and a forged fingerprint is one more,
+    /// so every self-describing check passes and the key derives a real
+    /// 32-byte signing secret for a chain this wallet does not own.
+    ///
+    /// The descriptor is what knows better: it carries the neutered account
+    /// key the addresses come from. Before that term was in the guard, the
+    /// mismatch first showed up at `psbt.finalize()` as "input 0 invalid tap
+    /// key signature" — the wrong error, two layers down, and only because
+    /// finalize self-verifies. `signKeyPath` does not, so a caller that
+    /// stopped at a signature got a valid signature for someone else's coins.
+    @Test("an account key from another seed is refused however well it describes itself")
+    func foreignSeedAccountKeyRefused() async throws {
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let accountKey = try BIP86.accountKey(from: master, coinType: 1, account: 0)
+        let store = InMemoryKeyStore()
+        let wallet = try Wallet.create(accountKey: accountKey, masterFingerprint: master.fingerprint,
+                                       network: .signet, keyStore: store, creationHeight: 100)
+        let id = await wallet.id
+
+        // A different seed, the same path, and this wallet's fingerprint
+        // claimed beside it: private, depth 3, child index 0x80000000.
+        let foreign = try HDKey(seed: BIP39.seed(
+            mnemonic: BIP39.mnemonic(entropy: Data(repeating: 0x5A, count: 16))))
+        let foreignAccount = try BIP86.accountKey(from: foreign, coinType: 1, account: 0)
+        #expect(foreignAccount.isPrivate)
+        #expect(foreignAccount.depth == 3)
+        #expect(foreignAccount.childIndex == accountKey.childIndex)
+        #expect(foreignAccount.neutered != (await wallet.accountKey), "a different chain entirely")
+
+        try store.delete(walletID: id)
+        try store.store(.accountKey(xprv: foreignAccount.serialized(network: .testnet),
+                                    masterFingerprint: master.fingerprint), for: id)
+        await #expect(throws: WalletError.accountKeyMismatch) {
+            _ = try await wallet.keyPathSecret(chain: .receive, index: 0)
+        }
+        // And refused where it would have been spent, not only where it is read.
+        try await fund(wallet, amount: 500_000, height: 100)
+        try await matureCoinbase(wallet, height: 100)
+        await #expect(throws: WalletError.accountKeyMismatch) {
+            _ = try await wallet.buildSend(
+                payments: [Payment(amount: 100_000, scriptPubKey: TestScripts.p2trDestination)],
+                feeRateSatPerVByte: 2, chainTip: testChainTip, randomness: { 0.5 })
+        }
+    }
+
+    /// The path every launch after the first takes. `Wallet.open` rebuilds
+    /// `accountKey` from the descriptor's xpub rather than from a constructor
+    /// argument, so it is a different way into `accountPrivateKey` — and since
+    /// the binding check above compares the stored key against exactly that
+    /// rebuilt value, a wallet that reopens differently would not merely drift,
+    /// it would refuse to sign at all.
+    @Test("an account-custody wallet reopens and derives the same signing keys",
+          arguments: [BitcoinNetwork.signet, .mainnet])
+    func reopenedAccountWalletSignsTheSame(network: BitcoinNetwork) async throws {
+        let store = InMemoryKeyStore()
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let accountKey = try BIP86.accountKey(from: master,
+                                              coinType: Wallet.coinType(for: network), account: 0)
+        let storageURL = tempFileURL("account-custody-reopen.json")
+        defer { try? FileManager.default.removeItem(at: storageURL.deletingLastPathComponent()) }
+
+        let created = try Wallet.create(accountKey: accountKey,
+                                        masterFingerprint: master.fingerprint,
+                                        network: network, keyStore: store,
+                                        storageURL: storageURL, creationHeight: 100)
+        let reopened = try Wallet.open(storageURL: storageURL, keyStore: store)
+
+        #expect(await created.id == reopened.id)
+        #expect(await created.accountKey == reopened.accountKey)
+        #expect(await created.descriptor.serialized() == reopened.descriptor.serialized())
+        for (chain, index) in Self.coordinates {
+            #expect(try await reopened.keyPathSecret(chain: chain, index: index)
+                == (try await created.keyPathSecret(chain: chain, index: index)),
+                "key at \(chain)/\(index) after reopening")
+            #expect(try await reopened.address(chain: chain, index: index)
+                == (try await created.address(chain: chain, index: index)))
+        }
+    }
+
+    /// Creation is one logical operation under either custody. The mnemonic
+    /// constructor's rollback has always been covered (`WalletTests`'s
+    /// `createPersistenceRollback`); this is the same contract through the
+    /// constructor that stores an account key, so that half of it has a
+    /// witness too rather than resting on the two sharing a helper today.
+    @Test("failed persistence rolls back the stored account key")
+    func accountCreatePersistenceRollback() throws {
+        let keyStore = InMemoryKeyStore()
+        let master = try HDKey(seed: BIP39.seed(mnemonic: testMnemonic))
+        let accountKey = try BIP86.accountKey(from: master, coinType: 1, account: 0)
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "account-create-rollback-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A directory where the state file goes: the write throws, after the
+        // account key is already in the store.
+        let unwritable = root.appending(path: "wallet.json", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: unwritable, withIntermediateDirectories: false)
+
+        #expect(throws: (any Error).self) {
+            _ = try Wallet.create(accountKey: accountKey, masterFingerprint: master.fingerprint,
+                                  network: .signet, keyStore: keyStore, storageURL: unwritable)
+        }
+        #expect(throws: KeyStoreError.notFound(walletID: "73c5da0a")) {
+            _ = try keyStore.load(walletID: "73c5da0a")
         }
     }
 }

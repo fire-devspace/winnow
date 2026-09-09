@@ -198,7 +198,12 @@ public actor PeerPool {
         relaySeats = 0
         started = true
         await replenish()
-        guard monitorTask == nil else { return }
+        // `mode` as well as `monitorTask`, because `replenish` above is a long
+        // suspension and `enterRelayOnly` may land inside it: it sets the mode
+        // and clears the monitor, so a check on the monitor alone passes and
+        // this installs a 30-second timer for a session documented as having
+        // neither a monitor nor a pruning pass.
+        guard mode == .full, monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -234,8 +239,21 @@ public actor PeerPool {
     ///
     /// A stopped pool is not narrowed: there is nothing to keep, and dialling
     /// here would be the very thing the mode refuses.
-    public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async {
-        guard started else { return }
+    ///
+    /// The gate is on entry only, here as in `FilterSync.sync`: a header or
+    /// filter sync that is already running keeps reading over the seats this
+    /// leaves behind, and can still reach `misbehaving` and burn one. A caller
+    /// narrowing a pool that may be being read must cancel its scan and await
+    /// it before calling this.
+    ///
+    /// - Returns: the seats actually kept, which is zero when the pool is
+    ///   stopped or had no peers to keep. A zero-seat session announces to
+    ///   nobody and cannot dial one, so the count is the caller's cue to stop
+    ///   rather than to wait — `TxBroadcaster.enterRelayOnly(seats:)` reads it
+    ///   for exactly that.
+    @discardableResult
+    public func enterRelayOnly(seats: Int = PeerPool.defaultRelaySeats) async -> Int {
+        guard started else { return 0 }
         mode = .relayOnly
         relaySeats = max(0, seats)
         monitorTask?.cancel()
@@ -245,22 +263,68 @@ public actor PeerPool {
         // than reporting the sync pool's last round for as long as it lasts.
         attemptsThisRound = 0
         exhausted = false
-        for peer in peers.dropFirst(relaySeats) { await peer.disconnect() }
+        // The split is committed before anything is awaited, and this is the
+        // whole of why the two lines are in this order. `await
+        // peer.disconnect()` suspends the pool, so any interleaved removal —
+        // a `transportFailure` or `misbehaving` from a scan still unwinding,
+        // which is exactly what is in flight when an app narrows on going
+        // idle — shifts `peers` underneath a prefix taken afterwards, and the
+        // session ends up seated on a connection this loop already tore down.
+        // Announcements then reach nobody, the monitor that would have pruned
+        // the dead seat is cancelled by the mode, and nothing drains the
+        // pending set, so the pool is held open with the payment silently
+        // unrelayed. Reading `peers` once and writing it once, with no
+        // suspension in between, is what makes the seats the session keeps
+        // the seats it was looking at.
+        let dropped = Array(peers.dropFirst(relaySeats))
         peers = Array(peers.prefix(relaySeats))
+        let kept = peers.count
+        for peer in dropped { await peer.disconnect() }
         persistKnownGood()
+        return kept
+    }
+
+    /// Stops the pool, but only while it is still the relay-only session that
+    /// asked to — one actor job, so nothing can land between the question and
+    /// the answer.
+    ///
+    /// `TxBroadcaster` ends a relay-only session from a detached task, and the
+    /// mode has to be re-read there: a caller that resumed full service has
+    /// taken the pool back, and a payment confirming a moment later must not
+    /// tear down the peers it is now syncing over. Reading `mode` and calling
+    /// `stop()` as two hops made that re-read a lie — a `start()` enqueued in
+    /// the gap runs first, and the queued `stop()` then undoes it, leaving a
+    /// foregrounded app at zero peers with `retry()` refusing (it needs
+    /// `started`) until the next full stop/start cycle.
+    public func stopIfRelayOnly() async {
+        guard mode == .relayOnly else { return }
+        await stop()
     }
 
     /// Disconnects everything and persists the good-peers list.
+    ///
+    /// The seat list is emptied before the first disconnect is awaited, for
+    /// the reason `enterRelayOnly` gives: everything this writes must be
+    /// written in one uninterrupted piece, because `await peer.disconnect()`
+    /// hands the pool to whatever is queued behind it. `start()` is what is
+    /// queued behind it now that a relay-only session stops the pool from a
+    /// task of its own — an app resuming at the same instant the drain lands
+    /// — and a `start()` that ran between `started = false` and `peers = []`
+    /// used to see the old seats, decline to dial because the pool looked
+    /// full, and then have those seats cleared out from under it: a running
+    /// pool with no peers, no monitor and nothing that would dial one.
+    /// Everything still disconnects, and still before this returns.
     public func stop() async {
         monitorTask?.cancel()
         monitorTask = nil
         started = false
         mode = .full
         relaySeats = 0
-        for peer in peers { await peer.disconnect() }
+        let dropped = peers
         peers = []
         rejectedForSession = []
         persistKnownGood()
+        for peer in dropped { await peer.disconnect() }
     }
 
     /// Currently connected peers (snapshot).

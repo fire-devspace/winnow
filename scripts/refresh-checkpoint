@@ -34,8 +34,12 @@ headers=$1
 # The height this network ships, not whichever network's literal comes first
 # in the file: every network's checkpoint spells its height the same way, so a
 # plain grep would keep refreshing mainnet whatever --network said.
+#
+# Matched as a literal with index(), not as a regex: the network name comes
+# from the command line, and `~` would read a metacharacter in it as pattern
+# rather than refusing it — matching something unintended instead of nothing.
 shipped=$(awk -v net="$network" '
-  $0 ~ "public static let " net " = NetworkParams\\(" { inside = 1 }
+  index($0, "public static let " net " = NetworkParams(") { inside = 1 }
   inside && /^ +height: [0-9_]+,/ { gsub(/[^0-9]/, "", $0); print; exit }
 ' Sources/WalletCore/Network/Protocol/NetworkParams.swift)
 if [ $# -lt 2 ] && [ -z "$shipped" ]; then

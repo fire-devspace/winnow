@@ -714,6 +714,97 @@ struct TxBroadcasterTests {
             _ = try await broadcaster.enterRelayOnly()
         }
     }
+
+    /// A session with no seat is no session, and is reported as none.
+    ///
+    /// The pool refuses to narrow a pool it cannot narrow — one already
+    /// stopped, or one whose peers have all gone — and a broadcaster that
+    /// recorded a session anyway would tell the caller "relaying in the
+    /// background" over zero connections. Nothing would ever announce, and
+    /// nothing could ever end it either: the drain that closes a session
+    /// arrives with a confirmation, and a confirmation needs the filter sync
+    /// the mode refuses.
+    @Test("a session that could keep no seat reports none and stops the pool")
+    func relayOnlyWithNoSeats() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        // A pool with a peer, so the transaction can be broadcast, and then no
+        // pool at all: the peer is gone by the time the session is asked for.
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool, rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+        _ = try await broadcaster.broadcast(makeFakeSegwitTx().serialized(includeWitness: true))
+        #expect(await broadcaster.pendingTxids.count == 1, "there is something to relay")
+        await pool.stop()
+
+        let opened = try await broadcaster.enterRelayOnly()
+        #expect(opened == false, "a payment is pending, but nothing is connected to relay it over")
+        #expect(await broadcaster.isRelayOnly == false)
+        #expect(await pool.isRunning == false)
+        #expect(await pool.mode == .full, "no session was left open on a pool holding nothing")
+    }
+
+    /// The drain's stop and a caller resuming the pool are the same instant on
+    /// iOS — the suspended task and the app's foreground `start()` become
+    /// runnable together at the unfreeze boundary — so the end state must not
+    /// depend on which of them the scheduler runs first.
+    ///
+    /// It did. `closeRelayOnlySession` re-read `pool.mode` and then called
+    /// `pool.stop()` as two jobs on the pool, so a `start()` landing in the
+    /// gap ran first and was silently undone: zero peers, `started == false`,
+    /// and `retry()` a no-op (it is gated on `started`), until the user
+    /// backgrounded and foregrounded the app again. `stopIfRelayOnly` makes
+    /// the question and the answer one job, and then the order stops
+    /// mattering: run first, it stops a pool the caller had not yet taken
+    /// back and the `start()` that follows brings it up; run second, it finds
+    /// full service and expires.
+    ///
+    /// Which is the invariant asserted every round: after a drain and a
+    /// resume, the pool is running and seated, whatever the interleaving.
+    @Test("a drain that races the caller resuming the pool never leaves it stopped")
+    func relayOnlyDrainDoesNotUndoAResume() async throws {
+        let params = NetworkParams.signet
+        let node = LoopbackNode(params: params)
+        try await node.start()
+        defer { Task { await node.stop() } }
+
+        let pool = PeerPool(params: params, peerCount: 1, manualPeers: [await node.endpoint])
+        await pool.start()
+        let broadcaster = try TxBroadcaster(pool: pool,
+                                            rebroadcastBaseInterval: .seconds(3_600))
+        defer { Task { await broadcaster.shutdown() } }
+
+        for round in 0 ..< 30 {
+            // A distinct txid per round, so each is a real pending payment
+            // that drains on its own confirmation.
+            let txid = try await broadcaster.broadcast(
+                makeFakeSegwitTx(value: 50_000 - Int64(round)).serialized(includeWitness: true))
+            #expect(try await broadcaster.enterRelayOnly(seats: 1), "round \(round)")
+
+            // The confirmation spawns the session's stop; the resume is the
+            // app coming back. Varying how much of the stop's first hop gets
+            // to run before the resume is enqueued walks the window rather
+            // than sampling one point in it.
+            try await broadcaster.markConfirmed(txid, atHeight: UInt32(round + 1))
+            for _ in 0 ..< (round % 3) { await Task.yield() }
+            await pool.start()
+
+            #expect(await pollUntil(.seconds(10)) { await broadcaster.isRelayOnly == false },
+                    "round \(round): the session must close on the drain")
+            // Give a stop that is still queued time to land, then read the
+            // pool: a resumed pool is running and seated.
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(await pool.isRunning,
+                    "round \(round): a resumed pool must not be stopped by the drain it raced")
+            #expect(await pool.connectedPeers().count == 1, "round \(round)")
+            try await broadcaster.cancel(txid)
+        }
+        await pool.stop()
+    }
 }
 
 /// Whether the pool has finished stopping: not running *and* with no peer

@@ -11,5 +11,33 @@
 # --as-of ISO8601 fixes the clock; --in PATH names a file other than the
 # committed one. No network: it reads the file the generator last wrote.
 set -euo pipefail
+# Kept because the cd below discards it, and a relative --in belongs to the
+# directory the operator typed it in.
+invoked_from=$PWD
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-exec scripts/winnow-debug check fallback-peers "$@"
+
+# Help means help. The subject below is hardcoded, so without this a --help
+# arrives as an unrecognized trailing argument and the operator asking how to
+# use the command is told how old the list is instead.
+case "${1:-}" in
+  -h|--help|help) exec scripts/winnow-debug check --help ;;
+esac
+
+# A relative --in is resolved against the process's directory, and that is now
+# the repository root rather than wherever this was run from. Absolutized here
+# rather than in the tool, because this cd is what moved it.
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --in)
+      [ $# -ge 2 ] || { echo "--in needs a path" >&2; exit 64; }
+      case "$2" in
+        /*) args+=(--in "$2") ;;
+        *) args+=(--in "$invoked_from/$2") ;;
+      esac
+      shift 2
+      ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec scripts/winnow-debug check fallback-peers ${args[@]+"${args[@]}"}
