@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import WalletCore
 
 /// Bounds on hostile descriptor text (epic #100, invariants S7 and S10).
@@ -81,6 +82,56 @@ struct DescriptorBoundsTests {
     func shallowDescriptorUnaffected() throws {
         let descriptor = try Descriptor(Self.nested(depth: 2))
         #expect(descriptor.serialized().hasPrefix("tr("))
+    }
+
+    /// `tr([fp/0/0/...]KEY/<0;1>/*)` with `steps` origin steps: the wallet's
+    /// own descriptor shape, so `Wallet.origin(of:)` and an import bundle both
+    /// accept the text on every ground except its length.
+    static func longOrigin(steps: Int) -> String {
+        "tr([73c5da0a\(String(repeating: "/0", count: steps))]\(key)/<0;1>/*)"
+    }
+
+    /// A key origin can name at most as many steps as a BIP32 key can be deep.
+    /// This is a different bound from the tree's and a different failure: the
+    /// tree exhausted the stack inside the parser, while a long origin parsed
+    /// happily and terminated the process later, wherever the path was walked.
+    /// `depth` is a `UInt8` and `child(at:)` computes `depth + 1`, so the 256th
+    /// step overflows in whoever is walking — which the descriptor's own key
+    /// resolution does, and which signing does.
+    ///
+    /// A hostile import bundle used to reach that: the descriptor parsed, the
+    /// wallet was built, and the first attempt to sign took the app down. The
+    /// refusal now lands at the parse, so `Wallet.origin(of:)` and
+    /// `Wallet.importing` never see the descriptor at all — they report the
+    /// same error because the text never becomes a `Descriptor`.
+    @Test("an origin path longer than a key can be deep is refused")
+    func longOriginPathRefused() {
+        #expect(throws: DescriptorError.originTooDeep(steps: 256, limit: 255)) {
+            _ = try Descriptor(Self.longOrigin(steps: 300))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try Wallet.origin(of: Descriptor(Self.longOrigin(steps: 300)))
+        }
+        let bundle = ImportBundle(network: "signet", descriptor: Self.longOrigin(steps: 300),
+                                  lastKnownHeight: 100)
+        #expect(throws: (any Error).self) {
+            _ = try Wallet.importing(bundle, keyStore: InMemoryKeyStore())
+        }
+    }
+
+    /// The control the refusal needs: the longest origin a key can actually
+    /// have still parses, and the first step past it does not. Without this the
+    /// bound could be off by one, or refuse every origin, and the test above
+    /// would pass either way.
+    @Test("an origin path at the maximum depth parses, one past it does not")
+    func maximumOriginPathAccepted() throws {
+        let descriptor = try Descriptor(Self.longOrigin(steps: 255))
+        #expect(try Wallet.origin(of: descriptor).path.count == 255)
+        #expect(throws: (any Error).self) {
+            _ = try Descriptor(Self.longOrigin(steps: 256))
+        }
+        // And an ordinary wallet origin is three steps, nowhere near it.
+        #expect(try Wallet.origin(of: Descriptor(Self.longOrigin(steps: 3))).path.count == 3)
     }
 
     /// Pins the one-pass builder to the tree written out level by level —
