@@ -4,18 +4,19 @@ import Foundation
 /// Four little-endian UInt64 limbs. Only the operations header sync needs:
 /// comparison, wrapping add/subtract, shifts, and long division.
 struct UInt256: Equatable, Comparable, Sendable {
-    private(set) var limbs: [UInt64] // 4 limbs, least significant first
+    // Inline storage avoids a separate heap allocation for every saved block.
+    private(set) var limbs: SIMD4<UInt64> // 4 limbs, least significant first
 
     init() { limbs = [0, 0, 0, 0] }
 
     init(_ value: UInt64) { limbs = [value, 0, 0, 0] }
 
-    private init(limbs: [UInt64]) { self.limbs = limbs }
+    private init(limbs: SIMD4<UInt64>) { self.limbs = limbs }
 
     /// From a 32-byte big-endian number.
     init(bigEndian bytes: Data) {
         precondition(bytes.count == 32)
-        var limbs = [UInt64](repeating: 0, count: 4)
+        var limbs = SIMD4<UInt64>(repeating: 0)
         for i in 0 ..< 4 {
             var limb: UInt64 = 0
             let base = 31 - i * 8 // most significant byte of this limb
@@ -28,7 +29,7 @@ struct UInt256: Equatable, Comparable, Sendable {
     /// From a 32-byte little-endian number (internal hash byte order).
     init(littleEndian bytes: Data) {
         precondition(bytes.count == 32)
-        var limbs = [UInt64](repeating: 0, count: 4)
+        var limbs = SIMD4<UInt64>(repeating: 0)
         for i in 0 ..< 4 {
             var limb: UInt64 = 0
             for j in 0 ..< 8 { limb |= UInt64(bytes[i * 8 + j]) << (8 * j) }
@@ -47,7 +48,7 @@ struct UInt256: Equatable, Comparable, Sendable {
         return data
     }
 
-    var isZero: Bool { limbs.allSatisfy { $0 == 0 } }
+    var isZero: Bool { limbs == .zero }
 
     static let max = UInt256(limbs: [.max, .max, .max, .max])
 
