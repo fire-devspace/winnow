@@ -462,8 +462,8 @@ struct FilterSyncTests {
 
     /// Chunking changes how the filters are fetched and nothing else, so the
     /// two paths have to agree on everything outside FilterSync: the same
-    /// matches, and the same saved progress. What differs is what the scan
-    /// holds while it works.
+    /// matches, and the same scanned state saved. What differs is what the
+    /// scan holds while it works.
     @Test("a chunked scan and a whole-batch scan agree, and the chunked one holds less")
     func chunkedScanMatchesWholeBatch() async throws {
         let synthetic = makeSyntheticChain(length: 6, watchHeight: 3)
@@ -473,7 +473,15 @@ struct FilterSyncTests {
         #expect(whole.matches.map(\.height) == chunked.matches.map(\.height))
         #expect(whole.matches.map(\.blockHash) == chunked.matches.map(\.blockHash))
         #expect(whole.matches.count == 1)
-        #expect(whole.progress == chunked.progress)
+        // Field by field rather than whole: the saved cross-check receipt
+        // names the endpoint that answered, and these are two runs against two
+        // loopback nodes on two ports, which is the one thing that is supposed
+        // to differ between them.
+        #expect(whole.progress.nextScanHeight == chunked.progress.nextScanHeight)
+        #expect(whole.progress.filterHeaders == chunked.progress.filterHeaders)
+        #expect(whole.progress.crossCheck?.answerDigest
+            == chunked.progress.crossCheck?.answerDigest,
+            "the same chain, so the same adopted checkpoint answer")
 
         // One request for the whole batch, against one per chunk: 1 ... 2,
         // 3 ... 4, 5 ... 6. The stop hashes say the ranges are real.
@@ -623,7 +631,7 @@ struct FilterSyncTests {
     /// suspensions — so the second call lands in the window that used to
     /// interleave. It has to be refused there and then, having done nothing,
     /// and the run it collided with has to finish as though it had never
-    /// happened: the same matches and the same saved progress a single pass
+    /// happened: the same matches and the same scanned state a single pass
     /// over this chain leaves.
     @Test("a second sync during the first is refused, and the first is untouched")
     func concurrentSyncIsRefused() async throws {
@@ -688,7 +696,11 @@ struct FilterSyncTests {
         #expect(await sync.nextScanHeight == 7)
         let saved = try JSONDecoder().decode(FilterSync.Progress.self,
                                              from: Data(contentsOf: progressFile))
-        #expect(saved == expected.progress)
+        // As above: the control run had its own node, so its receipt names its
+        // own port. Everything the scan derived is compared.
+        #expect(saved.nextScanHeight == expected.progress.nextScanHeight)
+        #expect(saved.filterHeaders == expected.progress.filterHeaders)
+        #expect(saved.crossCheck?.answerDigest == expected.progress.crossCheck?.answerDigest)
 
         // And the flag is cleared on the way out, so the next scan runs.
         try await sync.sync(watchScripts: [synthetic.watchScript]) { _ in }
@@ -880,6 +892,116 @@ struct FilterSyncTests {
         #expect(await sync.nextScanHeight == 1)
         #expect(await sync.filterHeader(at: 1) == nil)
         #expect(!FileManager.default.fileExists(atPath: store.path))
+    }
+
+    /// The receipt survives the file, and a file written before receipts
+    /// existed still loads. The field is optional, so an absent one decodes to
+    /// nil: every install on disk today reads back unchanged and there is
+    /// nothing to migrate.
+    @Test("a cross-check receipt round-trips, and progress without one still loads")
+    func crossCheckReceiptRoundTrips() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let chain = try HeaderChain(params: .signet)
+        let store = tempFileURL("filter-receipt.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        let receipt = FilterSync.CrossCheckReceipt(
+            tipHeight: 812_345,
+            answerDigest: Data(repeating: 0x5A, count: 32).hex,
+            agreed: [.init(endpoint: "203.0.113.7:8333", source: .dnsSeed),
+                     .init(endpoint: "198.51.100.9:8333", source: .persisted),
+                     .init(endpoint: "192.0.2.4:8333", source: nil)])
+        try writeProgress(.init(nextScanHeight: 5, crossCheck: receipt), to: store)
+
+        let loaded = try FilterSync(pool: pool, chain: chain, startHeight: 1, storageURL: store)
+        #expect(loaded.persistenceState == .loaded)
+        #expect(await loaded.lastCrossCheck == receipt)
+        #expect(receipt.sourceClasses == [.dnsSeed, .persisted],
+                "the unknown peer is not a third channel")
+
+        // The shape every store on disk has today.
+        try Data(#"{"nextScanHeight":5,"filterHeaders":{}}"#.utf8).write(to: store)
+        let older = try FilterSync(pool: pool, chain: chain, startHeight: 1, storageURL: store)
+        #expect(older.persistenceState == .loaded)
+        #expect(await older.nextScanHeight == 5)
+        #expect(await older.lastCrossCheck == nil)
+    }
+
+    /// A receipt is a claim about peers that are gone, so nothing can check
+    /// that it is true. What can be checked is that it is shaped like one, and
+    /// it is checked on the way in like every other field in this file.
+    @Test("a damaged cross-check receipt fails closed rather than being read")
+    func invalidReceiptFields() throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let chain = try HeaderChain(params: .signet)
+        let store = tempFileURL("filter-receipt-invalid.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        func receipt(digest: String, endpoint: String) -> FilterSync.CrossCheckReceipt {
+            .init(tipHeight: 1, answerDigest: digest,
+                  agreed: [.init(endpoint: endpoint, source: .manual)])
+        }
+        let good = Data(repeating: 0x11, count: 32).hex
+
+        try writeProgress(.init(nextScanHeight: 5,
+                                crossCheck: receipt(digest: "abcd", endpoint: "10.0.0.1:8333")),
+                          to: store)
+        #expect(throws: FilterSyncStorageError.self) {
+            _ = try FilterSync(pool: pool, chain: chain, startHeight: 1, storageURL: store)
+        }
+
+        try writeProgress(.init(nextScanHeight: 5,
+                                crossCheck: receipt(digest: good, endpoint: "")),
+                          to: store)
+        #expect(throws: FilterSyncStorageError.self) {
+            _ = try FilterSync(pool: pool, chain: chain, startHeight: 1, storageURL: store)
+        }
+
+        // The control: the same receipt, well formed, loads.
+        try writeProgress(.init(nextScanHeight: 5,
+                                crossCheck: receipt(digest: good, endpoint: "10.0.0.1:8333")),
+                          to: store)
+        #expect(try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                               storageURL: store).persistenceState == .loaded)
+    }
+
+    /// The rollback's half of the receipt, kept here with the other two
+    /// because it is about what the file says rather than where the frontier
+    /// lands. A receipt attests to a tip on the branch a rollback just
+    /// replaced, so it goes with the pins above the fork — including when the
+    /// frontier does not move, which is the case that would otherwise leave a
+    /// store claiming corroboration for a chain it is no longer on. A claim
+    /// that outlives its evidence is worse than no claim.
+    @Test("a rollback clears the cross-check receipt, even above the frontier")
+    func rollBackClearsTheReceipt() async throws {
+        let pool = PeerPool(params: .signet, peerCount: 0, manualPeers: [])
+        let chain = try HeaderChain(params: .signet)
+        let store = tempFileURL("filter-rollback-receipt.json")
+        defer { try? FileManager.default.removeItem(at: store.deletingLastPathComponent()) }
+
+        let receipt = FilterSync.CrossCheckReceipt(
+            tipHeight: 500,
+            answerDigest: Data(repeating: 0x2C, count: 32).hex,
+            agreed: [.init(endpoint: "203.0.113.7:8333", source: .dnsSeed),
+                     .init(endpoint: "198.51.100.9:8333", source: .manual)])
+        let pin = Data(repeating: 0xAA, count: 32).hex
+        try writeProgress(.init(nextScanHeight: 400, filterHeaders: ["200": pin],
+                                crossCheck: receipt),
+                          to: store)
+        let filters = try FilterSync(pool: pool, chain: chain, startHeight: 1, storageURL: store)
+        #expect(await filters.lastCrossCheck == receipt)
+
+        // A fork above the frontier: nothing scanned is affected, so the
+        // frontier stays where it is and the pin below the fork stays too.
+        // The receipt still goes, and the file is rewritten to say so.
+        try await filters.rollBack(to: 900)
+        #expect(await filters.nextScanHeight == 400)
+        #expect(await filters.pinnedFilterHeadersForTest == ["200": pin])
+        #expect(await filters.lastCrossCheck == nil)
+        let saved = try JSONDecoder().decode(FilterSync.Progress.self,
+                                             from: Data(contentsOf: store))
+        #expect(saved.crossCheck == nil, "the store on disk stopped claiming it too")
+        #expect(saved.nextScanHeight == 400)
     }
 
     private func writeProgress(_ progress: FilterSync.Progress, to url: URL) throws {
