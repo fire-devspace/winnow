@@ -8,6 +8,11 @@ public enum DescriptorError: Error, Equatable {
     case unexpectedCharacter(Character)
     case unknownExpression(String)
     case invalidOrigin
+    /// A key origin naming more steps than a BIP32 key can be deep. `HDKey.depth`
+    /// is a byte and every walk down the path derives one child per step, so
+    /// the 256th step is an overflow in whoever walks it: the descriptor's own
+    /// key resolution, or signing. Refused at the parse instead, by name.
+    case originTooDeep(steps: Int, limit: Int)
     case invalidKey
     case invalidPath
     case invalidThreshold
@@ -32,6 +37,10 @@ extension HDKey.Network: Equatable {
 /// multipath, BIP390 `musig()` key expressions). Taproot-only: the supported
 /// top-level expressions are `tr(KEY)`, `tr(KEY, TREE)` and `rawtr(KEY)`.
 public struct Descriptor: Sendable, Equatable {
+    /// The most steps a key origin may name: the largest `HDKey.depth`, since
+    /// a key at depth 255 has no child a byte can count.
+    public static let maximumOriginSteps = Int(UInt8.max)
+
     /// BIP388-style key origin information: `[fingerprint/path]`.
     public struct KeyOrigin: Sendable, Equatable {
         public var fingerprint: UInt32
@@ -541,6 +550,12 @@ struct Parser {
         var path: [UInt32] = []
         while consume("/") {
             guard peek() != "*" else { throw DescriptorError.invalidOrigin }
+            // Bounded at the depth a key can have, because the walk that would
+            // otherwise refuse this is `depth + 1` on a `UInt8`, which traps.
+            guard path.count < Descriptor.maximumOriginSteps else {
+                throw DescriptorError.originTooDeep(steps: path.count + 1,
+                                                    limit: Descriptor.maximumOriginSteps)
+            }
             path.append(try parsePathStep())
         }
         try expect("]")
