@@ -129,3 +129,26 @@ LFS pointers when those selected PNGs are added.
 ## License
 
 Winnow is available under the [MIT License](LICENSE).
+
+## Upstream pull requests
+
+Commits on `fire` tagged `[upstream]` are offered to `winnowwallet/winnow` as themed pull
+requests from branches `port/<theme>` here, each cut from upstream `main` and green on
+upstream's own checks (`swift test`, `swiftlint`, `scripts/check-test-gates`,
+`scripts/check-dependencies`). Opened 2026-09-09:
+
+| Pull request | Theme | Fork commits |
+|---|---|---|
+| [#75](https://github.com/winnowwallet/winnow/pull/75) | BIP39 seed input normalised NFKD, not NFD | e6e8774 |
+| [#76](https://github.com/winnowwallet/winnow/pull/76) | A data protection class at every write site; the suite gated by platform | fc474e7, bd57bac |
+| [#77](https://github.com/winnowwallet/winnow/pull/77) | The master key derived once per send; an unrelayable size refused | b300b63, 1031b8d, a37dc0b |
+| [#78](https://github.com/winnowwallet/winnow/pull/78) | Tests pinning the recorded transaction through bump and confirmation (upstream #63 already ships the feature the fork's 301c95b, fc1f7cd and a636c95 implement, so those three are superseded, not ported) | 301c95b (tests only) |
+| [#79](https://github.com/winnowwallet/winnow/pull/79) | The unsolicited message buffer bounded in bytes | dab78f6 |
+| [#80](https://github.com/winnowwallet/winnow/pull/80) | Key-origin depth bounded; a child past depth 255 refused | 5fa510f, 90a7149 |
+| [#81](https://github.com/winnowwallet/winnow/pull/81) | A served broadcast stays served when its peer goes away | c776201 |
+| [#82](https://github.com/winnowwallet/winnow/pull/82) | Regtest as a network; the address prefix from the network, not the key | 648ac32, ada4dfa |
+
+Not offered: af1d580 (the bounded secret version tag) patches the account-key secret that
+exists only here, so it is `[fire-only]` in effect. Pending: the filter-sync batch group
+(8c63a4a, 8eb6095, 2e2d36c, e5d5a43, 5986f25, c06076f) is being ported against upstream's
+newer header validation, which now checks proof-of-work at the retarget boundary.
