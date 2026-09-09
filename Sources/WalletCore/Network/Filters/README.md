@@ -44,6 +44,35 @@ configuration that does not imply it. A degraded run writes an honest one-class
 receipt rather than none. A rollback clears it, because it attests to a tip on
 the branch that was just replaced.
 
+## The restore-only range scan
+
+Scanning is forward-only from the frontier, and `scanRange` is the one
+exception to that, for a restore that finds a mnemonic and no wallet file:
+there is no history to verify forward from and no birthday to start at, so the
+blocks that hold the customer's payments are below every frontier the wallet
+could name. It scans a bounded `[from, to]` for a watch set and never touches
+the forward frontier — a separate record, in a separate file, with its own
+resumable state.
+
+Everything a batch is judged by is the forward path's, unchanged: the cfcheckpt
+majority, the announced-count guard, the per-batch cfheaders cross-check, the
+checkpoint-boundary comparison before a batch has any effect, the per-filter
+header reproduction, and the chunked fetch with its byte bound. It does not
+sync headers, so a caller that wants the back-scan pinned to a frozen recovery
+checkpoint hands over a chain it does not advance; a range reaching below
+`chain.startHeight` is refused by name, because filters are fetched by block
+hash and a checkpoint-rooted chain holds no header to name one.
+
+What makes the exception affordable is that every dimension of it is capped,
+and each cap is clamped to a hard maximum on the way in rather than validated,
+so a caller can ask for less and never for more (`RangeScanLimits`): blocks in
+the range, scripts in one pass, compact-filter bytes in one run, wall-clock
+time in one run, and passes over the range. The two spending caps refuse in a
+way the caller can resume from — the record holds every batch that committed —
+and the rest are decided before a peer is asked anything. The fixed-point loop
+a restore needs (derive a gap of scripts, scan, derive more from what came
+back, scan again) belongs to the caller; the pass cap is what bounds it.
+
 [The app](../../../WinnowApp/AppModel.swift) coordinates scanning with
 [wallet state](../../Wallet/README.md),
 [headers](../Headers/README.md), and
@@ -52,5 +81,7 @@ the branch that was just replaced.
 [FilterSync tests](../../../../Tests/WalletCoreTests/Network/FilterSyncTests.swift) and
 [adversarial peers](../../../../Tests/WalletCoreTests/Network/FilterSyncAdversaryTests.swift)
 exercise verification, damaged progress, disagreement, and rollback.
+[Range-scan tests](../../../../Tests/WalletCoreTests/Network/RangeScanTests.swift)
+cover the caps, the resumable record, and the untouched frontier.
 [Core comparisons](../../../../Tests/DifferentialTests/FilterSyncDiffTests.swift) check
 the scan against real node data.

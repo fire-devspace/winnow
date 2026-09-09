@@ -1,0 +1,571 @@
+import Foundation
+import Testing
+import TestSupport
+@testable import WalletCore
+
+/// The restore-only range scan: what it finds, what it refuses, and what it
+/// leaves behind.
+///
+/// The filter scan is forward-only from a frontier by design — the module
+/// README says so and `docs/mobile.html` §4.1 says why — and `scanRange` is
+/// the one exception, for a customer who has restored a mnemonic and holds no
+/// wallet file. Every case below is about the two properties that let the
+/// exception exist: the forward frontier is never touched, and every dimension
+/// of the scan is capped by a number a caller cannot raise.
+///
+/// The offline cases run against a mainnet header chain rooted at the shipped
+/// checkpoint over a pool holding no peers. That reaches every refusal decided
+/// before a peer is asked anything — including the one only mainnet can show,
+/// a range reaching below the checkpoint — and a request that gets past all of
+/// them fails with `noPeers`, which is how a case says "this one was let
+/// through". The rest open real 127.0.0.1 listeners, exactly as
+/// `FilterSyncTests` does.
+@Suite("RangeScan")
+struct RangeScanTests {
+
+    // MARK: - Caps decided before any peer is asked
+
+    /// A mainnet chain holding only the shipped checkpoint header, over a pool
+    /// with nothing seated in it. `base` is that checkpoint height, which is
+    /// both the chain's floor and its tip here.
+    private static func offline() throws -> (sync: FilterSync, base: UInt32) {
+        let checkpoint = try #require(NetworkParams.mainnet.checkpoint)
+        let pool = PeerPool(params: .mainnet, peerCount: 0, manualPeers: [])
+        let chain = try HeaderChain(params: .mainnet, start: .checkpoint)
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: checkpoint.height)
+        return (sync, checkpoint.height)
+    }
+
+    private static let script = Data([0x51, 0x20] + repeatElement(0x42, count: 32))
+    private static let otherScript = Data([0x51, 0x20] + repeatElement(0x43, count: 32))
+
+    @Test("a range that is not a range, or has nothing to look for, is refused by name")
+    func refusesAnUnscannableRequest() async throws {
+        let (sync, base) = try Self.offline()
+
+        await #expect(throws: RangeScanError.invalidRange(from: base + 1, to: base)) {
+            try await sync.scanRange(from: base + 1, to: base,
+                                     watchScripts: [Self.script]) { _ in }
+        }
+        // `to` at the top of the range has no "height after the last one
+        // scanned", so a completed record could not name its own frontier.
+        await #expect(throws: RangeScanError.invalidRange(from: base, to: .max)) {
+            try await sync.scanRange(from: base, to: .max,
+                                     watchScripts: [Self.script]) { _ in }
+        }
+        await #expect(throws: RangeScanError.noWatchScripts) {
+            try await sync.scanRange(from: base, to: base, watchScripts: []) { _ in }
+        }
+    }
+
+    @Test("the width cap refuses at its boundary and lets the block below it through")
+    func widthCapBoundary() async throws {
+        let (sync, base) = try Self.offline()
+        let oneBlock = RangeScanLimits(maxBlocks: 1)
+
+        // At the cap: through the shape check, and stopped by the empty pool.
+        await #expect(throws: FilterSyncError.noPeers) {
+            try await sync.scanRange(from: base, to: base, watchScripts: [Self.script],
+                                     limits: oneBlock) { _ in }
+        }
+        // One block past it, and the width refusal comes first — before the
+        // chain check, which would otherwise have called the same request a
+        // range above the tip.
+        await #expect(throws: RangeScanError.rangeTooWide(blocks: 2, limit: 1)) {
+            try await sync.scanRange(from: base, to: base + 1, watchScripts: [Self.script],
+                                     limits: oneBlock) { _ in }
+        }
+    }
+
+    @Test("the script cap refuses at its boundary and lets the set below it through")
+    func scriptCapBoundary() async throws {
+        let (sync, base) = try Self.offline()
+        let twoScripts = RangeScanLimits(maxScripts: 2)
+        let three = [Self.script, Self.otherScript,
+                     Data([0x51, 0x20] + repeatElement(0x44, count: 32))]
+
+        await #expect(throws: FilterSyncError.noPeers) {
+            try await sync.scanRange(from: base, to: base,
+                                     watchScripts: Array(three.prefix(2)),
+                                     limits: twoScripts) { _ in }
+        }
+        await #expect(throws: RangeScanError.tooManyScripts(count: 3, limit: 2)) {
+            try await sync.scanRange(from: base, to: base, watchScripts: three,
+                                     limits: twoScripts) { _ in }
+        }
+    }
+
+    /// Filters are fetched by block hash, so a checkpoint-rooted chain has no
+    /// way to name a block below its base: the range is refused by name rather
+    /// than left to fail mid-batch as a missing header. Mainnet is the only
+    /// network that ships a checkpoint, which is why this case is here and not
+    /// on the synthetic signet chain the rest of the suite mines.
+    @Test("a range outside the headers the chain holds is refused at both ends")
+    func rangeOutsideTheChain() async throws {
+        let (sync, base) = try Self.offline()
+
+        await #expect(throws: RangeScanError.rangeBelowChain(from: base - 1, start: base)) {
+            try await sync.scanRange(from: base - 1, to: base,
+                                     watchScripts: [Self.script]) { _ in }
+        }
+        await #expect(throws: RangeScanError.rangeAboveChain(to: base + 1, tip: base)) {
+            try await sync.scanRange(from: base, to: base + 1,
+                                     watchScripts: [Self.script]) { _ in }
+        }
+        // The block at the floor itself is inside the chain, so it gets past
+        // both ends and stops at the empty pool.
+        await #expect(throws: FilterSyncError.noPeers) {
+            try await sync.scanRange(from: base, to: base, watchScripts: [Self.script]) { _ in }
+        }
+    }
+
+    /// The fixed-point loop is the caller's, so the pass counter is what
+    /// bounds the whole restore rather than one run. A stored record plus a
+    /// changed script set is the next pass, and the cap is read before any
+    /// peer is asked.
+    @Test("the pass cap refuses at its boundary and lets the pass below it through")
+    func iterationCapBoundary() async throws {
+        let (sync, base) = try Self.offline()
+        let recordURL = tempFileURL("range-iterations.json")
+        defer { try? FileManager.default.removeItem(at: recordURL.deletingLastPathComponent()) }
+        let stored = RangeScanProgress(
+            from: base, to: base, nextScanHeight: base,
+            watchFingerprint: RangeScanProgress.fingerprint(of: [Self.script]),
+            iteration: 1)
+        try stored.persist(to: recordURL)
+
+        // A different script set over the same range is pass two.
+        await #expect(throws: RangeScanError.tooManyIterations(count: 2, limit: 1)) {
+            try await sync.scanRange(from: base, to: base, watchScripts: [Self.otherScript],
+                                     limits: RangeScanLimits(maxIterations: 1),
+                                     storageURL: recordURL) { _ in }
+        }
+        // Room for two, and the same request gets through to the pool. Nothing
+        // was written on the way past: a record is persisted only after a
+        // batch commits, and this run never reaches one.
+        await #expect(throws: FilterSyncError.noPeers) {
+            try await sync.scanRange(from: base, to: base, watchScripts: [Self.otherScript],
+                                     limits: RangeScanLimits(maxIterations: 2),
+                                     storageURL: recordURL) { _ in }
+        }
+        #expect(try RangeScanProgress.load(storageURL: recordURL) == stored)
+    }
+
+    /// Each cap is clamped to its ceiling on the way in rather than validated,
+    /// so a caller cannot loosen one by asking for more — which is the whole
+    /// reason a back-scan is allowed to exist in a forward-only library.
+    @Test("no caller can raise a cap past its hard maximum, or below zero")
+    func capsClampToTheirCeilings() {
+        let greedy = RangeScanLimits(maxBlocks: .max, maxScripts: .max,
+                                     maxFilterBytes: .max, maxDuration: .seconds(86_400),
+                                     maxIterations: .max)
+        #expect(greedy.maxBlocks == RangeScanLimits.blocksCeiling)
+        #expect(greedy.maxScripts == RangeScanLimits.scriptsCeiling)
+        #expect(greedy.maxFilterBytes == RangeScanLimits.filterBytesCeiling)
+        #expect(greedy.maxDuration == RangeScanLimits.durationCeiling)
+        #expect(greedy.maxIterations == RangeScanLimits.iterationsCeiling)
+
+        // Asking for less always works.
+        let modest = RangeScanLimits(maxBlocks: 10, maxScripts: 3, maxFilterBytes: 4_096,
+                                     maxDuration: .seconds(5), maxIterations: 2)
+        #expect(modest.maxBlocks == 10)
+        #expect(modest.maxScripts == 3)
+        #expect(modest.maxFilterBytes == 4_096)
+        #expect(modest.maxDuration == .seconds(5))
+        #expect(modest.maxIterations == 2)
+
+        // A negative budget is no budget, not a wrapped enormous one.
+        let negative = RangeScanLimits(maxScripts: -1, maxFilterBytes: -1,
+                                       maxDuration: .seconds(-1), maxIterations: -1)
+        #expect(negative.maxScripts == 0)
+        #expect(negative.maxFilterBytes == 0)
+        #expect(negative.maxDuration == .zero)
+        #expect(negative.maxIterations == 0)
+    }
+
+    // MARK: - Loopback peers
+
+    /// The fixture every socket-backed case here wants: one honest loopback
+    /// node on a synthetic chain, a pool seated on it, a header chain, and a
+    /// FilterSync with its forward progress in a temp file. Nothing is synced
+    /// yet — a range scan reads the header chain and never advances it, so
+    /// each case says for itself how the chain got its headers.
+    private struct Fixture {
+        let synthetic: SyntheticChain
+        let node: LoopbackNode
+        let pool: PeerPool
+        let chain: HeaderChain
+        let sync: FilterSync
+        let forwardFile: URL
+        let rangeFile: URL
+
+        /// The node and the pool are bound to locals first: the closures a
+        /// `Task` takes are `sending`, and capturing them through `self` would
+        /// send this whole struct.
+        func stop() {
+            let node = node
+            let pool = pool
+            Task { await node.stop() }
+            Task { await pool.stop() }
+        }
+
+        func removeFiles() {
+            try? FileManager.default.removeItem(at: forwardFile.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: rangeFile.deletingLastPathComponent())
+        }
+    }
+
+    private static func fixture(chainLength: Int = 2_100, watchHeight: UInt32 = 1_500,
+                                cfcheckptLieAtHeight: Int? = nil) async throws -> Fixture {
+        let synthetic = makeSyntheticChain(length: chainLength, watchHeight: watchHeight)
+        let node = LoopbackNode(params: synthetic.params, chain: synthetic.blocks,
+                                cfcheckptLieAtHeight: cfcheckptLieAtHeight)
+        try await node.start()
+        let pool = PeerPool(params: synthetic.params, peerCount: 1,
+                            manualPeers: [await node.endpoint],
+                            peersFileURL: tempFileURL("peers.json"))
+        await pool.start()
+        let chain = try HeaderChain(params: synthetic.params)
+        let forwardFile = tempFileURL("forward-progress.json")
+        let rangeFile = tempFileURL("range-progress.json")
+        let sync = try FilterSync(pool: pool, chain: chain, startHeight: 1,
+                                  storageURL: forwardFile, requiredCheckpointPeers: 1)
+        return Fixture(synthetic: synthetic, node: node, pool: pool, chain: chain,
+                       sync: sync, forwardFile: forwardFile, rangeFile: rangeFile)
+    }
+
+    /// The situation the whole patch exists for, in one case: a wallet has
+    /// scanned forward to the tip without knowing the script it was paid to,
+    /// so the payment sits below its frontier and no forward run can ever
+    /// reach it again. The range scan finds it, and the frontier — the thing a
+    /// restore must not disturb, because everything above it really has been
+    /// scanned — is exactly where it was, in the actor and in the file.
+    @Test("a range scan finds a payment below the forward frontier and leaves the frontier alone")
+    func findsAPaymentBelowTheForwardFrontier() async throws {
+        let fixture = try await Self.fixture()
+        defer { fixture.stop(); fixture.removeFiles() }
+
+        try await fixture.sync.sync(watchScripts: []) { _ in
+            Issue.record("the forward pass is looking for nothing")
+        }
+        #expect(await fixture.sync.nextScanHeight == 2_101)
+
+        let collector = MatchCollector()
+        let outcome = try await fixture.sync.scanRange(
+            from: 1_000, to: 1_600,
+            watchScripts: [fixture.synthetic.watchScript],
+            storageURL: fixture.rangeFile) { collector.add($0) }
+
+        #expect(collector.matches.map(\.height) == [1_500])
+        #expect(collector.matches.first?.block.transactions[0].outputs.contains {
+            $0.scriptPubKey == fixture.synthetic.watchScript
+        } == true)
+        #expect(outcome.matchedHeights == [1_500])
+        #expect(outcome.isComplete)
+        #expect(outcome.scannedThrough == 1_600)
+        #expect(outcome.iteration == 1)
+        #expect(outcome.filterBytesRead > 0)
+
+        #expect(await fixture.sync.nextScanHeight == 2_101, "the forward frontier did not move")
+        let forward = try JSONDecoder().decode(
+            FilterSync.Progress.self, from: Data(contentsOf: fixture.forwardFile))
+        #expect(forward.nextScanHeight == 2_101, "and the file a relaunch reads agrees")
+
+        // The range's own record, in its own file, describing its own range.
+        let stored = try RangeScanProgress.load(storageURL: fixture.rangeFile)
+        let record = try #require(stored)
+        #expect(record.from == 1_000)
+        #expect(record.to == 1_600)
+        #expect(record.nextScanHeight == 1_601)
+        #expect(record.iteration == 1)
+        #expect(record.isComplete)
+    }
+
+    /// The byte cap and the resumable record are one mechanism seen from two
+    /// ends, so they are tested together: a run stops on its budget, and what
+    /// makes that survivable is that the next run starts where it stopped
+    /// rather than at `from`.
+    ///
+    /// The budget is measured, not guessed — one batch of this range costs
+    /// what a scan of exactly that batch reports — so "the batch that fits
+    /// commits and the next one does not" is arithmetic rather than a hope
+    /// about filter sizes.
+    @Test("a run that spends its byte budget resumes from its own record and re-delivers nothing")
+    func interruptedRangeScanResumes() async throws {
+        let fixture = try await Self.fixture(chainLength: 1_200, watchHeight: 500)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        #expect(await fixture.chain.height == 1_200)
+        let watch = [fixture.synthetic.watchScript]
+
+        // [100, 1200] is two batches: [100, 1099] and [1100, 1200]. This is
+        // what the first one costs.
+        let firstBatch = try await fixture.sync.scanRange(from: 100, to: 1_099,
+                                                          watchScripts: watch) { _ in }
+        #expect(firstBatch.filterBytesRead > 0)
+        let budget = firstBatch.filterBytesRead
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            _ = try await fixture.sync.scanRange(
+                from: 100, to: 1_200, watchScripts: watch,
+                limits: RangeScanLimits(maxFilterBytes: budget),
+                storageURL: fixture.rangeFile) { collector.add($0) }
+        } catch {
+            thrown = error
+        }
+        guard case let .filterBytesExhausted(read, limit)? = thrown as? RangeScanError else {
+            Issue.record("expected filterBytesExhausted, got \(String(describing: thrown))")
+            return
+        }
+        #expect(limit == budget)
+        #expect(read > budget, "the run stopped on the chunk that took it past the cap")
+        #expect(collector.matches.map(\.height) == [500])
+
+        let halfway = try RangeScanProgress.load(storageURL: fixture.rangeFile)
+        let interrupted = try #require(halfway)
+        #expect(interrupted.nextScanHeight == 1_100,
+                "the batch that fitted committed; the one that did not left nothing")
+        #expect(interrupted.iteration == 1, "a resumption is not a new pass")
+
+        // Resumed with room. It starts at its own record, so the payment at
+        // 500 is below the resumed frontier: not read again, not delivered
+        // again.
+        let resumed = try await fixture.sync.scanRange(
+            from: 100, to: 1_200, watchScripts: watch,
+            storageURL: fixture.rangeFile) { collector.add($0) }
+        #expect(resumed.isComplete)
+        #expect(resumed.scannedThrough == 1_200)
+        #expect(resumed.iteration == 1)
+        #expect(resumed.matchedHeights.isEmpty, "this run scanned only [1100, 1200]")
+        #expect(collector.matches.map(\.height) == [500],
+                "and the match was delivered once across both runs")
+        let complete = try RangeScanProgress.load(storageURL: fixture.rangeFile)
+        let finished = try #require(complete)
+        #expect(finished.nextScanHeight == 1_201)
+
+        // One byte short of a batch, and the cap fires inside the batch
+        // instead of after it: a batch is the unit that commits, so a run
+        // refused inside one persists nothing at all and has nothing to
+        // resume from.
+        let tightFile = tempFileURL("range-tight.json")
+        defer { try? FileManager.default.removeItem(at: tightFile.deletingLastPathComponent()) }
+        var tightThrow: (any Error)?
+        do {
+            _ = try await fixture.sync.scanRange(
+                from: 100, to: 1_200, watchScripts: watch,
+                limits: RangeScanLimits(maxFilterBytes: budget - 1),
+                storageURL: tightFile) { _ in }
+        } catch {
+            tightThrow = error
+        }
+        guard case let .filterBytesExhausted(tightRead, tightLimit)? = tightThrow as? RangeScanError
+        else {
+            Issue.record("expected filterBytesExhausted, got \(String(describing: tightThrow))")
+            return
+        }
+        #expect(tightLimit == budget - 1)
+        #expect(tightRead > tightLimit && tightRead <= budget,
+                "the overshoot is one chunk, and the chunk was inside the first batch")
+        #expect(!FileManager.default.fileExists(atPath: tightFile.path),
+                "a cap that fires inside a batch persists nothing")
+    }
+
+    /// The time cap at the boundary that needs no clock: a run given no time
+    /// is refused before it reads a filter, and the same request with a budget
+    /// completes.
+    @Test("a run with no time budget is refused before it reads a filter")
+    func timeCapRefusesAtZero() async throws {
+        let fixture = try await Self.fixture(chainLength: 6, watchHeight: 3)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        let watch = [fixture.synthetic.watchScript]
+
+        await #expect(throws: RangeScanError.runTimedOut(limit: .zero)) {
+            try await fixture.sync.scanRange(
+                from: 1, to: 6, watchScripts: watch,
+                limits: RangeScanLimits(maxDuration: .zero),
+                storageURL: fixture.rangeFile) { _ in
+                    Issue.record("a run out of time must not read a filter")
+                }
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.rangeFile.path))
+
+        let outcome = try await fixture.sync.scanRange(
+            from: 1, to: 6, watchScripts: watch,
+            storageURL: fixture.rangeFile) { _ in }
+        #expect(outcome.matchedHeights == [3])
+        #expect(outcome.isComplete)
+    }
+
+    /// The deadline is read between batches and again inside the chunk loop,
+    /// and this is the case that separates the two. A batch is up to a
+    /// thousand blocks, so a deadline consulted only between batches is a cap
+    /// on batches: a run that overruns inside one would finish it, commit it,
+    /// and record a frontier reached after its time was up.
+    ///
+    /// The budget is spent from inside `onMatch`, which the scan awaits in the
+    /// middle of a batch. What separates the two readings is not the error —
+    /// both give `runTimedOut` — but what is left behind: with the chunk
+    /// reading, the batch never finishes and nothing is persisted at all.
+    @Test("a budget spent inside a batch stops the batch, so the batch commits nothing")
+    func timeCapStopsARunInsideABatch() async throws {
+        let fixture = try await Self.fixture(chainLength: 1_200, watchHeight: 500)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        let watch = [fixture.synthetic.watchScript]
+
+        // [100, 1099] is one batch of ten chunks and the payment at 500 is in
+        // the fifth, so holding `onMatch` there for longer than the whole
+        // budget puts every later chunk of that batch past the deadline. A
+        // loaded machine that runs out of budget before the fifth chunk gets
+        // the same refusal from the batch reading and asserts the same thing,
+        // one notch less sharply — the deadline is never the reason this goes
+        // green.
+        await #expect(throws: RangeScanError.runTimedOut(limit: .milliseconds(500))) {
+            try await fixture.sync.scanRange(
+                from: 100, to: 1_099, watchScripts: watch,
+                limits: RangeScanLimits(maxDuration: .milliseconds(500)),
+                storageURL: fixture.rangeFile) { _ in
+                    try await Task.sleep(for: .seconds(1))
+                }
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.rangeFile.path),
+                "the batch the run died inside committed nothing")
+    }
+
+    /// The forward path's per-batch checkpoint comparison, on the range path:
+    /// a peer whose `cfcheckpt` answer contradicts the commitments it serves
+    /// is caught before the batch has any effect. The watched payment sits
+    /// inside the refused batch, so a comparison that ran after the batch —
+    /// or not at all — shows up here as a match a restore should never have
+    /// been shown, and as a record naming blocks nothing verified.
+    @Test("a lying checkpoint peer during a range scan delivers no match and persists nothing")
+    func lyingCheckpointPeerCommitsNothing() async throws {
+        let fixture = try await Self.fixture(chainLength: 1_100, watchHeight: 500,
+                                             cfcheckptLieAtHeight: 1_000)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        #expect(await fixture.chain.height == 1_100)
+
+        let collector = MatchCollector()
+        var thrown: (any Error)?
+        do {
+            // One batch, 601 blocks: it pins the disputed boundary at 1,000
+            // and the payment at 500 in the same commitment set.
+            _ = try await fixture.sync.scanRange(
+                from: 500, to: 1_100,
+                watchScripts: [fixture.synthetic.watchScript],
+                storageURL: fixture.rangeFile) { collector.add($0) }
+        } catch {
+            thrown = error
+        }
+        guard case let .checkpointMismatch(reason)? = thrown as? FilterSyncError else {
+            Issue.record("expected checkpointMismatch, got \(String(describing: thrown))")
+            return
+        }
+        #expect(reason.contains("pinned header at 1000"))
+        #expect(collector.matches.isEmpty, "a refused batch must not deliver its matches")
+        #expect(!FileManager.default.fileExists(atPath: fixture.rangeFile.path),
+                "and must not write a record")
+        #expect(await fixture.sync.nextScanHeight == 1, "the forward frontier was never involved")
+    }
+
+    /// Both runs read the chain over one pool, and a peer's reply goes to
+    /// whichever collector expects the command first, so the two have to
+    /// exclude each other rather than interleave. They share the flag `sync`
+    /// already had; this pins that they still do, and that a relay-only pool
+    /// refuses the range scan for the same reason it refuses a forward one —
+    /// the seats are held so a signed payment can go out, not so a restore can
+    /// read history over them.
+    @Test("a forward sync during a range scan is refused, and a relay-only pool refuses both")
+    func rangeScanAndForwardSyncExcludeEachOther() async throws {
+        let fixture = try await Self.fixture(chainLength: 6, watchHeight: 3)
+        defer { fixture.stop(); fixture.removeFiles() }
+        try await fixture.pool.syncHeaders(fixture.chain)
+        let watch = [fixture.synthetic.watchScript]
+
+        let gate = RangeGate()
+        let collector = MatchCollector()
+        // Bound out of the fixture for the same reason `stop()` binds its own:
+        // the task's closure is `sending`, and these are the only parts of the
+        // fixture it needs.
+        let sync = fixture.sync
+        let rangeFile = fixture.rangeFile
+        let scan = Task { () -> Result<RangeScanOutcome, any Error> in
+            let outcome: Result<RangeScanOutcome, any Error>
+            do {
+                outcome = .success(try await sync.scanRange(
+                    from: 1, to: 6, watchScripts: watch,
+                    storageURL: rangeFile) { match in
+                        collector.add(match)
+                        await gate.reach()
+                        await gate.waitForRelease()
+                    })
+            } catch {
+                outcome = .failure(error)
+            }
+            // A run that never matched opens the gate too, so a broken scan
+            // fails this case on an assertion rather than parking it forever.
+            await gate.reach()
+            return outcome
+        }
+        await gate.waitForReach()
+
+        await #expect(throws: FilterSyncError.syncAlreadyRunning) {
+            try await fixture.sync.sync(watchScripts: watch) { _ in
+                Issue.record("the refused sync must not scan anything")
+            }
+        }
+        #expect(await fixture.sync.nextScanHeight == 1, "the forward frontier never moved")
+
+        await gate.release()
+        let outcome = try await scan.value.get()
+        #expect(outcome.matchedHeights == [3])
+        #expect(collector.matches.map(\.height) == [3])
+
+        // And the flag is cleared on the way out, so the pool is free again —
+        // until it is narrowed to relay seats, which refuses both directions.
+        _ = await fixture.pool.enterRelayOnly(seats: 1)
+        await #expect(throws: FilterSyncError.relayOnly) {
+            try await fixture.sync.scanRange(from: 1, to: 6, watchScripts: watch) { _ in }
+        }
+        await #expect(throws: FilterSyncError.relayOnly) {
+            try await fixture.sync.sync(watchScripts: watch) { _ in }
+        }
+    }
+}
+
+/// Parks a range scan inside its `onMatch` — one of the suspension points a
+/// second run would otherwise interleave with — and holds it there until the
+/// case releases it. The same trick `FilterSyncTests` plays on the forward
+/// path, kept private to each file so neither can change the other's timing.
+private actor RangeGate {
+    private var reached = false
+    private var reachWaiter: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func reach() {
+        reached = true
+        reachWaiter?.resume()
+        reachWaiter = nil
+    }
+
+    func waitForReach() async {
+        guard !reached else { return }
+        await withCheckedContinuation { reachWaiter = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+}

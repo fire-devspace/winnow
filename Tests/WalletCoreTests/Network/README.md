@@ -13,5 +13,7 @@ P2P package or another test runner.
 Run `swift test --filter WalletCoreTests` from the repository root.
 [FilterSync adversaries](FilterSyncAdversaryTests.swift)
 and [relay-store tests](TxBroadcasterStoreTests.swift)
-cover important failure paths. [Core comparisons](../../DifferentialTests/README.md)
+cover important failure paths. [Range-scan tests](RangeScanTests.swift) cover the
+restore-only back-scan: every cap at its boundary, its own resumable record, and
+the forward frontier it must not move. [Core comparisons](../../DifferentialTests/README.md)
 and retained [soak evidence](../../../docs/security/evidence/README.md) add different observations.

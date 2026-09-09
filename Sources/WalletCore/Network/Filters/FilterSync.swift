@@ -362,8 +362,16 @@ public actor FilterSync {
     /// Whether a `sync` is between its first line and its last. Set and
     /// cleared on the actor, so no second call can observe it half-set; see
     /// the "one run at a time" paragraph above for what the second call would
-    /// otherwise do.
-    private var isSyncing = false
+    /// otherwise do. `scanRange` takes the same flag, so a restore-only range
+    /// scan and a forward sync exclude each other rather than sharing the pool.
+    var isSyncing = false
+
+    /// The live state of a `scanRange` run: what it has spent of its byte and
+    /// time caps, and the heights it has matched. Nil on the forward path,
+    /// which is bounded by the caller's `maxBlocks` instead. Stored here
+    /// because an extension cannot hold state; everything that reads it is in
+    /// RangeScan.swift.
+    var rangeRun: RangeScanRun?
 
     private static let maximumProgressBytes = 128 * 1_024 * 1_024
     private static let maximumPinnedHeaders = 2_000_000
@@ -695,7 +703,7 @@ public actor FilterSync {
     /// Each answer carries the class the pool reached its peer through, so the
     /// receipt names channels that answered instead of channels that were
     /// dialled.
-    private func collectedCheckpoints(from peers: [PeerConnection], tipHash: Data)
+    func collectedCheckpoints(from peers: [PeerConnection], tipHash: Data)
         async throws -> [(peer: PeerConnection, source: PeerSource?, message: CFCheckptMessage)] {
         let sourced = await sourced(peers)
         let classes = Dictionary(
@@ -762,7 +770,7 @@ public actor FilterSync {
     /// says so with `CrossCheckPolicy.requireDistinctSources`, which refuses
     /// the run above rather than here: the sole survivor's answer is still
     /// adopted, and the receipt still names it, but nothing advances on it.
-    private func majorityReference(
+    func majorityReference(
         of checkpoints: [(peer: PeerConnection, source: PeerSource?, message: CFCheckptMessage)])
         async throws -> CFCheckptMessage {
         guard checkpoints.count > 1 else { return checkpoints[0].message }
@@ -814,9 +822,9 @@ public actor FilterSync {
 
     /// The same comparison over headers a batch has proposed but not
     /// committed, so the batch can be refused before any of it is applied.
-    private static func checkPinnedBoundaries(of headers: [String: String],
-                                              against reference: CFCheckptMessage,
-                                              tip: UInt32) throws {
+    static func checkPinnedBoundaries(of headers: [String: String],
+                                      against reference: CFCheckptMessage,
+                                      tip: UInt32) throws {
         for (index, header) in reference.filterHeaders.enumerated() {
             let height = UInt32(index + 1) * checkpointInterval
             guard height <= tip else { break }
@@ -830,7 +838,7 @@ public actor FilterSync {
 
     /// Endpoint descriptions of `connections`, for comparing peer identity
     /// across a pool that may have been replenished underneath us.
-    private static func endpoints(of connections: [PeerConnection]) async -> Set<String> {
+    static func endpoints(of connections: [PeerConnection]) async -> Set<String> {
         var result: Set<String> = []
         for connection in connections { result.insert(connection.endpoint.description) }
         return result
@@ -842,7 +850,7 @@ public actor FilterSync {
     /// its checkpoints compared is exactly what the cross-peer check exists to
     /// exclude, so continuing without an approved peer would silently drop the
     /// protection instead of failing closed.
-    private func approved(peers approvedEndpoints: Set<String>) async throws -> [PeerConnection] {
+    func approved(peers approvedEndpoints: Set<String>) async throws -> [PeerConnection] {
         var result: [PeerConnection] = []
         for peer in await pool.connectedPeers() {
             if approvedEndpoints.contains(peer.endpoint.description) { result.append(peer) }
@@ -891,9 +899,9 @@ public actor FilterSync {
 
     /// Fetches cfheaders for [batchStart, batchStop] and pins the filter
     /// header chain to our block-header chain.
-    private func pinFilterHeaders(batchStart: UInt32, batchStop: UInt32, stopHash: Data,
-                                  peers: [PeerConnection],
-                                  startingFrom storedHeaders: [String: String]) async throws
+    func pinFilterHeaders(batchStart: UInt32, batchStop: UInt32, stopHash: Data,
+                          peers: [PeerConnection],
+                          startingFrom storedHeaders: [String: String]) async throws
         -> [String: String]
     {
         // Always cross-check cfheaders across peers when the pool has them
@@ -1036,10 +1044,10 @@ public actor FilterSync {
     /// A 1000-filter burst was held whole until its last message landed, so
     /// peak memory was a batch; a chunk is matched and dropped before the next
     /// one is asked for, so peak memory is a chunk however long the batch is.
-    private func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
-                             watchScripts: [Data],
-                             filterHeaders: [String: String],
-                             onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
+    func scanFilters(batchStart: UInt32, batchStop: UInt32, peer: PeerConnection,
+                     watchScripts: [Data],
+                     filterHeaders: [String: String],
+                     onMatch: @Sendable (BlockMatch) async throws -> Void) async throws {
         let count = Int(batchStop - batchStart + 1)
         var seen: Set<UInt32> = []
         var chunkStart = batchStart
@@ -1075,6 +1083,11 @@ public actor FilterSync {
                            onMatch: @Sendable (BlockMatch) async throws -> Void) async throws
         -> Set<UInt32>
     {
+        // Nil unless a restore-only range scan is running, in which case its
+        // run deadline is read here rather than only between batches: a batch
+        // is a thousand blocks, and a cap checked once per batch would be a
+        // cap on batches.
+        try checkRangeDeadline()
         guard let stopHash = await chain.blockHash(at: chunkStop) else {
             throw FilterSyncError.badPeerResponse("missing header at \(chunkStop)")
         }
@@ -1118,6 +1131,10 @@ public actor FilterSync {
                                           blockHash: message.blockHash, onMatch: onMatch)
         }
         peakChunkFilterBytesForTest = max(peakChunkFilterBytesForTest, chunkBytes)
+        // Same seam, for the range scan's byte cap: a chunk is charged once it
+        // has been read, so a run overshoots its cap by at most one chunk.
+        // Nothing is charged, and nothing can refuse, on the forward path.
+        try chargeRangeFilterBytes(chunkBytes)
         return seen
     }
 
