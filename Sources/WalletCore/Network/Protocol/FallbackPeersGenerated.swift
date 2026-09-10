@@ -16,51 +16,47 @@
 // two runs give different lists. The generation log is kept as a release
 // artifact so the list is auditable even though it is not reproducible.
 //
-// Generation: 2026-08-25T00:42:03Z, 42 peers verified, median reported
-// tip 963930.
+// Generation: 2026-09-10T05:27:49Z, 38 peers verified, median reported
+// tip 966309.
 extension NetworkParams {
     static let generatedMainnetFallbackPeers: [PeerEndpoint] = [
+        PeerEndpoint(host: "1.156.129.110", port: 8333),  // /Satoshi:31.1.0/
         PeerEndpoint(host: "103.193.138.6", port: 8333),  // /Satoshi:29.3.0/Knots:20260507/
-        PeerEndpoint(host: "108.233.254.177", port: 8333),  // /Satoshi:29.3.0/Knots:20260508/
-        PeerEndpoint(host: "109.226.191.224", port: 8333),  // /Satoshi:31.1.0/
         PeerEndpoint(host: "12.11.29.34", port: 8333),  // /Satoshi:31.99.0/
-        PeerEndpoint(host: "141.224.197.193", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "142.114.30.4", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "152.236.12.149", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "176.126.75.134", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "176.199.86.128", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "176.84.41.83", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "178.61.141.198", port: 8333),  // /Satoshi:29.2.0/
-        PeerEndpoint(host: "180.68.238.158", port: 8333),  // /Satoshi:29.4.0/
-        PeerEndpoint(host: "186.226.151.18", port: 8333),  // /Satoshi:27.1.0/
-        PeerEndpoint(host: "2001:470:1f08:4db::2", port: 8333),  // /Satoshi:31.1.0(2)/
-        PeerEndpoint(host: "2001:5a8:4164:7a00:be60:b5aa:22f0:d1cb", port: 8333),  // /Satoshi:31.99.0/
-        PeerEndpoint(host: "2001:bc8:1da0:1:46a8:42ff:fe1b:3516", port: 8333),  // /Satoshi:30.2.0/
-        PeerEndpoint(host: "201.211.122.154", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "201.219.78.6", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "203.56.149.66", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "216.237.253.188", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "217.164.243.184", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "217.198.136.37", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "223.25.71.139", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "24.141.241.54", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "2406:da12:ce1:f000:d627:d988:93d0:5002", port: 8333),  // /Satoshi:29.1.0/
-        PeerEndpoint(host: "2a04:52c0:133:7eb2::1337", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "38.40.110.66", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "5.135.142.93", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "50.5.231.228", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "67.68.83.63", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "74.209.75.75", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "75.84.8.48", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "79.19.69.237", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "82.66.107.156", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "83.78.167.200", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "86.138.250.250", port: 8333),  // /Satoshi:30.2.0/
-        PeerEndpoint(host: "88.0.22.163", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "88.84.223.30", port: 8333),  // /Satoshi:27.0.0/
-        PeerEndpoint(host: "89.245.8.215", port: 8333),  // /Satoshi:31.0.0/
-        PeerEndpoint(host: "93.186.3.158", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "97.186.20.14", port: 8333),  // /Satoshi:31.1.0/
-        PeerEndpoint(host: "98.36.176.14", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "124.122.38.63", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "136.50.236.173", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "149.112.12.106", port: 8333),  // /btcwire:0.5.0/btcd:0.26.0/
+        PeerEndpoint(host: "173.172.143.161", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "176.129.251.96", port: 8333),  // /Satoshi:29.3.0/Knots:20260507/
+        PeerEndpoint(host: "180.148.96.148", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "190.202.186.119", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "195.180.62.206", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "2.4.162.244", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "2001:1600:18:209::385", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "2001:e68:542c:1c3a:7270:fcff:fe05:3cd", port: 8333),  // /Satoshi:29.3.0/
+        PeerEndpoint(host: "23.95.114.106", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "24.47.111.152", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "2600:1f1e:2fe:3600:780a:4a97:ff2a:3c7e", port: 8333),  // /Satoshi:29.1.0/
+        PeerEndpoint(host: "2804:5268:13b:b200:6d55:a9ca:cc7:8463", port: 8333),  // /Satoshi:29.3.0/Knots:20260210/
+        PeerEndpoint(host: "2a02:8308:8188:5100:3bd2:cf60:5f5:9249", port: 8333),  // /Satoshi:29.3.0/
+        PeerEndpoint(host: "2a02:c206:3012:8083::1", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "37.191.18.168", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "42.3.180.42", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "49.228.63.128", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "5.193.147.22", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "5.255.98.78", port: 8333),  // /Satoshi:28.3.0/
+        PeerEndpoint(host: "50.225.105.5", port: 8333),  // /Satoshi:29.3.0/Knots:20260507/
+        PeerEndpoint(host: "54.38.212.14", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "65.109.99.229", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "67.187.86.250", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "81.183.143.40", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "81.213.76.246", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "83.50.188.180", port: 8333),  // /Satoshi:31.0.0/
+        PeerEndpoint(host: "86.200.177.42", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "87.236.195.198", port: 8333),  // /Satoshi:30.99.0/
+        PeerEndpoint(host: "95.17.238.147", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "98.164.117.96", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "98.73.172.33", port: 8333),  // /Satoshi:31.1.0/
+        PeerEndpoint(host: "99.59.251.69", port: 8333),  // /Satoshi:29.3.0/Knots:20260507/
     ]
 }
