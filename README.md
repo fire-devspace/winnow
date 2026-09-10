@@ -148,7 +148,7 @@ upstream's own checks (`swift test`, `swiftlint`, `scripts/check-test-gates`,
 | [#81](https://github.com/winnowwallet/winnow/pull/81) | A served broadcast stays served when its peer goes away | c776201 |
 | [#82](https://github.com/winnowwallet/winnow/pull/82) | Regtest as a network; the address prefix from the network, not the key | 648ac32, ada4dfa |
 | [#83](https://github.com/winnowwallet/winnow/pull/83) | FilterSync: a batch staged behind its checkpoint comparison, pinned headers pruned, filters fetched in chunks (the three pruned-store tests run one block below the retarget boundary upstream now checks) | 8c63a4a, 8eb6095, 2e2d36c |
-| [#86](https://github.com/winnowwallet/winnow/pull/86) | Bound the output breakdowns in an import bundle (the per-transaction ceiling named locally until #77's shared constant lands) | a636c95 |
+| [#86](https://github.com/winnowwallet/winnow/pull/86) | Withdrawn the same hour: it bounded the `outputs` breakdown on a bundle entry, a field only this fork's history carries (301c95b, fc1f7cd, a636c95 are fire-only in effect; upstream's own recipient saving took another shape, which is why #78 offered tests only) | a636c95 |
 
 Not offered: af1d580 (the bounded secret version tag) patches the account-key secret that
 exists only here, so it is `[fire-only]` in effect. Pending: the rest of the filter-sync
